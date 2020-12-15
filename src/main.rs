@@ -3,11 +3,19 @@ mod assets;
 mod renderer;
 
 use ultraviolet::{Mat4, Vec3};
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
 fn main() -> anyhow::Result<()> {
     futures::executor::block_on(run())
+}
+
+#[derive(Default)]
+struct KeyStates {
+    forwards_pressed: bool,
+    backwards_pressed: bool,
+    left_pressed: bool,
+    right_pressed: bool,
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -28,6 +36,9 @@ async fn run() -> anyhow::Result<()> {
         &renderer.level_bind_group_layout,
     )?;
 
+    let mut key_states = KeyStates::default();
+    let mut camera_position = Vec3::new(10.0, 10.0, 0.0);
+
     renderer.queue.submit(Some(init_encoder.finish()));
 
     event_loop.run(move |event, _, control_flow| match event {
@@ -36,14 +47,51 @@ async fn run() -> anyhow::Result<()> {
             WindowEvent::Resized(size) => {
                 renderer.resize(size.width as u32, size.height as u32);
             }
+            WindowEvent::KeyboardInput {
+                input:
+                    KeyboardInput {
+                        state,
+                        virtual_keycode: Some(keycode),
+                        ..
+                    },
+                ..
+            } => {
+                let pressed = state == &ElementState::Pressed;
+
+                match keycode {
+                    VirtualKeyCode::W => key_states.forwards_pressed = pressed,
+                    VirtualKeyCode::A => key_states.left_pressed = pressed,
+                    VirtualKeyCode::S => key_states.backwards_pressed = pressed,
+                    VirtualKeyCode::D => key_states.right_pressed = pressed,
+                    _ => {}
+                }
+            }
             _ => {}
         },
         Event::MainEventsCleared => {
+            let speed = 0.2;
+
+            if key_states.forwards_pressed {
+                camera_position.x -= speed;
+            }
+
+            if key_states.backwards_pressed {
+                camera_position.x += speed;
+            }
+
+            if key_states.left_pressed {
+                camera_position.z -= speed;
+            }
+
+            if key_states.right_pressed {
+                camera_position.z += speed;
+            }
+
             renderer.window.request_redraw();
         }
         Event::RedrawRequested(_) => {
             renderer.set_camera_view(ultraviolet::Mat4::look_at(
-                Vec3::new(10.0, 10.0, 0.0),
+                camera_position,
                 Vec3::new(0.0, 5.0, 0.0),
                 Vec3::unit_y(),
             ));

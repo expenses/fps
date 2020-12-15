@@ -1,5 +1,5 @@
 use crate::renderer::{Vertex, TEXTURE_FORMAT};
-use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
+use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 pub fn level_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
@@ -163,9 +163,11 @@ impl Level {
 
                 let transform = transform_of(node.index(), &node_tree);
 
+                let intensity = light.intensity() / (4.0 * std::f32::consts::PI);
+
                 Light {
                     colour: light.color().into(),
-                    intensity: light.intensity(),
+                    intensity,
                     position: transform.extract_translation(),
                 }
             })
@@ -197,6 +199,9 @@ impl Level {
             .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
         {
             assert_eq!(mesh.primitives().count(), 1);
+
+            let transform: Mat4 = transform_of(node.index(), &node_tree);
+            let normal_matrix = normal_matrix(transform);
 
             for primitive in mesh.primitives() {
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
@@ -230,8 +235,6 @@ impl Level {
                         .map(|i| i + num_vertices),
                 );
 
-                let transform: Mat4 = transform_of(node.index(), &node_tree);
-
                 positions
                     .zip(tex_coordinates)
                     .zip(normals)
@@ -240,9 +243,12 @@ impl Level {
                         assert_eq!(position.w, 1.0);
                         let position = position.xyz();
 
+                        let normal: Vec3 = n.into();
+                        let normal = (normal_matrix * normal).normalized();
+
                         geometry_vertices.push(Vertex {
                             position,
-                            normal: n.into(),
+                            normal,
                             uv: uv.into(),
                             texture_index: texture_index as i32,
                         });
@@ -251,11 +257,11 @@ impl Level {
         }
 
         println!(
-            "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {:?}",
+            "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
             geometry_vertices.len(),
             geometry_indices.len(),
             num_textures,
-            lights,
+            lights.len(),
         );
 
         Ok(Self {
@@ -273,6 +279,12 @@ impl Level {
             bind_group,
         })
     }
+}
+
+fn normal_matrix(transform: Mat4) -> Mat3 {
+    let inverse_transpose = transform.inversed().transposed();
+    let array = inverse_transpose.as_component_array();
+    Mat3::new(array[0].xyz(), array[1].xyz(), array[2].xyz())
 }
 
 // Load the buffers from a gltf document into a vector of byte vectors.
