@@ -1,32 +1,21 @@
-
-use wgpu::util::DeviceExt;
+use crate::renderer::{Vertex, TEXTURE_FORMAT};
 use std::collections::HashMap;
-use ultraviolet::{Vec3, Vec2, Mat4};
-
-#[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-struct Vertex {
-    position: Vec3,
-    normal: Vec3,
-    uv: Vec2,
-    texture_index: i32,
-}
+use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
+use wgpu::util::DeviceExt;
 
 pub fn level_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("level bind group layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::SampledTexture {
-                    dimension: wgpu::TextureViewDimension::D2,
-                    component_type: wgpu::TextureComponentType::Float,
-                    multisampled: false,
-                },
-                count: None,
-            }
-        ]
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStage::FRAGMENT,
+            ty: wgpu::BindingType::SampledTexture {
+                dimension: wgpu::TextureViewDimension::D2,
+                component_type: wgpu::TextureComponentType::Float,
+                multisampled: false,
+            },
+            count: None,
+        }],
     })
 }
 
@@ -35,7 +24,6 @@ pub struct Level {
     pub geometry_indices: wgpu::Buffer,
     pub num_indices: u32,
     pub bind_group: wgpu::BindGroup,
-    pub camera_transform: Mat4,
 }
 
 impl Level {
@@ -69,20 +57,23 @@ impl Level {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: TEXTURE_FORMAT,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         });
 
         for (i, texture) in gltf.textures().enumerate() {
             let view = match texture.source().source() {
                 gltf::image::Source::View { view, .. } => view,
-                gltf::image::Source::Uri { .. } => return Err(anyhow::anyhow!("Level textures must be packed."))
+                gltf::image::Source::Uri { .. } => {
+                    return Err(anyhow::anyhow!("Level textures must be packed."))
+                }
             };
 
             let start = view.offset();
             let end = start + view.length();
             let bytes = &buffers[view.buffer().index()][start..end];
-            let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
+            let image =
+                image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
             let (width, height) = image.dimensions();
 
             assert_eq!(width, 128);
@@ -107,7 +98,9 @@ impl Level {
                     texture: &texture_array,
                     mip_level: 0,
                     origin: wgpu::Origin3d {
-                        x: 0, y: 0, z: i as u32,
+                        x: 0,
+                        y: 0,
+                        z: i as u32,
                     },
                 },
                 texture_array_extent,
@@ -116,18 +109,28 @@ impl Level {
             gltf_texture_index_to_texture_array_index.insert(texture.index(), i);
         }
 
+        let texture_view = texture_array.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("level texture array view"),
+            format: Some(TEXTURE_FORMAT),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("level bind group"),
             layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_array.create_view(&wgpu::TextureViewDescriptor::default()))
-                }
-            ]
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            }],
         });
 
-        for mesh in gltf.meshes() {
+        for (node, mesh) in gltf
+            .nodes()
+            .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
+        {
+            assert_eq!(mesh.primitives().count(), 1);
+
             for primitive in mesh.primitives() {
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     return Err(anyhow::anyhow!(
@@ -136,9 +139,13 @@ impl Level {
                     ));
                 }
 
-                let texture_index = primitive.material().pbr_metallic_roughness().base_color_texture()
+                let texture_index = primitive
+                    .material()
+                    .pbr_metallic_roughness()
+                    .base_color_texture()
                     .ok_or_else(|| anyhow::anyhow!("All level primitives need textures."))?
-                    .texture().index();
+                    .texture()
+                    .index();
 
                 let texture_array_index = gltf_texture_index_to_texture_array_index[&texture_index];
 
@@ -158,12 +165,18 @@ impl Level {
                         .map(|i| i + num_vertices),
                 );
 
+                let transform: Mat4 = node.transform().matrix().into();
+
                 positions
                     .zip(tex_coordinates)
                     .zip(normals)
                     .for_each(|((p, uv), n)| {
+                        let position = transform * Vec4::new(p[0], p[1], p[2], 1.0);
+                        assert_eq!(position.w, 1.0);
+                        let position = position.xyz();
+
                         geometry_vertices.push(Vertex {
-                            position: p.into(),
+                            position,
                             normal: n.into(),
                             uv: uv.into(),
                             texture_index: texture_array_index as i32,
@@ -171,11 +184,6 @@ impl Level {
                     });
             }
         }
-
-        let camera_transform = gltf.nodes()
-            .find(|node| node.camera().is_some())
-            .ok_or_else(|| anyhow::anyhow!("All levels need a camera."))?
-            .transform().matrix().into();
 
         println!(
             "Level loaded. Vertices: {}. Indices: {}. Textures: {}",
@@ -197,7 +205,6 @@ impl Level {
             }),
             num_indices: geometry_indices.len() as u32,
             bind_group,
-            camera_transform,
         })
     }
 }

@@ -16,3 +16,4 @@ gltf = "0.15.2"
 image = "0.23.12"
 ultraviolet = { version = "0.7.5", features = ["bytemuck"] }
 wgpu = "0.6.2"
+winit = "0.24.0"
