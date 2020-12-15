@@ -36,6 +36,7 @@ struct Light {
     colour: Vec3,
     intensity: f32,
     position: Vec3,
+    padding: i32,
 }
 
 pub struct Level {
@@ -163,12 +164,16 @@ impl Level {
 
                 let transform = transform_of(node.index(), &node_tree);
 
-                let intensity = light.intensity() / (4.0 * std::f32::consts::PI);
+                // We reduce the intensity by 4PI because of
+                // https://github.com/KhronosGroup/glTF-Blender-IO/issues/564.
+                // Reducing by 2 again seems to bring it in line with blender but idk why
+                let intensity = light.intensity() / (2.0 * 4.0 * std::f32::consts::PI);
 
                 Light {
                     colour: light.color().into(),
                     intensity,
                     position: transform.extract_translation(),
+                    padding: 0,
                 }
             })
             .collect();
