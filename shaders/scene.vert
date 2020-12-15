@@ -6,7 +6,8 @@ layout(location = 2) in vec2 uv;
 layout(location = 3) in int texture_index;
 
 layout(location = 0) out vec2 out_uv;
-layout(location = 1) out int out_texture_index;
+
+layout(location = 1) out flat int out_texture_index;
 
 layout(set = 0, binding = 0) uniform Perspective {
     mat4 perspective;

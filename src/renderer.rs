@@ -51,6 +51,7 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    label: Some("device"),
                     features: wgpu::Features::empty(),
                     limits: wgpu::Limits::default(),
                     shader_validation: true,
@@ -90,8 +91,9 @@ impl Renderer {
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::UniformBuffer {
-                            dynamic: false,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
@@ -99,8 +101,9 @@ impl Renderer {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::UniformBuffer {
-                            dynamic: false,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
                             min_binding_size: None,
                         },
                         count: None,
@@ -108,7 +111,10 @@ impl Renderer {
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler { comparison: false },
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
                         count: None,
                     },
                 ],
@@ -120,11 +126,11 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(perspective_buffer.slice(..)),
+                    resource: perspective_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer(view_buffer.slice(..)),
+                    resource: view_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -136,7 +142,7 @@ impl Renderer {
         let swap_chain = device.create_swap_chain(
             &surface,
             &wgpu::SwapChainDescriptor {
-                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                 format: DISPLAY_FORMAT,
                 width: window_size.width,
                 height: window_size.height,
@@ -150,7 +156,7 @@ impl Renderer {
             window_size.width,
             window_size.height,
             DEPTH_FORMAT,
-            wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            wgpu::TextureUsage::RENDER_ATTACHMENT,
         );
 
         let level_bind_group_layout = level_bind_group_layout(&device);
@@ -236,7 +242,7 @@ impl Renderer {
         self.swap_chain = self.device.create_swap_chain(
             &self.surface,
             &wgpu::SwapChainDescriptor {
-                usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+                usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                 format: DISPLAY_FORMAT,
                 width: width,
                 height: height,
@@ -250,7 +256,7 @@ impl Renderer {
             width,
             height,
             DEPTH_FORMAT,
-            wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            wgpu::TextureUsage::RENDER_ATTACHMENT,
         );
 
         self.queue.write_buffer(
@@ -264,7 +270,7 @@ impl Renderer {
 fn perspective_matrix(width: u32, height: u32) -> Mat4 {
     ultraviolet::projection::perspective_wgpu_dx(
         // http://themetalmuncher.github.io/fov-calc/
-        59.0,
+        59.0_f32.to_radians(),
         width as f32 / height as f32,
         0.1,
         50.0,

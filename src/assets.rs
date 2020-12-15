@@ -1,22 +1,41 @@
 use crate::renderer::{Vertex, TEXTURE_FORMAT};
-use std::collections::HashMap;
 use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 pub fn level_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("level bind group layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStage::FRAGMENT,
-            ty: wgpu::BindingType::SampledTexture {
-                dimension: wgpu::TextureViewDimension::D2,
-                component_type: wgpu::TextureComponentType::Float,
-                multisampled: false,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                    multisampled: false,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
     })
+}
+
+#[repr(C)]
+#[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+struct Light {
+    colour: Vec3,
+    intensity: f32,
+    position: Vec3,
 }
 
 pub struct Level {
@@ -35,15 +54,34 @@ impl Level {
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
+        let mut node_tree: Vec<(Mat4, usize)> =
+            vec![(Mat4::identity(), usize::max_value()); gltf.nodes().count()];
+
+        for node in gltf.nodes() {
+            node_tree[node.index()].0 = node.transform().matrix().into();
+            for child in node.children() {
+                node_tree[child.index()].1 = node.index();
+            }
+        }
+
+        fn transform_of(mut node_index: usize, node_tree: &[(Mat4, usize)]) -> Mat4 {
+            let mut sum_transform = Mat4::identity();
+
+            while node_index != usize::max_value() {
+                let (transform, parent_index) = node_tree[node_index];
+                sum_transform = transform * sum_transform;
+                node_index = parent_index;
+            }
+
+            sum_transform
+        }
+
         let buffers = load_buffers(&gltf)?;
 
         let mut geometry_vertices = Vec::new();
         let mut geometry_indices = Vec::new();
 
         let num_textures = gltf.textures().count() as u32;
-
-        //let mut textures = Vec::new();
-        let mut gltf_texture_index_to_texture_array_index = HashMap::new();
 
         let texture_array_extent = wgpu::Extent3d {
             width: 128,
@@ -105,8 +143,6 @@ impl Level {
                 },
                 texture_array_extent,
             );
-
-            gltf_texture_index_to_texture_array_index.insert(texture.index(), i);
         }
 
         let texture_view = texture_array.create_view(&wgpu::TextureViewDescriptor {
@@ -116,13 +152,44 @@ impl Level {
             ..Default::default()
         });
 
+        let lights: Vec<_> = gltf
+            .nodes()
+            .filter_map(|node| node.light().map(|light| (node, light)))
+            .map(|(node, light)| {
+                assert!(matches!(
+                    light.kind(),
+                    gltf::khr_lights_punctual::Kind::Point
+                ));
+
+                let transform = transform_of(node.index(), &node_tree);
+
+                Light {
+                    colour: light.color().into(),
+                    intensity: light.intensity(),
+                    position: transform.extract_translation(),
+                }
+            })
+            .collect();
+
+        let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("level lights"),
+            contents: bytemuck::cast_slice(&lights),
+            usage: wgpu::BufferUsage::STORAGE,
+        });
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("level bind group"),
             layout: bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: lights_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         for (node, mesh) in gltf
@@ -147,8 +214,6 @@ impl Level {
                     .texture()
                     .index();
 
-                let texture_array_index = gltf_texture_index_to_texture_array_index[&texture_index];
-
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
                 let positions = reader.read_positions().unwrap();
@@ -165,7 +230,7 @@ impl Level {
                         .map(|i| i + num_vertices),
                 );
 
-                let transform: Mat4 = node.transform().matrix().into();
+                let transform: Mat4 = transform_of(node.index(), &node_tree);
 
                 positions
                     .zip(tex_coordinates)
@@ -179,17 +244,18 @@ impl Level {
                             position,
                             normal: n.into(),
                             uv: uv.into(),
-                            texture_index: texture_array_index as i32,
+                            texture_index: texture_index as i32,
                         });
                     });
             }
         }
 
         println!(
-            "Level loaded. Vertices: {}. Indices: {}. Textures: {}",
+            "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {:?}",
             geometry_vertices.len(),
             geometry_indices.len(),
             num_textures,
+            lights,
         );
 
         Ok(Self {

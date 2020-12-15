@@ -43,8 +43,8 @@ async fn run() -> anyhow::Result<()> {
         }
         Event::RedrawRequested(_) => {
             renderer.set_camera_view(ultraviolet::Mat4::look_at(
-                Vec3::broadcast(10.0),
-                Vec3::zero(),
+                Vec3::new(10.0, 10.0, 0.0),
+                Vec3::new(0.0, 5.0, 0.0),
                 Vec3::unit_y(),
             ));
 

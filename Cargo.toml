@@ -12,8 +12,8 @@ base64 = "0.13.0"
 bytemuck = { version = "1.4.1", features = ["derive"] }
 cgmath = "0.17.0"
 futures = "0.3.8"
-gltf = "0.15.2"
+gltf = { version = "0.15.2", features= ["KHR_lights_punctual"] }
 image = "0.23.12"
 ultraviolet = { version = "0.7.5", features = ["bytemuck"] }
-wgpu = "0.6.2"
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "gecko" }
 winit = "0.24.0"
