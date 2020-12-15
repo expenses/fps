@@ -6,6 +6,7 @@ const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
+const SAMPLE_COUNT: u32 = 4;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -28,6 +29,7 @@ pub struct Renderer {
     view_buffer: wgpu::Buffer,
     perspective_buffer: wgpu::Buffer,
     pub main_bind_group: wgpu::BindGroup,
+    pub multisampled_framebuffer_texture: wgpu::TextureView,
 }
 
 impl Renderer {
@@ -157,6 +159,17 @@ impl Renderer {
             window_size.height,
             DEPTH_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
+            SAMPLE_COUNT,
+        );
+
+        let multisampled_framebuffer_texture = create_texture(
+            &device,
+            "multisampled framebuffer texture",
+            window_size.width,
+            window_size.height,
+            DISPLAY_FORMAT,
+            wgpu::TextureUsage::RENDER_ATTACHMENT,
+            SAMPLE_COUNT,
         );
 
         let level_bind_group_layout = level_bind_group_layout(&device);
@@ -213,7 +226,7 @@ impl Renderer {
                     },
                 ],
             },
-            sample_count: 1,
+            sample_count: SAMPLE_COUNT,
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         });
@@ -230,6 +243,7 @@ impl Renderer {
             swap_chain,
             depth_texture,
             scene_render_pipeline,
+            multisampled_framebuffer_texture,
         })
     }
 
@@ -257,6 +271,17 @@ impl Renderer {
             height,
             DEPTH_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
+            SAMPLE_COUNT,
+        );
+
+        self.multisampled_framebuffer_texture = create_texture(
+            &self.device,
+            "multisampled framebuffer texture",
+            width,
+            height,
+            DISPLAY_FORMAT,
+            wgpu::TextureUsage::RENDER_ATTACHMENT,
+            SAMPLE_COUNT,
         );
 
         self.queue.write_buffer(
@@ -284,6 +309,7 @@ fn create_texture(
     height: u32,
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsage,
+    sample_count: u32,
 ) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -294,7 +320,7 @@ fn create_texture(
                 depth: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
