@@ -49,6 +49,13 @@ async fn run() -> anyhow::Result<()> {
         &renderer.level_bind_group_layout,
     )?;
 
+    let cylinder = assets::Level::load_gltf(
+        include_bytes!("../cylinder.glb"),
+        &renderer.device,
+        &mut init_encoder,
+        &renderer.level_bind_group_layout,
+    )?;
+
     let mut key_states = KeyStates::default();
     let mut player = Player {
         position: Vec3::new(0.0, 5.0, 0.0),
@@ -133,6 +140,23 @@ async fn run() -> anyhow::Result<()> {
 
             player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
 
+            /*
+            let movement: [f32; 3] =
+                (Mat3::from_rotation_y(-player.facing.horizontal) * movement * 60.0).into();
+            //println!("{:?}", movement);
+
+            let player_rigid_body = bodies.get_mut(player_rigid_body_handle).unwrap();
+            let mut position = *player_rigid_body.position();
+            position.rotation = Default::default();
+            player_rigid_body.set_position(position, false);
+
+            if movement != [0.0; 3] {
+                player_rigid_body.set_linvel([-movement[0], movement[1], -movement[2]].into(), true);
+            }
+
+            let position: [f32; 3] = position.translation.vector.into();
+            player.position = position.into();*/
+
             renderer.window.request_redraw();
         }
         Event::RedrawRequested(_) => {
@@ -185,6 +209,12 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                     render_pass.set_index_buffer(level.geometry_indices.slice(..));
                     render_pass.draw_indexed(0..level.num_indices, 0, 0..1);
+
+                    render_pass.set_bind_group(1, &cylinder.bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, cylinder.geometry_vertices.slice(..));
+                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
+                    render_pass.set_index_buffer(cylinder.geometry_indices.slice(..));
+                    render_pass.draw_indexed(0..cylinder.num_indices, 0, 0..1);
 
                     drop(render_pass);
 
