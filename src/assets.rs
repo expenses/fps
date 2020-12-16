@@ -33,10 +33,10 @@ pub fn level_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 #[repr(C)]
 #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 struct Light {
-    colour: Vec3,
-    intensity: f32,
+    output: Vec3,
+    padding_0: i32,
     position: Vec3,
-    padding: i32,
+    padding_1: i32,
 }
 
 pub struct Level {
@@ -168,12 +168,13 @@ impl Level {
                 // https://github.com/KhronosGroup/glTF-Blender-IO/issues/564.
                 // Reducing by 2 again seems to bring it in line with blender but idk why
                 let intensity = light.intensity() / (2.0 * 4.0 * std::f32::consts::PI);
+                let colour: Vec3 = light.color().into();
 
                 Light {
-                    colour: light.color().into(),
-                    intensity,
+                    output: colour * intensity,
+                    padding_0: 0,
                     position: transform.extract_translation(),
-                    padding: 0,
+                    padding_1: 0,
                 }
             })
             .collect();

@@ -12,8 +12,7 @@ layout(set = 0, binding = 2) uniform sampler u_sampler;
 layout(set = 1, binding = 0) uniform texture2DArray u_texture;
 
 struct Light {
-    vec3 colour;
-    float intensity;
+    vec3 colour_output;
     vec3 position;
 };
 
@@ -32,13 +31,16 @@ void main() {
     for (int i = 0; i < lights.length(); i++) {
         Light light = lights[i];
 
-        float distance = length(light.position - pos);
+        vec3 vector = light.position - pos;
+
+        float distance = length(vector);
         float intensity_at_point = pow(distance, -2.0);
 
-        vec3 light_dir = normalize(light.position - pos);
-        float diffuse = max(dot(norm, light_dir), 0.0);
+        vec3 light_dir = normalize(vector);
+        float facing = max(dot(norm, light_dir), 0.0);
 
-        total += diffuse * light.colour * intensity_at_point * light.intensity;
+        // Multiplying the `floats` first results in one less `OpVectorTimesScalar` in the spirv
+        total += (facing * intensity_at_point) * light.colour_output;
     }
 
     vec4 sampled = texture(sampler2DArray(u_texture, u_sampler), vec3(uv, texture_index));
