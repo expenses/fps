@@ -23,8 +23,8 @@ layout(set = 0, binding = 1) uniform View {
 void main() {
     out_uv = uv;
     out_texture_index = texture_index;
-    out_pos = pos;
-    out_normal = normal;
+    out_pos = vec3(transform * vec4(pos, 1.0));
+    out_normal = mat3(transpose(inverse(transform))) * normal;
 
     gl_Position = perspective * view * transform * vec4(pos, 1.0);
 }
