@@ -17,6 +17,12 @@ pub struct Vertex {
     pub texture_index: i32,
 }
 
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct Instance {
+    pub transform: Mat4,
+}
+
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -30,6 +36,7 @@ pub struct Renderer {
     perspective_buffer: wgpu::Buffer,
     pub main_bind_group: wgpu::BindGroup,
     pub multisampled_framebuffer_texture: wgpu::TextureView,
+    pub identity_instance_buffer: wgpu::Buffer,
 }
 
 impl Renderer {
@@ -228,12 +235,25 @@ impl Renderer {
                         step_mode: wgpu::InputStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int],
                     },
+                    wgpu::VertexBufferDescriptor {
+                        stride: std::mem::size_of::<Instance>() as u64,
+                        step_mode: wgpu::InputStepMode::Instance,
+                        attributes: &wgpu::vertex_attr_array![4 => Float4, 5 => Float4, 6 => Float4, 7 => Float4],
+                    },
                 ],
             },
             sample_count: SAMPLE_COUNT,
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         });
+
+        let identity_instance_buffer = single_instance_buffer(
+            &device,
+            Instance {
+                transform: Mat4::identity(),
+            },
+            "identity instance buffer",
+        );
 
         Ok(Self {
             level_bind_group_layout,
@@ -248,6 +268,7 @@ impl Renderer {
             depth_texture,
             scene_render_pipeline,
             multisampled_framebuffer_texture,
+            identity_instance_buffer,
         })
     }
 
@@ -297,7 +318,10 @@ impl Renderer {
 
     pub fn screen_center(&self) -> winit::dpi::LogicalPosition<f64> {
         let window_size = self.window.inner_size();
-        winit::dpi::LogicalPosition::new(window_size.width as f64, window_size.height as f64)
+        winit::dpi::LogicalPosition::new(
+            window_size.width as f64 / 2.0,
+            window_size.height as f64 / 2.0,
+        )
     }
 }
 
@@ -335,4 +359,16 @@ fn create_texture(
             usage,
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+pub fn single_instance_buffer(
+    device: &wgpu::Device,
+    instance: Instance,
+    label: &str,
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: bytemuck::bytes_of(&instance),
+        usage: wgpu::BufferUsage::VERTEX,
+    })
 }

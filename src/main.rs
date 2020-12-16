@@ -3,7 +3,7 @@ mod assets;
 mod renderer;
 
 use std::f32::consts::PI;
-use ultraviolet::{Mat3, Mat4, Vec2, Vec3};
+use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
@@ -25,6 +25,7 @@ struct Player {
     facing: PlayerFacing,
 }
 
+#[derive(Debug)]
 struct PlayerFacing {
     horizontal: f32,
     vertical: f32,
@@ -50,7 +51,7 @@ async fn run() -> anyhow::Result<()> {
 
     let mut key_states = KeyStates::default();
     let mut player = Player {
-        position: Vec3::new(0.0, -5.0, 0.0),
+        position: Vec3::new(0.0, 5.0, 0.0),
         facing: PlayerFacing {
             horizontal: 0.0,
             vertical: 0.0,
@@ -99,7 +100,7 @@ async fn run() -> anyhow::Result<()> {
                 renderer.window.set_cursor_position(screen_center).unwrap();
 
                 player.facing.horizontal -= delta.x.to_radians() * 0.05;
-                player.facing.vertical = (player.facing.vertical + delta.y.to_radians() * 0.05)
+                player.facing.vertical = (player.facing.vertical - delta.y.to_radians() * 0.05)
                     .min(PI / 2.0)
                     .max(-PI / 2.0);
             }
@@ -111,19 +112,23 @@ async fn run() -> anyhow::Result<()> {
             let mut movement = Vec3::zero();
 
             if key_states.forwards_pressed {
-                movement.z += speed;
-            }
-
-            if key_states.backwards_pressed {
                 movement.z -= speed;
             }
 
+            if key_states.backwards_pressed {
+                movement.z += speed;
+            }
+
             if key_states.left_pressed {
-                movement.x += speed;
+                movement.x -= speed;
             }
 
             if key_states.right_pressed {
-                movement.x -= speed;
+                movement.x += speed;
+            }
+
+            if key_states.jump_pressed {
+                movement.y += speed;
             }
 
             player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
@@ -131,11 +136,11 @@ async fn run() -> anyhow::Result<()> {
             renderer.window.request_redraw();
         }
         Event::RedrawRequested(_) => {
-            renderer.set_camera_view({
-                Mat4::from_rotation_x(player.facing.vertical)
-                    * Mat4::from_rotation_y(player.facing.horizontal)
-                    * Mat4::from_translation(player.position)
-            });
+            renderer.set_camera_view(fps_view_rh(
+                player.position,
+                player.facing.vertical,
+                player.facing.horizontal,
+            ));
 
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
@@ -174,8 +179,10 @@ async fn run() -> anyhow::Result<()> {
 
                     render_pass.set_pipeline(&renderer.scene_render_pipeline);
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
+
                     render_pass.set_bind_group(1, &level.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, level.geometry_vertices.slice(..));
+                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                     render_pass.set_index_buffer(level.geometry_indices.slice(..));
                     render_pass.draw_indexed(0..level.num_indices, 0, 0..1);
 
@@ -190,4 +197,27 @@ async fn run() -> anyhow::Result<()> {
     });
 
     Ok(())
+}
+
+// https://www.3dgep.com/understanding-the-view-matrix/#FPS_Camera
+fn fps_view_rh(eye: Vec3, pitch: f32, yaw: f32) -> Mat4 {
+    let x_axis = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+    let y_axis = Vec3::new(
+        yaw.sin() * pitch.sin(),
+        pitch.cos(),
+        yaw.cos() * pitch.sin(),
+    );
+    let z_axis = Vec3::new(
+        yaw.sin() * pitch.cos(),
+        -pitch.sin(),
+        pitch.cos() * yaw.cos(),
+    );
+
+    // Create a 4x4 view matrix from the right, up, forward and eye position vectors
+    Mat4::new(
+        Vec4::new(x_axis.x, y_axis.x, z_axis.x, 0.0),
+        Vec4::new(x_axis.y, y_axis.y, z_axis.y, 0.0),
+        Vec4::new(x_axis.z, y_axis.z, z_axis.z, 0.0),
+        Vec4::new(-x_axis.dot(eye), -y_axis.dot(eye), -z_axis.dot(eye), 1.0),
+    )
 }
