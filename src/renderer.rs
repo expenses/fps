@@ -36,8 +36,12 @@ impl Renderer {
     pub async fn new(event_loop: &winit::event_loop::EventLoop<()>) -> anyhow::Result<Self> {
         let window = winit::window::WindowBuilder::new().build(event_loop)?;
 
+        window.set_cursor_visible(false);
+
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
         let surface = unsafe { instance.create_surface(&window) };
+
+        window.set_cursor_grab(true)?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -289,6 +293,11 @@ impl Renderer {
             0,
             bytemuck::bytes_of(&perspective_matrix(width, height)),
         );
+    }
+
+    pub fn screen_center(&self) -> winit::dpi::LogicalPosition<f64> {
+        let window_size = self.window.inner_size();
+        winit::dpi::LogicalPosition::new(window_size.width as f64, window_size.height as f64)
     }
 }
 
