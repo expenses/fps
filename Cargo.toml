@@ -17,3 +17,7 @@ image = { version = "0.23.12", default-features = false, features = ["png"] }
 ultraviolet = { version = "0.7.5", features = ["bytemuck"] }
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "gecko" }
 winit = "0.24.0"
+
+[patch."https://github.com/gfx-rs/wgpu"]
+wgpu-core = { path = "wgpu/wgpu-core" }
+wgpu-types = { path = "wgpu/wgpu-types" }
