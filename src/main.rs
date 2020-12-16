@@ -31,6 +31,16 @@ struct PlayerFacing {
     vertical: f32,
 }
 
+struct PhysicsDebugEventPrinter;
+
+impl rapier3d::pipeline::EventHandler for PhysicsDebugEventPrinter {
+    fn handle_proximity_event(&self, _: rapier3d::geometry::ProximityEvent) {}
+
+    fn handle_contact_event(&self, e: rapier3d::geometry::ContactEvent) {
+        println!("Physics contact event: {:?}", e);
+    }
+}
+
 async fn run() -> anyhow::Result<()> {
     let event_loop = winit::event_loop::EventLoop::new();
     let mut renderer = renderer::Renderer::new(&event_loop).await?;
@@ -42,14 +52,14 @@ async fn run() -> anyhow::Result<()> {
                 label: Some("init encoder"),
             });
 
-    let level = assets::Level::load_gltf(
+    let (level, level_physics) = assets::Level::load_gltf(
         include_bytes!("../warehouse.glb"),
         &renderer.device,
         &mut init_encoder,
         &renderer.level_bind_group_layout,
     )?;
 
-    let cylinder = assets::Level::load_gltf(
+    let (cylinder, _) = assets::Level::load_gltf(
         include_bytes!("../cylinder.glb"),
         &renderer.device,
         &mut init_encoder,
@@ -68,6 +78,29 @@ async fn run() -> anyhow::Result<()> {
     let mut screen_center = renderer.screen_center();
 
     renderer.queue.submit(Some(init_encoder.finish()));
+
+    let mut physics_pipeline = rapier3d::pipeline::PhysicsPipeline::new();
+    let gravity = rapier3d::na::Vector3::new(0.0, -1.0 * 60.0, 0.0);
+    let integration_parameters = rapier3d::dynamics::IntegrationParameters::default();
+    let mut broad_phase = rapier3d::geometry::BroadPhase::new();
+    let mut narrow_phase = rapier3d::geometry::NarrowPhase::new();
+    let mut bodies = rapier3d::dynamics::RigidBodySet::new();
+    let mut colliders = rapier3d::geometry::ColliderSet::new();
+    let mut joints = rapier3d::dynamics::JointSet::new();
+
+    let level_rigid_body_handle = bodies.insert(level_physics.rigid_body);
+    let level_collider_handle =
+        colliders.insert(level_physics.collider, level_rigid_body_handle, &mut bodies);
+
+    let player_rigid_body = rapier3d::dynamics::RigidBodyBuilder::new_dynamic()
+        .translation(0.0, 4.0, 0.0)
+        .build();
+    let player_rigid_body_handle = bodies.insert(player_rigid_body);
+    let player_collider = rapier3d::geometry::ColliderBuilder::cylinder(2.0, 1.0)
+        .friction(1000.0)
+        .build();
+    let player_collider_handle =
+        colliders.insert(player_collider, player_rigid_body_handle, &mut bodies);
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent { ref event, .. } => match event {
@@ -114,6 +147,21 @@ async fn run() -> anyhow::Result<()> {
             _ => {}
         },
         Event::MainEventsCleared => {
+            physics_pipeline.step(
+                &gravity,
+                &integration_parameters,
+                &mut broad_phase,
+                &mut narrow_phase,
+                &mut bodies,
+                &mut colliders,
+                &mut joints,
+                None,
+                None,
+                &PhysicsDebugEventPrinter,
+            );
+
+            let mut position: [f32; 3] = bodies.get(player_rigid_body_handle).unwrap().position().translation.vector.into();
+
             let speed = 0.2;
 
             let mut movement = Vec3::zero();
@@ -138,9 +186,6 @@ async fn run() -> anyhow::Result<()> {
                 movement.y += speed;
             }
 
-            player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
-
-            /*
             let movement: [f32; 3] =
                 (Mat3::from_rotation_y(-player.facing.horizontal) * movement * 60.0).into();
             //println!("{:?}", movement);
@@ -151,11 +196,11 @@ async fn run() -> anyhow::Result<()> {
             player_rigid_body.set_position(position, false);
 
             if movement != [0.0; 3] {
-                player_rigid_body.set_linvel([-movement[0], movement[1], -movement[2]].into(), true);
+                player_rigid_body.set_linvel([movement[0], movement[1], movement[2]].into(), true);
             }
 
             let position: [f32; 3] = position.translation.vector.into();
-            player.position = position.into();*/
+            player.position = position.into();
 
             renderer.window.request_redraw();
         }
@@ -165,6 +210,20 @@ async fn run() -> anyhow::Result<()> {
                 player.facing.vertical,
                 player.facing.horizontal,
             ));
+
+            let cylinder_transform: [[f32; 4]; 4] = bodies
+                .get(player_rigid_body_handle)
+                .unwrap()
+                .position()
+                .to_homogeneous()
+                .into();
+            let cylinder_instance = renderer::single_instance_buffer(
+                &renderer.device,
+                renderer::Instance {
+                    transform: cylinder_transform.into(),
+                },
+                "cylinder instance",
+            );
 
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
@@ -212,7 +271,7 @@ async fn run() -> anyhow::Result<()> {
 
                     render_pass.set_bind_group(1, &cylinder.bind_group, &[]);
                     render_pass.set_vertex_buffer(0, cylinder.geometry_vertices.slice(..));
-                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
+                    render_pass.set_vertex_buffer(1, cylinder_instance.slice(..));
                     render_pass.set_index_buffer(cylinder.geometry_indices.slice(..));
                     render_pass.draw_indexed(0..cylinder.num_indices, 0, 0..1);
 

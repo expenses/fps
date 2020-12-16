@@ -46,13 +46,18 @@ pub struct Level {
     pub bind_group: wgpu::BindGroup,
 }
 
+pub struct LevelPhysics {
+    pub collider: rapier3d::geometry::Collider,
+    pub rigid_body: rapier3d::dynamics::RigidBody,
+}
+
 impl Level {
     pub fn load_gltf(
         gltf_bytes: &[u8],
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<(Self, LevelPhysics)> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
         let mut node_tree: Vec<(Mat4, usize)> =
@@ -262,6 +267,28 @@ impl Level {
             }
         }
 
+        let physics_collider = rapier3d::geometry::ColliderBuilder::trimesh(
+            geometry_vertices
+                .iter()
+                .map(|vertex| {
+                    let position: [f32; 3] = vertex.position.into();
+                    position.into()
+                })
+                .collect(),
+            geometry_indices
+                .chunks(3)
+                .map(|slice| [slice[0], slice[1], slice[2]].into())
+                .collect(),
+        )
+        .build();
+
+        let physics_rigid_body = rapier3d::dynamics::RigidBodyBuilder::new_static().build();
+
+        let level_physics = LevelPhysics {
+            collider: physics_collider,
+            rigid_body: physics_rigid_body,
+        };
+
         println!(
             "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
             geometry_vertices.len(),
@@ -270,20 +297,23 @@ impl Level {
             lights.len(),
         );
 
-        Ok(Self {
-            geometry_vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("level geometry vertices"),
-                contents: bytemuck::cast_slice(&geometry_vertices),
-                usage: wgpu::BufferUsage::VERTEX,
-            }),
-            geometry_indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("level geometry indices"),
-                contents: bytemuck::cast_slice(&geometry_indices),
-                usage: wgpu::BufferUsage::INDEX,
-            }),
-            num_indices: geometry_indices.len() as u32,
-            bind_group,
-        })
+        Ok((
+            Self {
+                geometry_vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("level geometry vertices"),
+                    contents: bytemuck::cast_slice(&geometry_vertices),
+                    usage: wgpu::BufferUsage::VERTEX,
+                }),
+                geometry_indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("level geometry indices"),
+                    contents: bytemuck::cast_slice(&geometry_indices),
+                    usage: wgpu::BufferUsage::INDEX,
+                }),
+                num_indices: geometry_indices.len() as u32,
+                bind_group,
+            },
+            level_physics,
+        ))
     }
 }
 
