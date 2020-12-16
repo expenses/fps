@@ -1,4 +1,3 @@
-use crate::assets::level_bind_group_layout;
 use ultraviolet::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
@@ -26,7 +25,8 @@ pub struct Instance {
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub level_bind_group_layout: wgpu::BindGroupLayout,
+    pub lights_bind_group_layout: wgpu::BindGroupLayout,
+    pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
     pub window: winit::window::Window,
     pub swap_chain: wgpu::SwapChain,
     pub depth_texture: wgpu::TextureView,
@@ -183,12 +183,44 @@ impl Renderer {
             SAMPLE_COUNT,
         );
 
-        let level_bind_group_layout = level_bind_group_layout(&device);
+        let texture_array_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture array bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            });
+
+        let lights_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("lights bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         let scene_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("scene render pipeline layout"),
-                bind_group_layouts: &[&main_bind_group_layout, &level_bind_group_layout],
+                bind_group_layouts: &[
+                    &main_bind_group_layout,
+                    &texture_array_bind_group_layout,
+                    &lights_bind_group_layout,
+                ],
                 push_constant_ranges: &[],
             });
 
@@ -256,7 +288,6 @@ impl Renderer {
         );
 
         Ok(Self {
-            level_bind_group_layout,
             device,
             queue,
             window,
@@ -269,6 +300,8 @@ impl Renderer {
             scene_render_pipeline,
             multisampled_framebuffer_texture,
             identity_instance_buffer,
+            texture_array_bind_group_layout,
+            lights_bind_group_layout,
         })
     }
 

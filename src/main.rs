@@ -46,14 +46,16 @@ async fn run() -> anyhow::Result<()> {
         include_bytes!("../warehouse.glb"),
         &renderer.device,
         &mut init_encoder,
-        &renderer.level_bind_group_layout,
+        &renderer.texture_array_bind_group_layout,
+        &renderer.lights_bind_group_layout,
     )?;
 
     let cylinder = assets::Level::load_gltf(
         include_bytes!("../cylinder.glb"),
         &renderer.device,
         &mut init_encoder,
-        &renderer.level_bind_group_layout,
+        &renderer.texture_array_bind_group_layout,
+        &renderer.lights_bind_group_layout,
     )?;
 
     let mut key_states = KeyStates::default();
@@ -74,7 +76,8 @@ async fn run() -> anyhow::Result<()> {
             WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
             WindowEvent::Resized(size) => {
                 renderer.resize(size.width as u32, size.height as u32);
-                let mut screen_center = renderer.screen_center();
+                screen_center = renderer.screen_center();
+                renderer.window.set_cursor_position(screen_center).unwrap();
             }
             WindowEvent::KeyboardInput {
                 input:
@@ -203,14 +206,15 @@ async fn run() -> anyhow::Result<()> {
 
                     render_pass.set_pipeline(&renderer.scene_render_pipeline);
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
+                    render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
-                    render_pass.set_bind_group(1, &level.bind_group, &[]);
+                    render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, level.geometry_vertices.slice(..));
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                     render_pass.set_index_buffer(level.geometry_indices.slice(..));
                     render_pass.draw_indexed(0..level.num_indices, 0, 0..1);
 
-                    render_pass.set_bind_group(1, &cylinder.bind_group, &[]);
+                    render_pass.set_bind_group(1, &cylinder.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, cylinder.geometry_vertices.slice(..));
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                     render_pass.set_index_buffer(cylinder.geometry_indices.slice(..));
