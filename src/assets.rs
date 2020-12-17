@@ -2,34 +2,6 @@ use crate::renderer::{Vertex, TEXTURE_FORMAT};
 use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-pub fn level_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("level bind group layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStage::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    })
-}
-
 #[repr(C)]
 #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 struct Light {
@@ -43,7 +15,8 @@ pub struct Level {
     pub geometry_vertices: wgpu::Buffer,
     pub geometry_indices: wgpu::Buffer,
     pub num_indices: u32,
-    pub bind_group: wgpu::BindGroup,
+    pub texture_array_bind_group: wgpu::BindGroup,
+    pub lights_bind_group: wgpu::BindGroup,
 }
 
 pub struct LevelPhysics {
@@ -56,7 +29,8 @@ impl Level {
         gltf_bytes: &[u8],
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        bind_group_layout: &wgpu::BindGroupLayout,
+        texture_array_bind_group_layout: &wgpu::BindGroupLayout,
+        lights_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> anyhow::Result<(Self, LevelPhysics)> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
@@ -190,19 +164,22 @@ impl Level {
             usage: wgpu::BufferUsage::STORAGE,
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("level bind group"),
-            layout: bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: lights_buffer.as_entire_binding(),
-                },
-            ],
+        let texture_array_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("texture array bind group"),
+            layout: texture_array_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            }],
+        });
+
+        let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lights bind group"),
+            layout: lights_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lights_buffer.as_entire_binding(),
+            }],
         });
 
         for (node, mesh) in gltf
@@ -310,7 +287,8 @@ impl Level {
                     usage: wgpu::BufferUsage::INDEX,
                 }),
                 num_indices: geometry_indices.len() as u32,
-                bind_group,
+                texture_array_bind_group,
+                lights_bind_group,
             },
             level_physics,
         ))
@@ -354,65 +332,3 @@ fn load_buffers(gltf: &gltf::Gltf) -> anyhow::Result<Vec<Vec<u8>>> {
 
     Ok(buffers)
 }
-
-/*
-fn load_texture(
-    bytes: &[u8],
-    label: &str,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    device: &wgpu::Device,
-    encoder: &mut wgpu::CommandEncoder,
-) -> anyhow::Result<wgpu::BindGroup> {
-    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba();
-
-    let temp_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Cheese texture staging buffer"),
-        contents: &*image,
-        usage: wgpu::BufferUsage::COPY_SRC,
-    });
-
-    let texture_extent = wgpu::Extent3d {
-        width: image.width(),
-        height: image.height(),
-        depth: 1,
-    };
-
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        size: texture_extent,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: TEXTURE_FORMAT,
-        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-        label: Some(label),
-    });
-
-    encoder.copy_buffer_to_texture(
-        wgpu::BufferCopyView {
-            buffer: &temp_buf,
-            layout: wgpu::TextureDataLayout {
-                offset: 0,
-                bytes_per_row: 4 * image.width(),
-                rows_per_image: 0,
-            },
-        },
-        wgpu::TextureCopyView {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-        },
-        texture_extent,
-    );
-
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-    Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Cheese texture bind group"),
-        layout: bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&view),
-        }],
-    }))
-}
-*/

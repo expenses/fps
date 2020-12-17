@@ -16,7 +16,7 @@ struct Light {
     vec3 position;
 };
 
-layout(set = 1, binding = 1) readonly buffer Lights {
+layout(set = 2, binding = 0) readonly buffer Lights {
 	Light lights[];
 };
 
