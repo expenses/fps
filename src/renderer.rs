@@ -266,6 +266,7 @@ impl Renderer {
             &vs_model_module,
             &fs_model_module,
             replace_colour_descriptor(),
+            true,
             wgpu::CompareFunction::Less,
         );
 
@@ -276,6 +277,8 @@ impl Renderer {
             &vs_model_module,
             &fs_model_module,
             alpha_blend_colour_descriptor(),
+            // Can't remember if this is a good idea or not.
+            false,
             wgpu::CompareFunction::Less,
         );
 
@@ -286,6 +289,7 @@ impl Renderer {
             &vs_skybox_module,
             &fs_skybox_module,
             replace_colour_descriptor(),
+            true,
             wgpu::CompareFunction::Equal,
         );
 
@@ -452,6 +456,7 @@ fn create_render_pipeline(
     vs_module: &wgpu::ShaderModule,
     fs_module: &wgpu::ShaderModule,
     colour_descriptor: wgpu::ColorStateDescriptor,
+    depth_write_enabled: bool,
     depth_compare: wgpu::CompareFunction,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -473,7 +478,7 @@ fn create_render_pipeline(
         color_states: &[colour_descriptor],
         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
             format: DEPTH_FORMAT,
-            depth_write_enabled: true,
+            depth_write_enabled,
             depth_compare,
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
