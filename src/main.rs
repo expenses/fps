@@ -99,7 +99,7 @@ async fn run() -> anyhow::Result<()> {
         .build();
     let player_rigid_body_handle = bodies.insert(player_rigid_body);
     let player_collider = rapier3d::geometry::ColliderBuilder::cylinder(2.0, 1.0)
-        .friction(1000.0)
+        //.friction(1000.0)
         .build();
     let player_collider_handle =
         colliders.insert(player_collider, player_rigid_body_handle, &mut bodies);
@@ -204,12 +204,14 @@ async fn run() -> anyhow::Result<()> {
             position.rotation = Default::default();
             player_rigid_body.set_position(position, false);
 
+            player_rigid_body.set_linvel([0.0; 3].into(), true);
+
             if movement != [0.0; 3] {
                 player_rigid_body.set_linvel([movement[0], movement[1], movement[2]].into(), true);
             }
 
             let position: [f32; 3] = position.translation.vector.into();
-            //player.position = position.into();
+            player.position = position.into();
 
             renderer.window.request_redraw();
         }
