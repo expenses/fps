@@ -108,7 +108,7 @@ async fn run() -> anyhow::Result<()> {
     );
 
     collision_world.add(
-        ncollide3d::math::Isometry::translation(0.0, 0.0, 0.0),
+        vec3_to_ncollide_iso(Vec3::zero()),
         ncollide3d::shape::ShapeHandle::<f32>::new(level_collider.collision_mesh),
         level_collision_group,
         ncollide3d::pipeline::object::GeometricQueryType::Contacts(0.0, 0.0),
@@ -271,17 +271,18 @@ async fn run() -> anyhow::Result<()> {
                                 };
                                 let contact_point: Vec3 = contact_point.into();
                                 let epsilon = 0.01;
+                                let body_radius = 0.5;
 
                                 println!("{:?} {:?}", player.position, contact_point);
 
                                 let mut wall_direction = player.position - contact_point;
 
-                                // Need to handle this case
                                 if wall_direction.x == 0.0 && wall_direction.z == 0.0 {
+                                    // Need to handle this case
                                 } else {
                                     println!("{} {}", wall_direction.y, player.position.y);
                                     wall_direction.y = 0.0;
-                                    let push_strength = 0.5 + epsilon - wall_direction.mag();
+                                    let push_strength = (body_radius - wall_direction.mag()) + epsilon;
                                     let push = wall_direction.normalized() * push_strength;
 
                                     println!(
