@@ -225,6 +225,9 @@ async fn run() -> anyhow::Result<()> {
 
             let mut collisions_need_updating = movement != Vec3::zero() || !player.on_ground;
 
+            let mut was_body_started = false;
+            let mut first = true;
+
             while collisions_need_updating {
                 collisions_need_updating = false;
 
@@ -240,6 +243,8 @@ async fn run() -> anyhow::Result<()> {
                     ));
 
                 collision_world.update();
+
+                let mut body_stopped = false;
 
                 for event in collision_world.contact_events() {
                     let (contact_manifold, handle_1, handle_2) = match event {
@@ -284,39 +289,72 @@ async fn run() -> anyhow::Result<()> {
                                 println!("{:?}", player.position);
                                 player.on_ground = true;
                             } else {
-                                // todo: loop through all contacts.
+                                was_body_started = true;
 
-                                let contact = manifold.deepest_contact().unwrap().contact;
+                                let mut total_push = Vec3::zero();
 
-                                let contact_point: [f32; 3] = if player_first {
-                                    contact.world2.coords.into()
-                                } else {
-                                    contact.world1.coords.into()
-                                };
-                                let contact_point: Vec3 = contact_point.into();
-                                let epsilon = 0.01;
-                                let body_radius = 0.5;
+                                let mut contacts: Vec<Vec3> = manifold.contacts()
+                                    .map(|contact| {
+                                        let contact_point: [f32; 3] = if player_first {
+                                            contact.contact.world2.coords.into()
+                                        } else {
+                                            contact.contact.world1.coords.into()
+                                        };
+                                        contact_point.into()
+                                    })
+                                    .collect();
 
-                                println!("{:?} {:?}", player.position, contact_point);
+                                contacts.sort_by_key(|contact| (
+                                    ordered_float::OrderedFloat(contact.x),
+                                    ordered_float::OrderedFloat(contact.z)
+                                ));
 
-                                let mut wall_direction = player.position - contact_point;
+                                println!("{}", contacts.len());
 
-                                if wall_direction.x == 0.0 && wall_direction.z == 0.0 {
-                                    // Need to handle this case
-                                } else {
-                                    println!("{} {}", wall_direction.y, player.position.y);
-                                    wall_direction.y = 0.0;
-                                    let push_strength =
-                                        (body_radius - wall_direction.mag()) + epsilon;
-                                    let push = wall_direction.normalized() * push_strength;
+                                contacts.dedup_by(|a, b| {
+                                    float_cmp::approx_eq!(f32, a.x, b.x, epsilon = 0.0001) &&
+                                    float_cmp::approx_eq!(f32, a.z, b.z, epsilon = 0.0001)
+                                });
 
-                                    println!(
-                                        "{:?} {:?} {:?}",
-                                        wall_direction, push, player.position
+
+                                if contacts.len() > 1 {
+                                    println!("{:?}", contacts);
+                                }
+
+                                for contact_point in contacts {
+                                    renderer::debug_lines::draw_line(
+                                        contact_point,
+                                        Vec3::new(player.position.x, contact_point.y, player.position.z),
+                                        Vec4::one(),
+                                        |vertex| debug_line_vertices.push(vertex)
                                     );
 
-                                    player.position += push;
+                                    let epsilon = 0.001;
+                                    let body_radius = 0.5;
+
+                                    let mut vector_away_from_wall = player.position - contact_point;
+
+                                    if vector_away_from_wall.x == 0.0 && vector_away_from_wall.z == 0.0 {
+                                        // Need to handle this case
+                                    } else {
+                                        vector_away_from_wall.y = 0.0;
+                                        let push_strength =
+                                            (body_radius - vector_away_from_wall.mag()) + epsilon;
+                                        let push_strength = push_strength.max(0.0);
+                                        let push = vector_away_from_wall.normalized() * push_strength;
+
+                                        println!(
+                                            "player: {:?}\nvector_away_from_wall: {:?}\npush: {:?}\ncp {:?} ps {}\nnew: {:?}\nxxx",
+                                            player.position, vector_away_from_wall, push, contact_point, push_strength, player.position + push
+                                        );
+
+                                        total_push += push;
+                                    }
                                 }
+
+                                println!("---");
+
+                                player.position += total_push;
                             }
 
                             collisions_need_updating = true;
@@ -324,10 +362,18 @@ async fn run() -> anyhow::Result<()> {
                         None => {
                             if is_feet {
                                 player.on_ground = false;
+                            } else {
+                                body_stopped = true;
                             }
                         }
                     }
                 }
+
+                if was_body_started && !first {
+                    assert_eq!(body_stopped, true);
+                }
+
+                first = false;
             }
 
             renderer.window.request_redraw();
@@ -346,6 +392,11 @@ async fn run() -> anyhow::Result<()> {
                 },
                 "player position instance",
             );
+
+            for _ in 0 .. debug_line_vertices.len().saturating_sub(40) {
+                debug_line_vertices.remove(0);
+            }
+
 
             let debug_lines_buffer =
             renderer

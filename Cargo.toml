@@ -11,10 +11,12 @@ anyhow = "1.0.35"
 base64 = "0.13.0"
 bytemuck = { version = "1.4.1", features = ["derive"] }
 cgmath = "0.17.0"
+float-cmp = "0.8.0"
 futures = "0.3.8"
 gltf = { version = "0.15.2", default-features = false, features= ["utils", "KHR_lights_punctual"] }
 image = { version = "0.23.12", default-features = false, features = ["png"] }
 ncollide3d = "0.26.1"
+ordered-float = "2.0.1"
 ultraviolet = { version = "0.7.5", features = ["bytemuck"] }
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "gecko" }
 winit = "0.24.0"
