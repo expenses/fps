@@ -4,6 +4,7 @@ mod renderer;
 
 use std::f32::consts::PI;
 use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
@@ -67,6 +68,27 @@ async fn run() -> anyhow::Result<()> {
     )?;
 
     renderer.queue.submit(Some(init_encoder.finish()));
+
+    let mut debug_line_vertices: Vec<renderer::debug_lines::Vertex> = Vec::new();
+
+    /*
+    for face in level_collider.collision_mesh.faces() {
+        let points = level_collider.collision_mesh.points();
+        let a: [f32; 3] = points[face.indices.x].coords.into();
+        let b: [f32; 3] = points[face.indices.y].coords.into();
+        let c: [f32; 3] = points[face.indices.z].coords.into();
+        renderer::debug_lines::draw_tri(
+            a.into(),
+            b.into(),
+            c.into(),
+            Vec4::new(1.0, 0.5, 0.25, 1.0),
+            |vertex| {
+                debug_line_vertices.push(vertex);
+            },
+        )
+    }*/
+
+    let debug_lines_pipeline = renderer::debug_lines::debug_lines_pipeline(&renderer);
 
     let mut key_states = KeyStates::default();
     let mut player = Player {
@@ -325,6 +347,16 @@ async fn run() -> anyhow::Result<()> {
                 "player position instance",
             );
 
+            let debug_lines_buffer =
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("debug line vertices"),
+                    contents: bytemuck::cast_slice(&debug_line_vertices),
+                    usage: wgpu::BufferUsage::VERTEX,
+                });
+
+
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
                     let mut encoder =
@@ -388,6 +420,10 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                     render_pass.set_index_buffer(level.transparent_geometry.indices.slice(..));
                     render_pass.draw_indexed(0..level.transparent_geometry.num_indices, 0, 0..1);
+
+                    render_pass.set_pipeline(&debug_lines_pipeline);
+                    render_pass.set_vertex_buffer(0, debug_lines_buffer.slice(..));
+                    render_pass.draw(0 .. debug_line_vertices.len() as u32, 0 .. 1);
 
                     drop(render_pass);
 

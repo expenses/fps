@@ -1,6 +1,8 @@
 use ultraviolet::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
+pub mod debug_lines;
+
 const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -25,6 +27,7 @@ pub struct Instance {
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
+    pub main_bind_group_layout: wgpu::BindGroupLayout,
     pub lights_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
     pub skybox_texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -319,6 +322,7 @@ impl Renderer {
             skybox_texture_bind_group_layout,
             lights_bind_group_layout,
             skybox_render_pipeline,
+            main_bind_group_layout,
         })
     }
 
@@ -432,7 +436,7 @@ fn replace_colour_descriptor() -> wgpu::ColorStateDescriptor {
     }
 }
 
-fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
+pub fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
     wgpu::ColorStateDescriptor {
         format: DISPLAY_FORMAT,
         color_blend: wgpu::BlendDescriptor {
