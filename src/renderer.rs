@@ -27,6 +27,7 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub lights_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
+    pub skybox_texture_bind_group_layout: wgpu::BindGroupLayout,
     pub window: winit::window::Window,
     pub swap_chain: wgpu::SwapChain,
     pub depth_texture: wgpu::TextureView,
@@ -38,6 +39,7 @@ pub struct Renderer {
     pub identity_instance_buffer: wgpu::Buffer,
     pub opaque_render_pipeline: wgpu::RenderPipeline,
     pub transparent_render_pipeline: wgpu::RenderPipeline,
+    pub skybox_render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -76,7 +78,7 @@ impl Renderer {
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
             label: Some("nearest sampler"),
             ..Default::default()
         });
@@ -214,7 +216,32 @@ impl Renderer {
                 }],
             });
 
-        let render_pipeline_layout =
+        let skybox_texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("skybox texture bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            });
+
+        let vs_model = wgpu::include_spirv!("../shaders/compiled/scene.vert.spv");
+        let vs_model_module = device.create_shader_module(vs_model);
+        let fs_model = wgpu::include_spirv!("../shaders/compiled/scene.frag.spv");
+        let fs_model_module = device.create_shader_module(fs_model);
+
+        let vs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.vert.spv");
+        let vs_skybox_module = device.create_shader_module(vs_skybox);
+        let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
+        let fs_skybox_module = device.create_shader_module(fs_skybox);
+
+        let model_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("render pipeline layout"),
                 bind_group_layouts: &[
@@ -225,27 +252,41 @@ impl Renderer {
                 push_constant_ranges: &[],
             });
 
-        let vs = wgpu::include_spirv!("../shaders/compiled/scene.vert.spv");
-        let vs_module = device.create_shader_module(vs);
-        let fs = wgpu::include_spirv!("../shaders/compiled/scene.frag.spv");
-        let fs_module = device.create_shader_module(fs);
+        let skybox_render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("skybox pipeline layout"),
+                bind_group_layouts: &[&main_bind_group_layout, &skybox_texture_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let opaque_render_pipeline = create_render_pipeline(
             &device,
             "opaque render pipeline",
-            &render_pipeline_layout,
-            &vs_module,
-            &fs_module,
+            &model_render_pipeline_layout,
+            &vs_model_module,
+            &fs_model_module,
             replace_colour_descriptor(),
+            wgpu::CompareFunction::Less,
         );
 
         let transparent_render_pipeline = create_render_pipeline(
             &device,
             "transparent render pipeline",
-            &render_pipeline_layout,
-            &vs_module,
-            &fs_module,
+            &model_render_pipeline_layout,
+            &vs_model_module,
+            &fs_model_module,
             alpha_blend_colour_descriptor(),
+            wgpu::CompareFunction::Less,
+        );
+
+        let skybox_render_pipeline = create_render_pipeline(
+            &device,
+            "skybox render pipeline",
+            &skybox_render_pipeline_layout,
+            &vs_skybox_module,
+            &fs_skybox_module,
+            replace_colour_descriptor(),
+            wgpu::CompareFunction::Equal,
         );
 
         let identity_instance_buffer = single_instance_buffer(
@@ -271,7 +312,9 @@ impl Renderer {
             multisampled_framebuffer_texture,
             identity_instance_buffer,
             texture_array_bind_group_layout,
+            skybox_texture_bind_group_layout,
             lights_bind_group_layout,
+            skybox_render_pipeline,
         })
     }
 
@@ -409,6 +452,7 @@ fn create_render_pipeline(
     vs_module: &wgpu::ShaderModule,
     fs_module: &wgpu::ShaderModule,
     colour_descriptor: wgpu::ColorStateDescriptor,
+    depth_compare: wgpu::CompareFunction,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -430,7 +474,7 @@ fn create_render_pipeline(
         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
             format: DEPTH_FORMAT,
             depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_compare,
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
         vertex_state: wgpu::VertexStateDescriptor {

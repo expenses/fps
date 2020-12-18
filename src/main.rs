@@ -50,19 +50,23 @@ async fn run() -> anyhow::Result<()> {
 
     let (level, level_collider) = assets::Level::load_gltf(
         include_bytes!("../warehouse.glb"),
-        &renderer.device,
+        &renderer,
         &mut init_encoder,
-        &renderer.texture_array_bind_group_layout,
-        &renderer.lights_bind_group_layout,
     )?;
 
     let (cylinder, _) = assets::Level::load_gltf(
         include_bytes!("../cylinder.glb"),
-        &renderer.device,
+        &renderer,
         &mut init_encoder,
-        &renderer.texture_array_bind_group_layout,
-        &renderer.lights_bind_group_layout,
     )?;
+
+    let skybox_texture = assets::load_skybox(
+        include_bytes!("../skybox.png"),
+        &renderer,
+        &mut init_encoder,
+    )?;
+
+    renderer.queue.submit(Some(init_encoder.finish()));
 
     let mut key_states = KeyStates::default();
     let mut player = Player {
@@ -116,8 +120,6 @@ async fn run() -> anyhow::Result<()> {
     );
 
     let mut screen_center = renderer.screen_center();
-
-    renderer.queue.submit(Some(init_encoder.finish()));
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent { ref event, .. } => match event {
@@ -282,7 +284,8 @@ async fn run() -> anyhow::Result<()> {
                                 } else {
                                     println!("{} {}", wall_direction.y, player.position.y);
                                     wall_direction.y = 0.0;
-                                    let push_strength = (body_radius - wall_direction.mag()) + epsilon;
+                                    let push_strength =
+                                        (body_radius - wall_direction.mag()) + epsilon;
                                     let push = wall_direction.normalized() * push_strength;
 
                                     println!(
@@ -336,12 +339,7 @@ async fn run() -> anyhow::Result<()> {
                             attachment: &renderer.multisampled_framebuffer_texture,
                             resolve_target: Some(&frame.output.view),
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.1,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                }),
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                 store: true,
                             },
                         }],
@@ -357,6 +355,8 @@ async fn run() -> anyhow::Result<()> {
                         ),
                     });
 
+                    // Render opaque things
+
                     render_pass.set_pipeline(&renderer.opaque_render_pipeline);
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
@@ -367,11 +367,19 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_index_buffer(level.opaque_geometry.indices.slice(..));
                     render_pass.draw_indexed(0..level.opaque_geometry.num_indices, 0, 0..1);
 
-                    render_pass.set_bind_group(1, &cylinder.texture_array_bind_group, &[]);
+                    /*render_pass.set_bind_group(1, &cylinder.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, cylinder.opaque_geometry.vertices.slice(..));
                     render_pass.set_vertex_buffer(1, player_position_instance.slice(..));
                     render_pass.set_index_buffer(cylinder.opaque_geometry.indices.slice(..));
-                    render_pass.draw_indexed(0..cylinder.opaque_geometry.num_indices, 0, 0..1);
+                    render_pass.draw_indexed(0..cylinder.opaque_geometry.num_indices, 0, 0..1);*/
+
+                    // Render the skybox
+
+                    render_pass.set_pipeline(&renderer.skybox_render_pipeline);
+                    render_pass.set_bind_group(1, &skybox_texture, &[]);
+                    render_pass.draw(0..3, 0..1);
+
+                    // Render transparent things
 
                     render_pass.set_pipeline(&renderer.transparent_render_pipeline);
 

@@ -1,4 +1,4 @@
-use crate::renderer::{Vertex, TEXTURE_FORMAT};
+use crate::renderer::{Renderer, Vertex, TEXTURE_FORMAT};
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
@@ -63,10 +63,8 @@ pub struct LevelCollider {
 impl Level {
     pub fn load_gltf(
         gltf_bytes: &[u8],
-        device: &wgpu::Device,
+        renderer: &Renderer,
         encoder: &mut wgpu::CommandEncoder,
-        texture_array_bind_group_layout: &wgpu::BindGroupLayout,
-        lights_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> anyhow::Result<(Self, LevelCollider)> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
@@ -80,15 +78,13 @@ impl Level {
 
         let num_textures = gltf.textures().count() as u32;
 
-        let texture_array_extent = wgpu::Extent3d {
-            width: 128,
-            height: 128,
-            depth: num_textures,
-        };
-
-        let texture_array = device.create_texture(&wgpu::TextureDescriptor {
+        let texture_array = renderer.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("level texture array"),
-            size: texture_array_extent,
+            size: wgpu::Extent3d {
+                width: 128,
+                height: 128,
+                depth: num_textures,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -114,11 +110,13 @@ impl Level {
             assert_eq!(width, 128);
             assert_eq!(height, 128);
 
-            let temp_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("texture staging buffer"),
-                contents: &*image,
-                usage: wgpu::BufferUsage::COPY_SRC,
-            });
+            let temp_buf = renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("texture staging buffer"),
+                    contents: &*image,
+                    usage: wgpu::BufferUsage::COPY_SRC,
+                });
 
             encoder.copy_buffer_to_texture(
                 wgpu::BufferCopyView {
@@ -179,29 +177,36 @@ impl Level {
             })
             .collect();
 
-        let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("level lights"),
-            contents: bytemuck::cast_slice(&lights),
-            usage: wgpu::BufferUsage::STORAGE,
-        });
+        let lights_buffer = renderer
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("level lights"),
+                contents: bytemuck::cast_slice(&lights),
+                usage: wgpu::BufferUsage::STORAGE,
+            });
 
-        let texture_array_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("texture array bind group"),
-            layout: texture_array_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            }],
-        });
+        let texture_array_bind_group =
+            renderer
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("texture array bind group"),
+                    layout: &renderer.texture_array_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    }],
+                });
 
-        let lights_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("lights bind group"),
-            layout: lights_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: lights_buffer.as_entire_binding(),
-            }],
-        });
+        let lights_bind_group = renderer
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("lights bind group"),
+                layout: &renderer.lights_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lights_buffer.as_entire_binding(),
+                }],
+            });
 
         for (node, mesh) in gltf
             .nodes()
@@ -269,8 +274,8 @@ impl Level {
 
         Ok((
             Self {
-                opaque_geometry: opaque_geometry.upload(device),
-                transparent_geometry: transparent_geometry.upload(device),
+                opaque_geometry: opaque_geometry.upload(&renderer.device),
+                transparent_geometry: transparent_geometry.upload(&renderer.device),
                 texture_array_bind_group,
                 lights_bind_group,
             },
@@ -412,4 +417,78 @@ fn add_primitive_geometry_to_buffers(
         });
 
     Ok(())
+}
+
+pub fn load_skybox(
+    png_bytes: &[u8],
+    renderer: &Renderer,
+    encoder: &mut wgpu::CommandEncoder,
+) -> anyhow::Result<wgpu::BindGroup> {
+    let image =
+        image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?.into_rgba8();
+
+    let staging_buffer = renderer
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("skybox staging buffer"),
+            contents: &*image,
+            usage: wgpu::BufferUsage::COPY_SRC,
+        });
+
+    let skybox_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("skybox texture"),
+        size: wgpu::Extent3d {
+            width: 128,
+            height: 128,
+            depth: 6,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TEXTURE_FORMAT,
+        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+    });
+
+    for i in 0..6 {
+        encoder.copy_buffer_to_texture(
+            wgpu::BufferCopyView {
+                buffer: &staging_buffer,
+                layout: wgpu::TextureDataLayout {
+                    offset: 0,
+                    bytes_per_row: 4 * 128,
+                    rows_per_image: 0,
+                },
+            },
+            wgpu::TextureCopyView {
+                texture: &skybox_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: i },
+            },
+            wgpu::Extent3d {
+                width: 128,
+                height: 128,
+                depth: 1,
+            },
+        );
+    }
+
+    let skybox_texture_view = skybox_texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("skybox texture view"),
+        format: Some(TEXTURE_FORMAT),
+        dimension: Some(wgpu::TextureViewDimension::Cube),
+        ..Default::default()
+    });
+
+    let skybox_bind_group = renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("skybox bind group"),
+            layout: &renderer.skybox_texture_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&skybox_texture_view),
+            }],
+        });
+
+    Ok(skybox_bind_group)
 }
