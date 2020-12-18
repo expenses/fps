@@ -30,13 +30,14 @@ pub struct Renderer {
     pub window: winit::window::Window,
     pub swap_chain: wgpu::SwapChain,
     pub depth_texture: wgpu::TextureView,
-    pub scene_render_pipeline: wgpu::RenderPipeline,
     surface: wgpu::Surface,
     view_buffer: wgpu::Buffer,
     perspective_buffer: wgpu::Buffer,
     pub main_bind_group: wgpu::BindGroup,
     pub multisampled_framebuffer_texture: wgpu::TextureView,
     pub identity_instance_buffer: wgpu::Buffer,
+    pub opaque_render_pipeline: wgpu::RenderPipeline,
+    pub transparent_render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -213,9 +214,9 @@ impl Renderer {
                 }],
             });
 
-        let scene_render_pipeline_layout =
+        let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("scene render pipeline layout"),
+                label: Some("render pipeline layout"),
                 bind_group_layouts: &[
                     &main_bind_group_layout,
                     &texture_array_bind_group_layout,
@@ -229,55 +230,23 @@ impl Renderer {
         let fs = wgpu::include_spirv!("../shaders/compiled/scene.frag.spv");
         let fs_module = device.create_shader_module(fs);
 
-        let scene_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scene render pipeline"),
-            layout: Some(&scene_render_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_module,
-                entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                cull_mode: wgpu::CullMode::Back,
-                ..Default::default()
-            }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[
-                wgpu::ColorStateDescriptor {
-                    format: DISPLAY_FORMAT,
-                    color_blend: wgpu::BlendDescriptor::REPLACE,
-                    alpha_blend: wgpu::BlendDescriptor::REPLACE,
-                    write_mask: wgpu::ColorWrite::ALL,
-                }
-            ],
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilStateDescriptor::default(),
-            }),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: INDEX_FORMAT,
-                vertex_buffers: &[
-                    wgpu::VertexBufferDescriptor {
-                        stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::InputStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int],
-                    },
-                    wgpu::VertexBufferDescriptor {
-                        stride: std::mem::size_of::<Instance>() as u64,
-                        step_mode: wgpu::InputStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![4 => Float4, 5 => Float4, 6 => Float4, 7 => Float4],
-                    },
-                ],
-            },
-            sample_count: SAMPLE_COUNT,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
-        });
+        let opaque_render_pipeline = create_render_pipeline(
+            &device,
+            "opaque render pipeline",
+            &render_pipeline_layout,
+            &vs_module,
+            &fs_module,
+            replace_colour_descriptor(),
+        );
+
+        let transparent_render_pipeline = create_render_pipeline(
+            &device,
+            "transparent render pipeline",
+            &render_pipeline_layout,
+            &vs_module,
+            &fs_module,
+            alpha_blend_colour_descriptor(),
+        );
 
         let identity_instance_buffer = single_instance_buffer(
             &device,
@@ -297,7 +266,8 @@ impl Renderer {
             surface,
             swap_chain,
             depth_texture,
-            scene_render_pipeline,
+            opaque_render_pipeline,
+            transparent_render_pipeline,
             multisampled_framebuffer_texture,
             identity_instance_buffer,
             texture_array_bind_group_layout,
@@ -403,5 +373,83 @@ pub fn single_instance_buffer(
         label: Some(label),
         contents: bytemuck::bytes_of(&instance),
         usage: wgpu::BufferUsage::VERTEX,
+    })
+}
+
+fn replace_colour_descriptor() -> wgpu::ColorStateDescriptor {
+    wgpu::ColorStateDescriptor {
+        format: DISPLAY_FORMAT,
+        color_blend: wgpu::BlendDescriptor::REPLACE,
+        alpha_blend: wgpu::BlendDescriptor::REPLACE,
+        write_mask: wgpu::ColorWrite::ALL,
+    }
+}
+
+fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
+    wgpu::ColorStateDescriptor {
+        format: DISPLAY_FORMAT,
+        color_blend: wgpu::BlendDescriptor {
+            src_factor: wgpu::BlendFactor::SrcAlpha,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha_blend: wgpu::BlendDescriptor {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::Zero,
+            operation: wgpu::BlendOperation::Add,
+        },
+        write_mask: wgpu::ColorWrite::ALL,
+    }
+}
+
+fn create_render_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    vs_module: &wgpu::ShaderModule,
+    fs_module: &wgpu::ShaderModule,
+    colour_descriptor: wgpu::ColorStateDescriptor,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: vs_module,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: fs_module,
+            entry_point: "main",
+        }),
+        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            cull_mode: wgpu::CullMode::Back,
+            ..Default::default()
+        }),
+        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+        color_states: &[colour_descriptor],
+        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilStateDescriptor::default(),
+        }),
+        vertex_state: wgpu::VertexStateDescriptor {
+            index_format: INDEX_FORMAT,
+            vertex_buffers: &[
+                wgpu::VertexBufferDescriptor {
+                    stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int],
+                },
+                wgpu::VertexBufferDescriptor {
+                    stride: std::mem::size_of::<Instance>() as u64,
+                    step_mode: wgpu::InputStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![4 => Float4, 5 => Float4, 6 => Float4, 7 => Float4],
+                },
+            ],
+        },
+        sample_count: SAMPLE_COUNT,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
     })
 }

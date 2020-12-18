@@ -11,10 +11,47 @@ struct Light {
     padding_1: i32,
 }
 
-pub struct Level {
-    pub geometry_vertices: wgpu::Buffer,
-    pub geometry_indices: wgpu::Buffer,
+struct StagingModelBuffers<T> {
+    vertices: Vec<T>,
+    indices: Vec<u32>,
+}
+
+impl<T> Default for StagingModelBuffers<T> {
+    fn default() -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        }
+    }
+}
+
+impl StagingModelBuffers<Vertex> {
+    fn upload(&self, device: &wgpu::Device) -> ModelBuffers {
+        ModelBuffers {
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("level geometry vertices"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsage::VERTEX,
+            }),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("level geometry indices"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsage::INDEX,
+            }),
+            num_indices: self.indices.len() as u32,
+        }
+    }
+}
+
+pub struct ModelBuffers {
+    pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
     pub num_indices: u32,
+}
+
+pub struct Level {
+    pub opaque_geometry: ModelBuffers,
+    pub transparent_geometry: ModelBuffers,
     pub texture_array_bind_group: wgpu::BindGroup,
     pub lights_bind_group: wgpu::BindGroup,
 }
@@ -33,32 +70,13 @@ impl Level {
     ) -> anyhow::Result<(Self, LevelCollider)> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
-        let mut node_tree: Vec<(Mat4, usize)> =
-            vec![(Mat4::identity(), usize::max_value()); gltf.nodes().count()];
-
-        for node in gltf.nodes() {
-            node_tree[node.index()].0 = node.transform().matrix().into();
-            for child in node.children() {
-                node_tree[child.index()].1 = node.index();
-            }
-        }
-
-        fn transform_of(mut node_index: usize, node_tree: &[(Mat4, usize)]) -> Mat4 {
-            let mut sum_transform = Mat4::identity();
-
-            while node_index != usize::max_value() {
-                let (transform, parent_index) = node_tree[node_index];
-                sum_transform = transform * sum_transform;
-                node_index = parent_index;
-            }
-
-            sum_transform
-        }
+        let node_tree = NodeTree::new(&gltf);
 
         let buffers = load_buffers(&gltf)?;
 
-        let mut geometry_vertices = Vec::new();
-        let mut geometry_indices = Vec::new();
+        let mut opaque_geometry = StagingModelBuffers::default();
+        let mut transparent_geometry = StagingModelBuffers::default();
+        let mut collision_geometry = StagingModelBuffers::default();
 
         let num_textures = gltf.textures().count() as u32;
 
@@ -91,8 +109,8 @@ impl Level {
             let bytes = &buffers[view.buffer().index()][start..end];
             let image =
                 image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
-            let (width, height) = image.dimensions();
 
+            let (width, height) = image.dimensions();
             assert_eq!(width, 128);
             assert_eq!(height, 128);
 
@@ -120,7 +138,11 @@ impl Level {
                         z: i as u32,
                     },
                 },
-                texture_array_extent,
+                wgpu::Extent3d {
+                    width: 128,
+                    height: 128,
+                    depth: 1,
+                },
             );
         }
 
@@ -140,7 +162,7 @@ impl Level {
                     gltf::khr_lights_punctual::Kind::Point
                 ));
 
-                let transform = transform_of(node.index(), &node_tree);
+                let transform = node_tree.transform_of(node.index());
 
                 // We reduce the intensity by 4PI because of
                 // https://github.com/KhronosGroup/glTF-Blender-IO/issues/564.
@@ -187,7 +209,7 @@ impl Level {
         {
             assert_eq!(mesh.primitives().count(), 1);
 
-            let transform: Mat4 = transform_of(node.index(), &node_tree);
+            let transform = node_tree.transform_of(node.index());
             let normal_matrix = normal_matrix(transform);
 
             for primitive in mesh.primitives() {
@@ -198,60 +220,39 @@ impl Level {
                     ));
                 }
 
-                let texture_index = primitive
-                    .material()
-                    .pbr_metallic_roughness()
-                    .base_color_texture()
-                    .ok_or_else(|| anyhow::anyhow!("All level primitives need textures."))?
-                    .texture()
-                    .index();
-
-                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-
-                let positions = reader.read_positions().unwrap();
-                let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
-                let normals = reader.read_normals().unwrap();
-
-                let num_vertices = geometry_vertices.len() as u32;
-
-                geometry_indices.extend(
-                    reader
-                        .read_indices()
-                        .unwrap()
-                        .into_u32()
-                        .map(|i| i + num_vertices),
-                );
-
-                positions
-                    .zip(tex_coordinates)
-                    .zip(normals)
-                    .for_each(|((p, uv), n)| {
-                        let position = transform * Vec4::new(p[0], p[1], p[2], 1.0);
-                        assert_eq!(position.w, 1.0);
-                        let position = position.xyz();
-
-                        let normal: Vec3 = n.into();
-                        let normal = (normal_matrix * normal).normalized();
-
-                        geometry_vertices.push(Vertex {
-                            position,
-                            normal,
-                            uv: uv.into(),
-                            texture_index: texture_index as i32,
-                        });
-                    });
+                if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
+                    add_primitive_geometry_to_buffers(
+                        &primitive,
+                        transform,
+                        normal_matrix,
+                        &buffers,
+                        &mut transparent_geometry,
+                        &mut collision_geometry,
+                    )?;
+                } else {
+                    add_primitive_geometry_to_buffers(
+                        &primitive,
+                        transform,
+                        normal_matrix,
+                        &buffers,
+                        &mut opaque_geometry,
+                        &mut collision_geometry,
+                    )?;
+                }
             }
         }
 
         let collision_mesh = ncollide3d::shape::TriMesh::new(
-            geometry_vertices
+            collision_geometry
+                .vertices
                 .iter()
-                .map(|vertex| {
-                    let position: [f32; 3] = vertex.position.into();
+                .map(|&vertex| {
+                    let position: [f32; 3] = vertex.into();
                     position.into()
                 })
                 .collect(),
-            geometry_indices
+            collision_geometry
+                .indices
                 .chunks(3)
                 .map(|chunk| [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize].into())
                 .collect(),
@@ -260,29 +261,21 @@ impl Level {
 
         println!(
             "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
-            geometry_vertices.len(),
-            geometry_indices.len(),
+            opaque_geometry.vertices.len(),
+            opaque_geometry.indices.len(),
             num_textures,
             lights.len(),
         );
 
-        Ok((Self {
-            geometry_vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("level geometry vertices"),
-                contents: bytemuck::cast_slice(&geometry_vertices),
-                usage: wgpu::BufferUsage::VERTEX,
-            }),
-            geometry_indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("level geometry indices"),
-                contents: bytemuck::cast_slice(&geometry_indices),
-                usage: wgpu::BufferUsage::INDEX,
-            }),
-            num_indices: geometry_indices.len() as u32,
-            texture_array_bind_group,
-            lights_bind_group,
-        }, LevelCollider {
-            collision_mesh,
-        }))
+        Ok((
+            Self {
+                opaque_geometry: opaque_geometry.upload(device),
+                transparent_geometry: transparent_geometry.upload(device),
+                texture_array_bind_group,
+                lights_bind_group,
+            },
+            LevelCollider { collision_mesh },
+        ))
     }
 }
 
@@ -322,4 +315,101 @@ fn load_buffers(gltf: &gltf::Gltf) -> anyhow::Result<Vec<Vec<u8>>> {
     }
 
     Ok(buffers)
+}
+
+struct NodeTree {
+    inner: Vec<(Mat4, usize)>,
+}
+
+impl NodeTree {
+    fn new(gltf: &gltf::Gltf) -> Self {
+        let mut inner = vec![(Mat4::identity(), usize::max_value()); gltf.nodes().count()];
+
+        for node in gltf.nodes() {
+            inner[node.index()].0 = node.transform().matrix().into();
+            for child in node.children() {
+                inner[child.index()].1 = node.index();
+            }
+        }
+
+        Self { inner }
+    }
+
+    fn transform_of(&self, mut index: usize) -> Mat4 {
+        let mut transform_sum = Mat4::identity();
+
+        while index != usize::max_value() {
+            let (transform, parent_index) = self.inner[index];
+            transform_sum = transform * transform_sum;
+            index = parent_index;
+        }
+
+        transform_sum
+    }
+}
+
+fn add_primitive_geometry_to_buffers(
+    primitive: &gltf::Primitive,
+    transform: Mat4,
+    normal_matrix: Mat3,
+    gltf_buffers: &Vec<Vec<u8>>,
+    staging_buffers: &mut StagingModelBuffers<Vertex>,
+    collision_buffers: &mut StagingModelBuffers<Vec3>,
+) -> anyhow::Result<()> {
+    let texture_index = primitive
+        .material()
+        .pbr_metallic_roughness()
+        .base_color_texture()
+        .ok_or_else(|| anyhow::anyhow!("All level primitives need textures."))?
+        .texture()
+        .index();
+
+    let reader = primitive.reader(|buffer| Some(&gltf_buffers[buffer.index()]));
+
+    let positions = reader.read_positions().unwrap();
+    let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
+    let normals = reader.read_normals().unwrap();
+
+    let num_vertices = staging_buffers.vertices.len() as u32;
+
+    staging_buffers.indices.extend(
+        reader
+            .read_indices()
+            .unwrap()
+            .into_u32()
+            .map(|i| i + num_vertices),
+    );
+
+    let num_vertices_collision = collision_buffers.vertices.len() as u32;
+
+    collision_buffers.indices.extend(
+        reader
+            .read_indices()
+            .unwrap()
+            .into_u32()
+            .map(|i| i + num_vertices_collision),
+    );
+
+    positions
+        .zip(tex_coordinates)
+        .zip(normals)
+        .for_each(|((p, uv), n)| {
+            let position = transform * Vec4::new(p[0], p[1], p[2], 1.0);
+            assert_eq!(position.w, 1.0);
+            let position = position.xyz();
+
+            let normal: Vec3 = n.into();
+            let normal = (normal_matrix * normal).normalized();
+
+            staging_buffers.vertices.push(Vertex {
+                position,
+                normal,
+                uv: uv.into(),
+                texture_index: texture_index as i32,
+            });
+
+            collision_buffers.vertices.push(position);
+        });
+
+    Ok(())
 }
