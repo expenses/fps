@@ -1,4 +1,4 @@
-mod animation;
+//mod animation;
 mod assets;
 mod renderer;
 
@@ -23,12 +23,18 @@ struct KeyStates {
 struct Player {
     position: Vec3,
     facing: PlayerFacing,
+    on_ground: bool,
+    velocity: f32,
 }
 
 #[derive(Debug)]
 struct PlayerFacing {
     horizontal: f32,
     vertical: f32,
+}
+
+fn vec3_to_ncollide_iso(vec: Vec3) -> ncollide3d::math::Isometry<f32> {
+    ncollide3d::math::Isometry::translation(vec.x, vec.y, vec.z)
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -42,7 +48,7 @@ async fn run() -> anyhow::Result<()> {
                 label: Some("init encoder"),
             });
 
-    let level = assets::Level::load_gltf(
+    let (level, level_collider) = assets::Level::load_gltf(
         include_bytes!("../warehouse.glb"),
         &renderer.device,
         &mut init_encoder,
@@ -50,7 +56,7 @@ async fn run() -> anyhow::Result<()> {
         &renderer.lights_bind_group_layout,
     )?;
 
-    let cylinder = assets::Level::load_gltf(
+    let (cylinder, _) = assets::Level::load_gltf(
         include_bytes!("../cylinder.glb"),
         &renderer.device,
         &mut init_encoder,
@@ -65,7 +71,45 @@ async fn run() -> anyhow::Result<()> {
             horizontal: 0.0,
             vertical: 0.0,
         },
+        on_ground: false,
+        velocity: 0.0,
     };
+
+    let player_collider = ncollide3d::shape::Capsule::new(1.25, 0.5);
+    let player_feet = ncollide3d::shape::Cuboid::new([0.75 / 2.0, 1.0, 0.75 / 2.0].into());
+
+    let player_feet_relative = Vec3::new(0.0, 1.0, 0.0);
+    let player_collider_relative = Vec3::new(0.0, 2.6, 0.0);
+    let player_head_relative = Vec3::new(0.0, 5.1, 0.0);
+
+    let mut collision_world = ncollide3d::world::CollisionWorld::new(0.2);
+
+    let player_collision_group = ncollide3d::pipeline::object::CollisionGroups::new().with_membership(&[0]).with_whitelist(&[1]);
+    let level_collision_group = ncollide3d::pipeline::object::CollisionGroups::new().with_membership(&[1]).with_whitelist(&[0]);
+
+    let (player_feet_handle, _) = collision_world.add(
+        vec3_to_ncollide_iso(player.position + player_feet_relative),
+        ncollide3d::shape::ShapeHandle::<f32>::new(player_feet),
+        player_collision_group,
+        ncollide3d::pipeline::object::GeometricQueryType::Contacts(0.0, 0.0),
+        ()
+    );
+
+    let (player_collider_handle, _) = collision_world.add(
+        vec3_to_ncollide_iso(player.position + player_collider_relative),
+        ncollide3d::shape::ShapeHandle::<f32>::new(player_collider),
+        player_collision_group,
+        ncollide3d::pipeline::object::GeometricQueryType::Contacts(0.0, 0.0),
+        ()
+    );
+
+    collision_world.add(
+        ncollide3d::math::Isometry::translation(0.0, 0.0, 0.0),
+        ncollide3d::shape::ShapeHandle::<f32>::new(level_collider.collision_mesh),
+        level_collision_group,
+        ncollide3d::pipeline::object::GeometricQueryType::Contacts(0.0, 0.0),
+        ()
+    );
 
     let mut screen_center = renderer.screen_center();
 
@@ -137,38 +181,106 @@ async fn run() -> anyhow::Result<()> {
                 movement.x += speed;
             }
 
-            if key_states.jump_pressed {
-                movement.y += speed;
+            if player.on_ground {
+                player.velocity = 0.0;
+
+                if key_states.jump_pressed {
+                    player.velocity -= speed * 3.0;
+                    player.on_ground = false;
+                }
+            } else {
+                player.velocity += 0.025;
+                player.position.y -= player.velocity;
             }
 
             player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
 
-            /*
-            let movement: [f32; 3] =
-                (Mat3::from_rotation_y(-player.facing.horizontal) * movement * 60.0).into();
-            //println!("{:?}", movement);
+            let mut collisions_need_updating = movement != Vec3::zero() || !player.on_ground;
 
-            let player_rigid_body = bodies.get_mut(player_rigid_body_handle).unwrap();
-            let mut position = *player_rigid_body.position();
-            position.rotation = Default::default();
-            player_rigid_body.set_position(position, false);
+            while collisions_need_updating {
+                collisions_need_updating = false;
 
-            if movement != [0.0; 3] {
-                player_rigid_body.set_linvel([-movement[0], movement[1], -movement[2]].into(), true);
+                collision_world.get_mut(player_feet_handle).unwrap().set_position(vec3_to_ncollide_iso(player.position + player_feet_relative));
+                collision_world.get_mut(player_collider_handle).unwrap().set_position(vec3_to_ncollide_iso(player.position + player_collider_relative));
+
+                collision_world.update();
+
+                for event in collision_world.contact_events() {
+                    let (contact_manifold, handle_1, handle_2) = match event {
+                        ncollide3d::pipeline::narrow_phase::ContactEvent::Started(handle_1, handle_2) => {
+                            let (.., manifold) = collision_world.contact_pair(*handle_1, *handle_2, true).unwrap();
+                            (Some(manifold), handle_1, handle_2)
+                        },
+                        ncollide3d::pipeline::narrow_phase::ContactEvent::Stopped(handle_1, handle_2) => {
+                            (None, handle_1, handle_2)
+                        }
+                    };
+
+                    let is_feet = *handle_1 == player_feet_handle || *handle_2 == player_feet_handle;
+                    let player_first = *handle_1 == player_feet_handle || *handle_1 == player_collider_handle;
+
+                    println!("{} {}", if contact_manifold.is_some() { "Started" } else { "Stopped" }, if is_feet { "feet" } else { "body" });
+
+                    match contact_manifold {
+                        Some(manifold) => {
+                            if is_feet {
+                                let deepest = manifold.deepest_contact().unwrap().contact;
+
+                                println!("{:?} {}", player.position, deepest.depth);
+
+                                player.position.y += deepest.depth;
+                                println!("{:?}", player.position);
+                                player.on_ground = true;
+                            } else {
+                                // todo: loop through all contacts.
+
+                                let contact = manifold.deepest_contact().unwrap().contact;
+
+                                let contact_point: [f32; 3] = if player_first { contact.world2.coords.into() } else { contact.world1.coords.into() };
+                                let contact_point: Vec3 = contact_point.into();
+                                let epsilon = 0.01;
+
+                                println!("{:?} {:?}", player.position, contact_point);
+                                
+                                let mut wall_direction = player.position - contact_point;
+
+                                // Need to handle this case
+                                if wall_direction.x == 0.0 && wall_direction.z == 0.0 {
+
+                                } else {
+                                    println!("{} {}", wall_direction.y, player.position.y);
+                                    wall_direction.y = 0.0;
+                                    let push_strength = 0.5 + epsilon - wall_direction.mag();
+                                    let push = wall_direction.normalized() * push_strength;
+
+                                    println!("{:?} {:?} {:?}", wall_direction, push, player.position);
+
+                                    player.position += push;
+                                }
+                            }
+
+                            collisions_need_updating = true;
+                        },
+                        None => {
+                            if is_feet {
+                                player.on_ground = false;
+                            }
+                        }
+                    }
+                }
             }
-
-            let position: [f32; 3] = position.translation.vector.into();
-            player.position = position.into();*/
 
             renderer.window.request_redraw();
         }
         Event::RedrawRequested(_) => {
             renderer.set_camera_view(fps_view_rh(
-                player.position,
+                player.position + player_head_relative,
                 player.facing.vertical,
                 player.facing.horizontal,
             ));
 
+            let player_position_instance = renderer::single_instance_buffer(&renderer.device, renderer::Instance { transform: Mat4::from_translation(player.position) }, "player position instance");
+            
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
                     let mut encoder =
@@ -216,7 +328,7 @@ async fn run() -> anyhow::Result<()> {
 
                     render_pass.set_bind_group(1, &cylinder.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, cylinder.geometry_vertices.slice(..));
-                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
+                    render_pass.set_vertex_buffer(1, player_position_instance.slice(..));
                     render_pass.set_index_buffer(cylinder.geometry_indices.slice(..));
                     render_pass.draw_indexed(0..cylinder.num_indices, 0, 0..1);
 
@@ -229,8 +341,6 @@ async fn run() -> anyhow::Result<()> {
         }
         _ => {}
     });
-
-    Ok(())
 }
 
 // https://www.3dgep.com/understanding-the-view-matrix/#FPS_Camera

@@ -364,7 +364,7 @@ fn perspective_matrix(width: u32, height: u32) -> Mat4 {
         59.0_f32.to_radians(),
         width as f32 / height as f32,
         0.1,
-        250.0,
+        2500.0,
     )
 }
 

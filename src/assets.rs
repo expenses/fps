@@ -1,5 +1,5 @@
 use crate::renderer::{Vertex, TEXTURE_FORMAT};
-use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]
@@ -19,6 +19,10 @@ pub struct Level {
     pub lights_bind_group: wgpu::BindGroup,
 }
 
+pub struct LevelCollider {
+    pub collision_mesh: ncollide3d::shape::TriMesh<f32>,
+}
+
 impl Level {
     pub fn load_gltf(
         gltf_bytes: &[u8],
@@ -26,7 +30,7 @@ impl Level {
         encoder: &mut wgpu::CommandEncoder,
         texture_array_bind_group_layout: &wgpu::BindGroupLayout,
         lights_bind_group_layout: &wgpu::BindGroupLayout,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<(Self, LevelCollider)> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
         let mut node_tree: Vec<(Mat4, usize)> =
@@ -239,6 +243,21 @@ impl Level {
             }
         }
 
+        let collision_mesh = ncollide3d::shape::TriMesh::new(
+            geometry_vertices
+                .iter()
+                .map(|vertex| {
+                    let position: [f32; 3] = vertex.position.into();
+                    position.into()
+                })
+                .collect(),
+            geometry_indices
+                .chunks(3)
+                .map(|chunk| [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize].into())
+                .collect(),
+            None,
+        );
+
         println!(
             "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
             geometry_vertices.len(),
@@ -247,7 +266,7 @@ impl Level {
             lights.len(),
         );
 
-        Ok(Self {
+        Ok((Self {
             geometry_vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("level geometry vertices"),
                 contents: bytemuck::cast_slice(&geometry_vertices),
@@ -261,7 +280,9 @@ impl Level {
             num_indices: geometry_indices.len() as u32,
             texture_array_bind_group,
             lights_bind_group,
-        })
+        }, LevelCollider {
+            collision_mesh,
+        }))
     }
 }
 
