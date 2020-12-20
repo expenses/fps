@@ -132,6 +132,7 @@ async fn run() -> anyhow::Result<()> {
     let player_head_relative = Vec3::new(0.0, 5.1, 0.0);
 
     let mut screen_center = renderer.screen_center();
+    let mut cursor_grab = true;
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent { ref event, .. } => match event {
@@ -158,23 +159,30 @@ async fn run() -> anyhow::Result<()> {
                     VirtualKeyCode::S => key_states.backwards_pressed = pressed,
                     VirtualKeyCode::D => key_states.right_pressed = pressed,
                     VirtualKeyCode::Space => key_states.jump_pressed = pressed,
+                    VirtualKeyCode::P if pressed => {
+                        cursor_grab = !cursor_grab;
+                        renderer.window.set_cursor_visible(!cursor_grab);
+                        renderer.window.set_cursor_grab(cursor_grab).unwrap();
+                    }
                     _ => {}
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let position = position.to_logical::<f64>(renderer.window.scale_factor());
+                if cursor_grab {
+                    let position = position.to_logical::<f64>(renderer.window.scale_factor());
 
-                let delta = Vec2::new(
-                    (position.x - screen_center.x) as f32,
-                    (position.y - screen_center.y) as f32,
-                );
+                    let delta = Vec2::new(
+                        (position.x - screen_center.x) as f32,
+                        (position.y - screen_center.y) as f32,
+                    );
 
-                renderer.window.set_cursor_position(screen_center).unwrap();
+                    renderer.window.set_cursor_position(screen_center).unwrap();
 
-                player.facing.horizontal -= delta.x.to_radians() * 0.05;
-                player.facing.vertical = (player.facing.vertical - delta.y.to_radians() * 0.05)
-                    .min(PI / 2.0)
-                    .max(-PI / 2.0);
+                    player.facing.horizontal -= delta.x.to_radians() * 0.05;
+                    player.facing.vertical = (player.facing.vertical - delta.y.to_radians() * 0.05)
+                        .min(PI / 2.0)
+                        .max(-PI / 2.0);
+                }
             }
             _ => {}
         },
