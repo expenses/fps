@@ -644,3 +644,78 @@ fn load_texture_array(
 
     Ok(texture_array_bind_group)
 }
+
+pub fn load_single_texture(
+    png_bytes: &[u8],
+    renderer: &Renderer,
+    encoder: &mut wgpu::CommandEncoder,
+) -> anyhow::Result<wgpu::BindGroup> {
+    let image =
+        image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?.into_rgba8();
+
+    assert_eq!(image.width() % 64, 0);
+    assert_eq!(image.height() % 64, 0);
+
+    let staging_buffer = renderer
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("texture staging buffer"),
+            contents: &*image,
+            usage: wgpu::BufferUsage::COPY_SRC,
+        });
+
+    let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("texture"),
+        size: wgpu::Extent3d {
+            width: image.width(),
+            height: image.height(),
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TEXTURE_FORMAT,
+        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+    });
+
+    encoder.copy_buffer_to_texture(
+        wgpu::BufferCopyView {
+            buffer: &staging_buffer,
+            layout: wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: 4 * image.width(),
+                rows_per_image: 0,
+            },
+        },
+        wgpu::TextureCopyView {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+        },
+        wgpu::Extent3d {
+            width: image.width(),
+            height: image.height(),
+            depth: 1,
+        },
+    );
+
+    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("texture view"),
+        format: Some(TEXTURE_FORMAT),
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let bind_group = renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("texture bind group"),
+            layout: &renderer.texture_array_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            }],
+        });
+
+    Ok(bind_group)
+}

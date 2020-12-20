@@ -28,6 +28,7 @@ struct Player {
     facing: PlayerFacing,
     on_ground: bool,
     velocity: f32,
+    gun_cooldown: f32,
 }
 
 #[derive(Debug)]
@@ -54,6 +55,10 @@ impl PlayerFacing {
 
 fn vec3_to_ncollide_iso(vec: Vec3) -> ncollide3d::math::Isometry<f32> {
     ncollide3d::math::Isometry::translation(vec.x, vec.y, vec.z)
+}
+
+fn vec3_from_arr(arr: [f32; 3]) -> Vec3 {
+    arr.into()
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -108,6 +113,12 @@ async fn run() -> anyhow::Result<()> {
         &mut init_encoder,
     )?;
 
+    let decals_texture = assets::load_single_texture(
+        include_bytes!("../decals.png"),
+        &renderer,
+        &mut init_encoder,
+    )?;
+
     renderer.queue.submit(Some(init_encoder.finish()));
 
     let mut debug_line_vertices: Vec<renderer::debug_lines::Vertex> = Vec::new();
@@ -129,6 +140,8 @@ async fn run() -> anyhow::Result<()> {
         )
     }*/
 
+    let mut decals_vertices = Vec::new();
+
     let debug_lines_pipeline = renderer::debug_lines::debug_lines_pipeline(&renderer);
 
     let mut control_states = ControlStates::default();
@@ -140,6 +153,7 @@ async fn run() -> anyhow::Result<()> {
         },
         on_ground: false,
         velocity: 0.0,
+        gun_cooldown: 0.0,
     };
 
     let player_body = ncollide3d::shape::Capsule::new(1.25, 0.5);
@@ -216,6 +230,8 @@ async fn run() -> anyhow::Result<()> {
         Event::MainEventsCleared => {
             let speed = 0.2;
 
+            player.gun_cooldown -= 1.0 / 60.0;
+
             let mut movement = Vec3::zero();
 
             if control_states.forwards_pressed {
@@ -250,7 +266,9 @@ async fn run() -> anyhow::Result<()> {
 
             player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
 
-            if control_states.mouse_held {
+            if control_states.mouse_held && player.gun_cooldown < 0.0 {
+                player.gun_cooldown = 0.05;
+
                 let normal = player.facing.normal();
                 let origin: [f32; 3] = (player.position + player_head_relative).into();
                 let normal_arr: [f32; 3] = normal.into();
@@ -266,15 +284,21 @@ async fn run() -> anyhow::Result<()> {
                 if let Some(intersection) = intersection {
                     let hit_position =
                         player.position + player_head_relative + normal * intersection.toi;
-                    let normal: [f32; 3] = intersection.normal.into();
-                    let normal: Vec3 = normal.into();
+                    let normal = vec3_from_arr(intersection.normal.into());
 
-                    renderer::debug_lines::draw_line(
+                    /*renderer::debug_lines::draw_line(
                         hit_position,
                         hit_position + normal,
                         Vec4::new(1.0, 0.0, 0.0, 1.0),
                         |vertex| debug_line_vertices.push(vertex),
-                    );
+                    );*/
+
+                    decals_vertices.extend_from_slice(&renderer::decal_square(
+                        hit_position + normal * 0.01,
+                        normal,
+                        Vec2::one(),
+                        Vec2::new(0.5, 0.0),
+                    ));
                 }
             }
 
@@ -292,8 +316,7 @@ async fn run() -> anyhow::Result<()> {
 
                     match body_contact {
                         Some(contact) => {
-                            let contact_point: [f32; 3] = contact.world2.coords.into();
-                            let contact_point: Vec3 = contact_point.into();
+                            let contact_point = vec3_from_arr(contact.world2.coords.into());
 
                             renderer::debug_lines::draw_line(
                                 contact_point,
@@ -379,6 +402,15 @@ async fn run() -> anyhow::Result<()> {
                         usage: wgpu::BufferUsage::VERTEX,
                     });
 
+            let decals_buffer =
+                renderer
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("decals buffer"),
+                        contents: bytemuck::cast_slice(&decals_vertices),
+                        usage: wgpu::BufferUsage::VERTEX,
+                    });
+
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
                     let mut encoder =
@@ -456,6 +488,13 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                     render_pass.set_index_buffer(level.transparent_geometry.indices.slice(..));
                     render_pass.draw_indexed(0..level.transparent_geometry.num_indices, 0, 0..1);
+
+                    // Render decals
+
+                    render_pass.set_bind_group(1, &decals_texture, &[]);
+                    render_pass.set_vertex_buffer(0, decals_buffer.slice(..));
+                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
+                    render_pass.draw(0..decals_vertices.len() as u32, 0..1);
 
                     // Render debug lines
 

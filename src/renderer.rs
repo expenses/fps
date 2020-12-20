@@ -506,3 +506,48 @@ fn create_render_pipeline(
         alpha_to_coverage_enabled: false,
     })
 }
+
+pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, uv_offset: Vec2) -> [Vertex; 6] {
+    let offset = size / 2.0;
+
+    let rotation = if normal == Vec3::new(0.0, -1.0, 0.0) {
+        // The above case NaN's the rotor so we just use a matrix instead.
+        ultraviolet::Mat3::from_rotation_x(180.0_f32.to_radians())
+    } else {
+        ultraviolet::Rotor3::from_rotation_between(Vec3::unit_y(), normal).into_matrix()
+    };
+
+    let mut offsets = [
+        Vec3::new(-offset.x, 0.0, -offset.y), // top left
+        Vec3::new(offset.x, 0.0, -offset.y),  // top right
+        Vec3::new(-offset.x, 0.0, offset.y),  // bottom left
+        Vec3::new(offset.x, 0.0, offset.y),   // bottom right
+    ];
+
+    for i in 0..4 {
+        offsets[i] = rotation * offsets[i];
+    }
+
+    let uvs = [
+        Vec2::zero() + uv_offset,
+        Vec2::new(0.5, 0.0) + uv_offset,
+        Vec2::new(0.0, 0.5) + uv_offset,
+        Vec2::new(0.5, 0.5) + uv_offset,
+    ];
+
+    let vertex = |index| Vertex {
+        position: position + offsets[index],
+        normal,
+        uv: uvs[index],
+        texture_index: 0,
+    };
+
+    [
+        vertex(1),
+        vertex(0),
+        vertex(2),
+        vertex(1),
+        vertex(2),
+        vertex(3),
+    ]
+}
