@@ -275,8 +275,12 @@ impl Model {
         {
             assert_eq!(mesh.primitives().count(), 1);
 
-            // We can't use node transforms for animated models.
-            let transform = Mat4::identity();
+            let transform = if node.skin().is_some() {
+                // We can't use node transforms for animated models.
+                Mat4::identity()
+            } else {
+                node_tree.transform_of(node.index())
+            };
             let normal_matrix = normal_matrix(transform);
 
             for primitive in mesh.primitives() {
@@ -297,6 +301,13 @@ impl Model {
                 )?;
             }
         }
+
+        println!(
+            "Model loaded. Vertices: {}. Indices: {}. Textures: {}",
+            staging_buffers.vertices.len(),
+            staging_buffers.indices.len(),
+            gltf.textures().count() as u32,
+        );
 
         Ok(Self {
             buffers: staging_buffers.upload(&renderer.device),

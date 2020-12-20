@@ -78,6 +78,12 @@ async fn run() -> anyhow::Result<()> {
         &mut init_encoder,
     )?;
 
+    let monkey_gun = assets::Model::load_gltf(
+        include_bytes!("../monkey_test_gun.glb"),
+        &renderer,
+        &mut init_encoder,
+    )?;
+
     let skybox_texture = assets::load_skybox(
         include_bytes!("../skybox.png"),
         &renderer,
@@ -285,18 +291,20 @@ async fn run() -> anyhow::Result<()> {
             renderer.window.request_redraw();
         }
         Event::RedrawRequested(_) => {
-            renderer.set_camera_view(fps_view_rh(
+            let camera_view = fps_view_rh(
                 player.position + player_head_relative,
                 player.facing.vertical,
                 player.facing.horizontal,
-            ));
+            );
 
-            let player_position_instance = renderer::single_instance_buffer(
+            renderer.set_camera_view(camera_view);
+
+            let gun_instance = renderer::single_instance_buffer(
                 &renderer.device,
                 renderer::Instance {
-                    transform: Mat4::from_translation(player.position),
+                    transform: camera_view.inversed(),
                 },
-                "player position instance",
+                "gun instance",
             );
 
             let debug_lines_buffer =
@@ -344,6 +352,16 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
+                    // Render gun
+
+                    render_pass.set_bind_group(1, &monkey_gun.textures, &[]);
+                    render_pass.set_vertex_buffer(0, monkey_gun.buffers.vertices.slice(..));
+                    render_pass.set_vertex_buffer(1, gun_instance.slice(..));
+                    render_pass.set_index_buffer(monkey_gun.buffers.indices.slice(..));
+                    render_pass.draw_indexed(0..monkey_gun.buffers.num_indices, 0, 0..1);
+
+                    // Render level
+
                     render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, level.opaque_geometry.vertices.slice(..));
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
@@ -375,6 +393,8 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                     render_pass.set_index_buffer(level.transparent_geometry.indices.slice(..));
                     render_pass.draw_indexed(0..level.transparent_geometry.num_indices, 0, 0..1);
+
+                    // Render debug lines
 
                     render_pass.set_pipeline(&debug_lines_pipeline);
                     render_pass.set_vertex_buffer(0, debug_lines_buffer.slice(..));
