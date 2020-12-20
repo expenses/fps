@@ -2,6 +2,7 @@
 mod assets;
 mod renderer;
 
+use ncollide3d::query::RayCast;
 use std::f32::consts::PI;
 use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
@@ -13,12 +14,13 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[derive(Default)]
-struct KeyStates {
+struct ControlStates {
     forwards_pressed: bool,
     backwards_pressed: bool,
     left_pressed: bool,
     right_pressed: bool,
     jump_pressed: bool,
+    mouse_held: bool,
 }
 
 struct Player {
@@ -32,6 +34,22 @@ struct Player {
 struct PlayerFacing {
     horizontal: f32,
     vertical: f32,
+}
+
+impl PlayerFacing {
+    fn normal(&self) -> Vec3 {
+        let up_amount = self.vertical.sin();
+        let forwards_amount = self.vertical.cos();
+
+        let x_amount = -self.horizontal.sin();
+        let z_amount = -self.horizontal.cos();
+
+        Vec3::new(
+            forwards_amount * x_amount,
+            up_amount,
+            forwards_amount * z_amount,
+        )
+    }
 }
 
 fn vec3_to_ncollide_iso(vec: Vec3) -> ncollide3d::math::Isometry<f32> {
@@ -113,7 +131,7 @@ async fn run() -> anyhow::Result<()> {
 
     let debug_lines_pipeline = renderer::debug_lines::debug_lines_pipeline(&renderer);
 
-    let mut key_states = KeyStates::default();
+    let mut control_states = ControlStates::default();
     let mut player = Player {
         position: Vec3::new(0.0, 5.0, 0.0),
         facing: PlayerFacing {
@@ -154,11 +172,11 @@ async fn run() -> anyhow::Result<()> {
                 let pressed = state == &ElementState::Pressed;
 
                 match keycode {
-                    VirtualKeyCode::W => key_states.forwards_pressed = pressed,
-                    VirtualKeyCode::A => key_states.left_pressed = pressed,
-                    VirtualKeyCode::S => key_states.backwards_pressed = pressed,
-                    VirtualKeyCode::D => key_states.right_pressed = pressed,
-                    VirtualKeyCode::Space => key_states.jump_pressed = pressed,
+                    VirtualKeyCode::W => control_states.forwards_pressed = pressed,
+                    VirtualKeyCode::A => control_states.left_pressed = pressed,
+                    VirtualKeyCode::S => control_states.backwards_pressed = pressed,
+                    VirtualKeyCode::D => control_states.right_pressed = pressed,
+                    VirtualKeyCode::Space => control_states.jump_pressed = pressed,
                     VirtualKeyCode::P if pressed => {
                         cursor_grab = !cursor_grab;
                         renderer.window.set_cursor_visible(!cursor_grab);
@@ -184,6 +202,15 @@ async fn run() -> anyhow::Result<()> {
                         .max(-PI / 2.0);
                 }
             }
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => {
+                let pressed = state == &ElementState::Pressed;
+
+                control_states.mouse_held = pressed;
+            }
             _ => {}
         },
         Event::MainEventsCleared => {
@@ -191,26 +218,26 @@ async fn run() -> anyhow::Result<()> {
 
             let mut movement = Vec3::zero();
 
-            if key_states.forwards_pressed {
+            if control_states.forwards_pressed {
                 movement.z -= speed;
             }
 
-            if key_states.backwards_pressed {
+            if control_states.backwards_pressed {
                 movement.z += speed;
             }
 
-            if key_states.left_pressed {
+            if control_states.left_pressed {
                 movement.x -= speed;
             }
 
-            if key_states.right_pressed {
+            if control_states.right_pressed {
                 movement.x += speed;
             }
 
             if player.on_ground {
                 player.velocity = 0.0;
 
-                if key_states.jump_pressed {
+                if control_states.jump_pressed {
                     player.velocity -= speed * 3.0;
                     player.on_ground = false;
                 }
@@ -222,6 +249,34 @@ async fn run() -> anyhow::Result<()> {
             }
 
             player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
+
+            if control_states.mouse_held {
+                let normal = player.facing.normal();
+                let origin: [f32; 3] = (player.position + player_head_relative).into();
+                let normal_arr: [f32; 3] = normal.into();
+                let ray = ncollide3d::query::Ray::new(origin.into(), normal_arr.into());
+
+                let intersection = level.collision_mesh.toi_and_normal_with_ray(
+                    &vec3_to_ncollide_iso(Vec3::zero()),
+                    &ray,
+                    1000.0,
+                    false,
+                );
+
+                if let Some(intersection) = intersection {
+                    let hit_position =
+                        player.position + player_head_relative + normal * intersection.toi;
+                    let normal: [f32; 3] = intersection.normal.into();
+                    let normal: Vec3 = normal.into();
+
+                    renderer::debug_lines::draw_line(
+                        hit_position,
+                        hit_position + normal,
+                        Vec4::new(1.0, 0.0, 0.0, 1.0),
+                        |vertex| debug_line_vertices.push(vertex),
+                    );
+                }
+            }
 
             let collisions_need_updating = movement != Vec3::zero() || !player.on_ground;
 
