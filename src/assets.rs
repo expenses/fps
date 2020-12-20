@@ -1,4 +1,5 @@
 use crate::renderer::{Renderer, Vertex, TEXTURE_FORMAT};
+use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
@@ -49,14 +50,44 @@ pub struct ModelBuffers {
     pub num_indices: u32,
 }
 
+#[derive(Debug)]
+pub enum Extras {
+    Spawn(Character),
+}
+
+impl Extras {
+    fn parse(string: &str) -> anyhow::Result<Self> {
+        if string.starts_with("spawn/") {
+            let remainder = &string["spawn/".len()..];
+            let character = Character::parse(remainder)?;
+            Ok(Self::Spawn(character))
+        } else {
+            Err(anyhow::anyhow!("Unrecognised string '{}'", string))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Character {
+    Robot,
+}
+
+impl Character {
+    fn parse(string: &str) -> anyhow::Result<Self> {
+        match string {
+            "robot" => Ok(Self::Robot),
+            _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
+        }
+    }
+}
+
 pub struct Level {
     pub opaque_geometry: ModelBuffers,
     pub transparent_geometry: ModelBuffers,
     pub texture_array_bind_group: wgpu::BindGroup,
     pub lights_bind_group: wgpu::BindGroup,
-}
-
-pub struct LevelCollider {
+    pub extras: HashMap<usize, Extras>,
+    pub node_tree: NodeTree,
     pub collision_mesh: ncollide3d::shape::TriMesh<f32>,
 }
 
@@ -65,10 +96,26 @@ impl Level {
         gltf_bytes: &[u8],
         renderer: &Renderer,
         encoder: &mut wgpu::CommandEncoder,
-    ) -> anyhow::Result<(Self, LevelCollider)> {
+    ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
         let node_tree = NodeTree::new(&gltf);
+
+        let extras = gltf
+            .nodes()
+            .filter_map(|node| {
+                node.extras()
+                    .as_ref()
+                    .map(|json_value| (node.index(), json_value))
+            })
+            .map(|(node_index, json_value)| {
+                let map: HashMap<String, serde_json::Value> =
+                    serde_json::from_str(json_value.get())?;
+                assert_eq!(map.len(), 1);
+                let key = map.keys().next().unwrap();
+                Ok((node_index, (Extras::parse(&key)?)))
+            })
+            .collect::<anyhow::Result<HashMap<usize, Extras>>>()?;
 
         let buffers = load_buffers(&gltf)?;
 
@@ -76,80 +123,7 @@ impl Level {
         let mut transparent_geometry = StagingModelBuffers::default();
         let mut collision_geometry = StagingModelBuffers::default();
 
-        let num_textures = gltf.textures().count() as u32;
-
-        let texture_array = renderer.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("level texture array"),
-            size: wgpu::Extent3d {
-                width: 128,
-                height: 128,
-                depth: num_textures,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: TEXTURE_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-        });
-
-        for (i, texture) in gltf.textures().enumerate() {
-            let view = match texture.source().source() {
-                gltf::image::Source::View { view, .. } => view,
-                gltf::image::Source::Uri { .. } => {
-                    return Err(anyhow::anyhow!("Level textures must be packed."))
-                }
-            };
-
-            let start = view.offset();
-            let end = start + view.length();
-            let bytes = &buffers[view.buffer().index()][start..end];
-            let image =
-                image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
-
-            let (width, height) = image.dimensions();
-            assert_eq!(width, 128);
-            assert_eq!(height, 128);
-
-            let temp_buf = renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("texture staging buffer"),
-                    contents: &*image,
-                    usage: wgpu::BufferUsage::COPY_SRC,
-                });
-
-            encoder.copy_buffer_to_texture(
-                wgpu::BufferCopyView {
-                    buffer: &temp_buf,
-                    layout: wgpu::TextureDataLayout {
-                        offset: 0,
-                        bytes_per_row: 4 * 128,
-                        rows_per_image: 0,
-                    },
-                },
-                wgpu::TextureCopyView {
-                    texture: &texture_array,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: i as u32,
-                    },
-                },
-                wgpu::Extent3d {
-                    width: 128,
-                    height: 128,
-                    depth: 1,
-                },
-            );
-        }
-
-        let texture_view = texture_array.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("level texture array view"),
-            format: Some(TEXTURE_FORMAT),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+        let texture_array_bind_group = load_texture_array(&gltf, &buffers, renderer, encoder)?;
 
         let lights: Vec<_> = gltf
             .nodes()
@@ -185,18 +159,6 @@ impl Level {
                 usage: wgpu::BufferUsage::STORAGE,
             });
 
-        let texture_array_bind_group =
-            renderer
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("texture array bind group"),
-                    layout: &renderer.texture_array_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture_view),
-                    }],
-                });
-
         let lights_bind_group = renderer
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -212,6 +174,10 @@ impl Level {
             .nodes()
             .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
         {
+            if node.extras().is_some() {
+                continue;
+            }
+
             assert_eq!(mesh.primitives().count(), 1);
 
             let transform = node_tree.transform_of(node.index());
@@ -220,7 +186,7 @@ impl Level {
             for primitive in mesh.primitives() {
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     return Err(anyhow::anyhow!(
-                        "Primitives with {:?} are not allowed. Triangles only.",
+                        "Primitives mode {:?} is not implemented.",
                         primitive.mode()
                     ));
                 }
@@ -232,7 +198,7 @@ impl Level {
                         normal_matrix,
                         &buffers,
                         &mut transparent_geometry,
-                        &mut collision_geometry,
+                        Some(&mut collision_geometry),
                     )?;
                 } else {
                     add_primitive_geometry_to_buffers(
@@ -241,7 +207,7 @@ impl Level {
                         normal_matrix,
                         &buffers,
                         &mut opaque_geometry,
-                        &mut collision_geometry,
+                        Some(&mut collision_geometry),
                     )?;
                 }
             }
@@ -268,19 +234,74 @@ impl Level {
             "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
             opaque_geometry.vertices.len(),
             opaque_geometry.indices.len(),
-            num_textures,
+            gltf.textures().count() as u32,
             lights.len(),
         );
 
-        Ok((
-            Self {
-                opaque_geometry: opaque_geometry.upload(&renderer.device),
-                transparent_geometry: transparent_geometry.upload(&renderer.device),
-                texture_array_bind_group,
-                lights_bind_group,
-            },
-            LevelCollider { collision_mesh },
-        ))
+        Ok(Self {
+            opaque_geometry: opaque_geometry.upload(&renderer.device),
+            transparent_geometry: transparent_geometry.upload(&renderer.device),
+            texture_array_bind_group,
+            lights_bind_group,
+            extras,
+            node_tree,
+            collision_mesh,
+        })
+    }
+}
+
+pub struct Model {
+    pub buffers: ModelBuffers,
+    pub textures: wgpu::BindGroup,
+}
+
+impl Model {
+    pub fn load_gltf(
+        gltf_bytes: &[u8],
+        renderer: &Renderer,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> anyhow::Result<Self> {
+        let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
+        let node_tree = NodeTree::new(&gltf);
+        let buffers = load_buffers(&gltf)?;
+
+        let textures = load_texture_array(&gltf, &buffers, renderer, encoder)?;
+
+        let mut staging_buffers = StagingModelBuffers::default();
+
+        for (node, mesh) in gltf
+            .nodes()
+            .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
+        {
+            assert_eq!(mesh.primitives().count(), 1);
+
+            // We can't use node transforms for animated models.
+            let transform = Mat4::identity();
+            let normal_matrix = normal_matrix(transform);
+
+            for primitive in mesh.primitives() {
+                if primitive.mode() != gltf::mesh::Mode::Triangles {
+                    return Err(anyhow::anyhow!(
+                        "Primitives mode {:?} is not implemented.",
+                        primitive.mode()
+                    ));
+                }
+
+                add_primitive_geometry_to_buffers(
+                    &primitive,
+                    transform,
+                    normal_matrix,
+                    &buffers,
+                    &mut staging_buffers,
+                    None,
+                )?;
+            }
+        }
+
+        Ok(Self {
+            buffers: staging_buffers.upload(&renderer.device),
+            textures,
+        })
     }
 }
 
@@ -322,7 +343,7 @@ fn load_buffers(gltf: &gltf::Gltf) -> anyhow::Result<Vec<Vec<u8>>> {
     Ok(buffers)
 }
 
-struct NodeTree {
+pub struct NodeTree {
     inner: Vec<(Mat4, usize)>,
 }
 
@@ -340,7 +361,7 @@ impl NodeTree {
         Self { inner }
     }
 
-    fn transform_of(&self, mut index: usize) -> Mat4 {
+    pub fn transform_of(&self, mut index: usize) -> Mat4 {
         let mut transform_sum = Mat4::identity();
 
         while index != usize::max_value() {
@@ -359,7 +380,7 @@ fn add_primitive_geometry_to_buffers(
     normal_matrix: Mat3,
     gltf_buffers: &Vec<Vec<u8>>,
     staging_buffers: &mut StagingModelBuffers<Vertex>,
-    collision_buffers: &mut StagingModelBuffers<Vec3>,
+    mut collision_buffers: Option<&mut StagingModelBuffers<Vec3>>,
 ) -> anyhow::Result<()> {
     let texture_index = primitive
         .material()
@@ -385,15 +406,17 @@ fn add_primitive_geometry_to_buffers(
             .map(|i| i + num_vertices),
     );
 
-    let num_vertices_collision = collision_buffers.vertices.len() as u32;
+    if let Some(collision_buffers) = collision_buffers.as_mut() {
+        let num_vertices_collision = collision_buffers.vertices.len() as u32;
 
-    collision_buffers.indices.extend(
-        reader
-            .read_indices()
-            .unwrap()
-            .into_u32()
-            .map(|i| i + num_vertices_collision),
-    );
+        collision_buffers.indices.extend(
+            reader
+                .read_indices()
+                .unwrap()
+                .into_u32()
+                .map(|i| i + num_vertices_collision),
+        );
+    }
 
     positions
         .zip(tex_coordinates)
@@ -413,7 +436,9 @@ fn add_primitive_geometry_to_buffers(
                 texture_index: texture_index as i32,
             });
 
-            collision_buffers.vertices.push(position);
+            if let Some(collision_buffers) = collision_buffers.as_mut() {
+                collision_buffers.vertices.push(position);
+            }
         });
 
     Ok(())
@@ -491,4 +516,120 @@ pub fn load_skybox(
         });
 
     Ok(skybox_bind_group)
+}
+
+fn load_texture_array(
+    gltf: &gltf::Gltf,
+    gltf_buffers: &Vec<Vec<u8>>,
+    renderer: &Renderer,
+    encoder: &mut wgpu::CommandEncoder,
+) -> anyhow::Result<wgpu::BindGroup> {
+    let num_textures = gltf.textures().count() as u32;
+
+    if num_textures == 0 {
+        return Err(anyhow::anyhow!("No textures in gltf file."));
+    }
+
+    let mut texture_array: Option<(wgpu::Texture, u32, u32)> = None;
+
+    for (i, texture) in gltf.textures().enumerate() {
+        let view = match texture.source().source() {
+            gltf::image::Source::View { view, mime_type } => {
+                assert_eq!(mime_type, "image/png");
+                view
+            }
+            gltf::image::Source::Uri { .. } => {
+                return Err(anyhow::anyhow!("Textures must be packed."))
+            }
+        };
+
+        let start = view.offset();
+        let end = start + view.length();
+        let bytes = &gltf_buffers[view.buffer().index()][start..end];
+        let image =
+            image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
+
+        let (image_width, image_height) = image.dimensions();
+
+        let (texture_array, texture_width, texture_height) =
+            texture_array.get_or_insert_with(|| {
+                assert_eq!(image_width % 64, 0);
+                assert_eq!(image_height % 64, 0);
+
+                let texture_array = renderer.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("level texture array"),
+                    size: wgpu::Extent3d {
+                        width: image_width,
+                        height: image_height,
+                        depth: num_textures,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: TEXTURE_FORMAT,
+                    usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+                });
+
+                (texture_array, image_width, image_height)
+            });
+
+        assert_eq!(image_width, *texture_width);
+        assert_eq!(image_height, *texture_height);
+
+        let staging_buffer =
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("texture staging buffer"),
+                    contents: &*image,
+                    usage: wgpu::BufferUsage::COPY_SRC,
+                });
+
+        encoder.copy_buffer_to_texture(
+            wgpu::BufferCopyView {
+                buffer: &staging_buffer,
+                layout: wgpu::TextureDataLayout {
+                    offset: 0,
+                    bytes_per_row: 4 * *texture_width,
+                    rows_per_image: 0,
+                },
+            },
+            wgpu::TextureCopyView {
+                texture: &texture_array,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: i as u32,
+                },
+            },
+            wgpu::Extent3d {
+                width: *texture_width,
+                height: *texture_width,
+                depth: 1,
+            },
+        );
+    }
+
+    let (texture_array, ..) = texture_array.unwrap();
+
+    let texture_view = texture_array.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("level texture array view"),
+        format: Some(TEXTURE_FORMAT),
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let texture_array_bind_group = renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("texture array bind group"),
+            layout: &renderer.texture_array_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            }],
+        });
+
+    Ok(texture_array_bind_group)
 }

@@ -49,14 +49,31 @@ async fn run() -> anyhow::Result<()> {
                 label: Some("init encoder"),
             });
 
-    let (level, level_collider) = assets::Level::load_gltf(
+    let level = assets::Level::load_gltf(
         include_bytes!("../warehouse.glb"),
         &renderer,
         &mut init_encoder,
     )?;
 
-    let (cylinder, _) = assets::Level::load_gltf(
-        include_bytes!("../cylinder.glb"),
+    let mut robot_instances = Vec::new();
+
+    for (node_index, extra) in level.extras.iter() {
+        if let assets::Extras::Spawn(assets::Character::Robot) = extra {
+            robot_instances.push(level.node_tree.transform_of(*node_index));
+        }
+    }
+
+    let robot_instances_buffer =
+        renderer
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("robot instances"),
+                contents: bytemuck::cast_slice(&robot_instances),
+                usage: wgpu::BufferUsage::VERTEX,
+            });
+
+    let robot = assets::Model::load_gltf(
+        include_bytes!("../warehouse_robot.glb"),
         &renderer,
         &mut init_encoder,
     )?;
@@ -72,7 +89,7 @@ async fn run() -> anyhow::Result<()> {
     let mut debug_line_vertices: Vec<renderer::debug_lines::Vertex> = Vec::new();
 
     /*
-    for face in level_collider.collision_mesh.faces() {
+    for face in level.collision_mesh.faces() {
         let points = level_collider.collision_mesh.points();
         let a: [f32; 3] = points[face.indices.x].coords.into();
         let b: [f32; 3] = points[face.indices.y].coords.into();
@@ -200,7 +217,7 @@ async fn run() -> anyhow::Result<()> {
                         &vec3_to_ncollide_iso(player.position + player_body_relative),
                         &player_body,
                         &vec3_to_ncollide_iso(Vec3::zero()),
-                        &level_collider.collision_mesh,
+                        &level.collision_mesh,
                         0.0,
                     );
 
@@ -250,7 +267,7 @@ async fn run() -> anyhow::Result<()> {
                     &vec3_to_ncollide_iso(player.position + player_feet_relative),
                     &player_feet,
                     &vec3_to_ncollide_iso(Vec3::zero()),
-                    &level_collider.collision_mesh,
+                    &level.collision_mesh,
                     0.0,
                 );
 
@@ -333,11 +350,15 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_index_buffer(level.opaque_geometry.indices.slice(..));
                     render_pass.draw_indexed(0..level.opaque_geometry.num_indices, 0, 0..1);
 
-                    /*render_pass.set_bind_group(1, &cylinder.texture_array_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, cylinder.opaque_geometry.vertices.slice(..));
-                    render_pass.set_vertex_buffer(1, player_position_instance.slice(..));
-                    render_pass.set_index_buffer(cylinder.opaque_geometry.indices.slice(..));
-                    render_pass.draw_indexed(0..cylinder.opaque_geometry.num_indices, 0, 0..1);*/
+                    render_pass.set_bind_group(1, &robot.textures, &[]);
+                    render_pass.set_vertex_buffer(0, robot.buffers.vertices.slice(..));
+                    render_pass.set_vertex_buffer(1, robot_instances_buffer.slice(..));
+                    render_pass.set_index_buffer(robot.buffers.indices.slice(..));
+                    render_pass.draw_indexed(
+                        0..robot.buffers.num_indices,
+                        0,
+                        0..robot_instances.len() as u32,
+                    );
 
                     // Render the skybox
 

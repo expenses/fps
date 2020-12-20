@@ -482,6 +482,7 @@ dependencies = [
  "image",
  "ncollide3d",
  "ordered-float",
+ "serde_json",
  "ultraviolet",
  "wgpu",
  "winit",
