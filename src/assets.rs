@@ -51,18 +51,22 @@ pub struct ModelBuffers {
 }
 
 #[derive(Debug)]
-pub enum Extras {
+pub enum Property {
     Spawn(Character),
+    NoCollide,
 }
 
-impl Extras {
+impl Property {
     fn parse(string: &str) -> anyhow::Result<Self> {
         if string.starts_with("spawn/") {
             let remainder = &string["spawn/".len()..];
             let character = Character::parse(remainder)?;
             Ok(Self::Spawn(character))
         } else {
-            Err(anyhow::anyhow!("Unrecognised string '{}'", string))
+            match string {
+                "nocollide" => Ok(Self::NoCollide),
+                _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string))
+            }
         }
     }
 }
@@ -86,7 +90,7 @@ pub struct Level {
     pub transparent_geometry: ModelBuffers,
     pub texture_array_bind_group: wgpu::BindGroup,
     pub lights_bind_group: wgpu::BindGroup,
-    pub extras: HashMap<usize, Extras>,
+    pub properties: HashMap<usize, Property>,
     pub node_tree: NodeTree,
     pub collision_mesh: ncollide3d::shape::TriMesh<f32>,
 }
@@ -101,7 +105,7 @@ impl Level {
 
         let node_tree = NodeTree::new(&gltf);
 
-        let extras = gltf
+        let properties = gltf
             .nodes()
             .filter_map(|node| {
                 node.extras()
@@ -113,9 +117,9 @@ impl Level {
                     serde_json::from_str(json_value.get())?;
                 assert_eq!(map.len(), 1);
                 let key = map.keys().next().unwrap();
-                Ok((node_index, (Extras::parse(&key)?)))
+                Ok((node_index, (Property::parse(&key)?)))
             })
-            .collect::<anyhow::Result<HashMap<usize, Extras>>>()?;
+            .collect::<anyhow::Result<HashMap<usize, Property>>>()?;
 
         let buffers = load_buffers(&gltf)?;
 
@@ -174,9 +178,11 @@ impl Level {
             .nodes()
             .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
         {
-            if node.extras().is_some() {
-                continue;
-            }
+            let collide = match properties.get(&node.index()) {
+                Some(Property::NoCollide) => false,
+                Some(_) => continue,
+                None => true,
+            };
 
             assert_eq!(mesh.primitives().count(), 1);
 
@@ -191,6 +197,12 @@ impl Level {
                     ));
                 }
 
+                let collision_geometry = if collide {
+                    Some(&mut collision_geometry)
+                } else {
+                    None
+                };    
+
                 if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
                     add_primitive_geometry_to_buffers(
                         &primitive,
@@ -198,7 +210,7 @@ impl Level {
                         normal_matrix,
                         &buffers,
                         &mut transparent_geometry,
-                        Some(&mut collision_geometry),
+                        collision_geometry,
                     )?;
                 } else {
                     add_primitive_geometry_to_buffers(
@@ -207,7 +219,7 @@ impl Level {
                         normal_matrix,
                         &buffers,
                         &mut opaque_geometry,
-                        Some(&mut collision_geometry),
+                        collision_geometry,
                     )?;
                 }
             }
@@ -243,7 +255,7 @@ impl Level {
             transparent_geometry: transparent_geometry.upload(&renderer.device),
             texture_array_bind_group,
             lights_bind_group,
-            extras,
+            properties,
             node_tree,
             collision_mesh,
         })

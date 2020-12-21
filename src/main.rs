@@ -80,8 +80,8 @@ async fn run() -> anyhow::Result<()> {
 
     let mut robot_instances = Vec::new();
 
-    for (node_index, extra) in level.extras.iter() {
-        if let assets::Extras::Spawn(assets::Character::Robot) = extra {
+    for (node_index, property) in level.properties.iter() {
+        if let assets::Property::Spawn(assets::Character::Robot) = property {
             robot_instances.push(level.node_tree.transform_of(*node_index));
         }
     }
