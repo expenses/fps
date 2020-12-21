@@ -65,7 +65,7 @@ impl Property {
         } else {
             match string {
                 "nocollide" => Ok(Self::NoCollide),
-                _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string))
+                _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
             }
         }
     }
@@ -201,7 +201,7 @@ impl Level {
                     Some(&mut collision_geometry)
                 } else {
                     None
-                };    
+                };
 
                 if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
                     add_primitive_geometry_to_buffers(

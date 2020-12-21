@@ -78,23 +78,6 @@ async fn run() -> anyhow::Result<()> {
         &mut init_encoder,
     )?;
 
-    let mut robot_instances = Vec::new();
-
-    for (node_index, property) in level.properties.iter() {
-        if let assets::Property::Spawn(assets::Character::Robot) = property {
-            robot_instances.push(level.node_tree.transform_of(*node_index));
-        }
-    }
-
-    let robot_instances_buffer =
-        renderer
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("robot instances"),
-                contents: bytemuck::cast_slice(&robot_instances),
-                usage: wgpu::BufferUsage::VERTEX,
-            });
-
     let robot = assets::Model::load_gltf(
         include_bytes!("../warehouse_robot.glb"),
         &renderer,
@@ -120,6 +103,26 @@ async fn run() -> anyhow::Result<()> {
     )?;
 
     renderer.queue.submit(Some(init_encoder.finish()));
+
+    let mut robot_instances = Vec::new();
+
+    for (node_index, property) in level.properties.iter() {
+        if let assets::Property::Spawn(assets::Character::Robot) = property {
+            robot_instances.push(level.node_tree.transform_of(*node_index));
+        }
+    }
+
+    let robot_instances_buffer =
+        renderer
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("robot instances"),
+                contents: bytemuck::cast_slice(&robot_instances),
+                usage: wgpu::BufferUsage::VERTEX,
+            });
+
+    let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer);
+    let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
     let mut debug_line_vertices: Vec<renderer::debug_lines::Vertex> = Vec::new();
 
@@ -173,6 +176,7 @@ async fn run() -> anyhow::Result<()> {
                 renderer.resize(size.width as u32, size.height as u32);
                 screen_center = renderer.screen_center();
                 renderer.window.set_cursor_position(screen_center).unwrap();
+                overlay_pipeline.resize(&renderer, size.width as u32, size.height as u32);
             }
             WindowEvent::KeyboardInput {
                 input:
@@ -385,6 +389,12 @@ async fn run() -> anyhow::Result<()> {
 
             renderer.set_camera_view(camera_view);
 
+            overlay_buffers.draw_circle_outline(
+                Vec2::new(screen_center.x as f32, screen_center.y as f32),
+                100.0,
+            );
+            overlay_buffers.upload(&renderer);
+
             let gun_instance = renderer::single_instance_buffer(
                 &renderer.device,
                 renderer::Instance {
@@ -501,6 +511,14 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_pipeline(&debug_lines_pipeline);
                     render_pass.set_vertex_buffer(0, debug_lines_buffer.slice(..));
                     render_pass.draw(0..debug_line_vertices.len() as u32, 0..1);
+
+                    if let Some((vertices, indices, num_indices)) = overlay_buffers.get() {
+                        render_pass.set_pipeline(&overlay_pipeline.pipeline);
+                        render_pass.set_bind_group(0, &overlay_pipeline.bind_group, &[]);
+                        render_pass.set_vertex_buffer(0, vertices);
+                        render_pass.set_index_buffer(indices);
+                        render_pass.draw_indexed(0..num_indices, 0, 0..1);
+                    }
 
                     drop(render_pass);
 

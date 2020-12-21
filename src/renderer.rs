@@ -2,6 +2,7 @@ use ultraviolet::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
 pub mod debug_lines;
+pub mod overlay;
 
 const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -516,7 +517,7 @@ impl Decal {
     fn uvs(&self) -> (Vec2, Vec2) {
         let (uv_offset, uv_size) = match self {
             Self::Shadow => (Vec2::zero(), Vec2::broadcast(0.5)),
-            Self::BulletImpact => (Vec2::new(0.5, 0.0), Vec2::broadcast(0.25))
+            Self::BulletImpact => (Vec2::new(0.5, 0.0), Vec2::broadcast(0.25)),
         };
 
         (uv_offset, uv_size)
@@ -568,4 +569,86 @@ pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [
         vertex(2),
         vertex(3),
     ]
+}
+
+pub struct DynamicBuffer<T: bytemuck::Pod> {
+    buffer: wgpu::Buffer,
+    capacity: usize,
+    len: usize,
+    label: &'static str,
+    waiting: Vec<T>,
+    usage: wgpu::BufferUsage,
+}
+
+impl<T: bytemuck::Pod> DynamicBuffer<T> {
+    fn new(
+        device: &wgpu::Device,
+        base_capacity: usize,
+        label: &'static str,
+        usage: wgpu::BufferUsage,
+    ) -> Self {
+        Self {
+            capacity: base_capacity,
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: (base_capacity * std::mem::size_of::<T>()) as u64,
+                usage: usage | wgpu::BufferUsage::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            len: 0,
+            label,
+            waiting: Vec::with_capacity(base_capacity),
+            usage,
+        }
+    }
+
+    pub fn push(&mut self, item: T) {
+        self.waiting.push(item)
+    }
+
+    // Upload the waiting buffer to the gpu. Returns whether the gpu buffer was resized.
+    fn upload(&mut self, renderer: &Renderer) -> bool {
+        if self.waiting.is_empty() {
+            self.len = 0;
+            return false;
+        }
+
+        self.len = self.waiting.len();
+        let bytes = bytemuck::cast_slice(&self.waiting);
+
+        if self.waiting.len() <= self.capacity {
+            renderer.queue.write_buffer(&self.buffer, 0, bytes);
+            self.waiting.clear();
+            false
+        } else {
+            self.capacity = (self.capacity * 2).max(self.waiting.len());
+            self.buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(self.label),
+                size: (self.capacity * std::mem::size_of::<T>()) as u64,
+                usage: self.usage | wgpu::BufferUsage::COPY_DST,
+                mapped_at_creation: true,
+            });
+            self.buffer
+                .slice(..bytes.len() as u64)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytes);
+            self.buffer.unmap();
+            self.waiting.clear();
+            true
+        }
+    }
+
+    fn get(&self) -> Option<(wgpu::BufferSlice, u32)> {
+        if self.len > 0 {
+            let byte_len = (self.len * std::mem::size_of::<T>()) as u64;
+
+            Some((self.buffer.slice(..byte_len), self.len as u32))
+        } else {
+            None
+        }
+    }
+
+    pub fn len_waiting(&self) -> usize {
+        self.waiting.len()
+    }
 }
