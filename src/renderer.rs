@@ -507,7 +507,23 @@ fn create_render_pipeline(
     })
 }
 
-pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, uv_offset: Vec2) -> [Vertex; 6] {
+pub enum Decal {
+    Shadow,
+    BulletImpact,
+}
+
+impl Decal {
+    fn uvs(&self) -> (Vec2, Vec2) {
+        let (uv_offset, uv_size) = match self {
+            Self::Shadow => (Vec2::zero(), Vec2::broadcast(0.5)),
+            Self::BulletImpact => (Vec2::new(0.5, 0.0), Vec2::broadcast(0.25))
+        };
+
+        (uv_offset, uv_size)
+    }
+}
+
+pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [Vertex; 6] {
     let offset = size / 2.0;
 
     let rotation = if normal == Vec3::new(0.0, -1.0, 0.0) {
@@ -528,11 +544,13 @@ pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, uv_offset: Vec2) -
         offsets[i] = rotation * offsets[i];
     }
 
+    let (uv_offset, uv_size) = decal.uvs();
+
     let uvs = [
         Vec2::zero() + uv_offset,
-        Vec2::new(0.5, 0.0) + uv_offset,
-        Vec2::new(0.0, 0.5) + uv_offset,
-        Vec2::new(0.5, 0.5) + uv_offset,
+        Vec2::new(uv_size.x, 0.0) + uv_offset,
+        Vec2::new(0.0, uv_size.y) + uv_offset,
+        uv_size + uv_offset,
     ];
 
     let vertex = |index| Vertex {

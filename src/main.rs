@@ -296,8 +296,8 @@ async fn run() -> anyhow::Result<()> {
                     decals_vertices.extend_from_slice(&renderer::decal_square(
                         hit_position + normal * 0.01,
                         normal,
-                        Vec2::one(),
-                        Vec2::new(0.5, 0.0),
+                        Vec2::broadcast(0.5),
+                        renderer::Decal::BulletImpact,
                     ));
                 }
             }
