@@ -3,6 +3,7 @@ mod assets;
 mod renderer;
 
 use ncollide3d::query::RayCast;
+use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
 use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
@@ -159,12 +160,38 @@ async fn run() -> anyhow::Result<()> {
         gun_cooldown: 0.0,
     };
 
-    let player_body = ncollide3d::shape::Capsule::new(1.25, 0.5);
-    let player_feet = ncollide3d::shape::Cuboid::new([0.75 / 2.0, 1.0, 0.75 / 2.0].into());
+    const PLAYER_RADIUS: f32 = 0.5;
+    const BODY_BOTTOM_DISTANCE_FROM_GROUND: f32 = 0.1;
+    const PLAYER_BODY_BASE_DEPTH: f32 = 2.5;
+    const PLAYER_FEET_HALF_DEPTH: f32 =
+        (PLAYER_BODY_BASE_DEPTH + PLAYER_RADIUS + BODY_BOTTOM_DISTANCE_FROM_GROUND) / 2.0;
+    const PLAYER_FEET_HALF_WIDTH: f32 = 0.7 / 2.0;
 
-    let player_feet_relative = Vec3::new(0.0, 1.0, 0.0);
-    let player_body_relative = Vec3::new(0.0, 2.6, 0.0);
-    let player_head_relative = Vec3::new(0.0, 5.1, 0.0);
+    let player_body = ncollide3d::shape::Capsule::new(PLAYER_BODY_BASE_DEPTH / 2.0, PLAYER_RADIUS);
+    let player_feet = ncollide3d::shape::Cuboid::new(
+        [
+            PLAYER_FEET_HALF_WIDTH,
+            PLAYER_FEET_HALF_DEPTH,
+            PLAYER_FEET_HALF_WIDTH,
+        ]
+        .into(),
+    );
+
+    let player_body_debug_mesh: ncollide3d::shape::TriMesh<f32> =
+        player_body.to_trimesh((8, 8)).into();
+    let player_feet_debug_mesh: ncollide3d::shape::TriMesh<f32> = player_feet.to_trimesh(()).into();
+
+    let player_feet_relative = Vec3::new(0.0, PLAYER_FEET_HALF_DEPTH, 0.0);
+    let player_body_relative = Vec3::new(
+        0.0,
+        BODY_BOTTOM_DISTANCE_FROM_GROUND + PLAYER_BODY_BASE_DEPTH / 2.0 + PLAYER_RADIUS,
+        0.0,
+    );
+    let player_head_relative = Vec3::new(
+        0.0,
+        BODY_BOTTOM_DISTANCE_FROM_GROUND + PLAYER_BODY_BASE_DEPTH + PLAYER_RADIUS,
+        0.0,
+    );
 
     let mut screen_center = renderer.screen_center();
     let mut cursor_grab = true;
@@ -321,28 +348,55 @@ async fn run() -> anyhow::Result<()> {
                     match body_contact {
                         Some(contact) => {
                             let contact_point = vec3_from_arr(contact.world2.coords.into());
-
-                            renderer::debug_lines::draw_line(
-                                contact_point,
-                                Vec3::new(player.position.x, contact_point.y, player.position.z),
-                                Vec4::one(),
-                                |vertex| debug_line_vertices.push(vertex),
-                            );
-
                             let epsilon = 0.001;
-                            let body_radius = 0.5;
 
-                            let mut vector_away_from_wall = player.position - contact_point;
+                            if contact_point.y
+                                - player.position.y
+                                - BODY_BOTTOM_DISTANCE_FROM_GROUND
+                                < PLAYER_RADIUS
+                            {
+                                // Ignore contacts on the bottom hemisphere of the body capsule.
+                                break;
+                            } else if contact_point.y - player.position.y > player_head_relative.y {
+                                renderer::debug_lines::draw_line(
+                                    contact_point,
+                                    player.position + player_head_relative,
+                                    Vec4::one(),
+                                    |vertex| debug_line_vertices.push(vertex),
+                                );
 
-                            //println!("{:?}", vector_away_from_wall + player_head_relative);
+                                // Handle hitting the top hemisphere on the ceiling.
+                                let vector_away_from_ceiling =
+                                    (player.position + player_head_relative) - contact_point;
 
-                            if vector_away_from_wall.x == 0.0 && vector_away_from_wall.z == 0.0 {
-                                // Need to handle this case
+                                let push_strength =
+                                    (PLAYER_RADIUS - vector_away_from_ceiling.mag()) + epsilon;
+
+                                player.position +=
+                                    vector_away_from_ceiling.normalized() * push_strength;
+
+                                player.velocity = 0.0;
+                                continue;
                             } else {
+                                // Handle horizontal contacts.
+
+                                renderer::debug_lines::draw_line(
+                                    contact_point,
+                                    Vec3::new(
+                                        player.position.x,
+                                        contact_point.y,
+                                        player.position.z,
+                                    ),
+                                    Vec4::one(),
+                                    |vertex| debug_line_vertices.push(vertex),
+                                );
+
+                                let mut vector_away_from_wall = player.position - contact_point;
+
                                 vector_away_from_wall.y = 0.0;
                                 let push_strength =
-                                    (body_radius - vector_away_from_wall.mag()) + epsilon;
-                                let push_strength = push_strength.max(0.0);
+                                    (PLAYER_RADIUS - vector_away_from_wall.mag()) + epsilon;
+                                //let push_strength = push_strength.max(0.0);
                                 let push = vector_away_from_wall.normalized() * push_strength;
 
                                 /*println!(
@@ -381,6 +435,14 @@ async fn run() -> anyhow::Result<()> {
             renderer.window.request_redraw();
         }
         Event::RedrawRequested(_) => {
+            /*
+            let static_view = fps_view_rh(
+                player_head_relative,
+                player.facing.vertical,
+                player.facing.horizontal,
+            );
+            */
+
             let camera_view = fps_view_rh(
                 player.position + player_head_relative,
                 player.facing.vertical,
@@ -394,6 +456,70 @@ async fn run() -> anyhow::Result<()> {
                 100.0,
             );
             overlay_buffers.upload(&renderer);
+
+            /*
+            debug_line_vertices.clear();
+
+            renderer::debug_lines::draw_marker(player.position, 0.5, |vertex| {
+                debug_line_vertices.push(vertex);
+            });
+
+            renderer::debug_lines::draw_marker(
+                player.position + player_feet_relative,
+                0.5,
+                |vertex| {
+                    debug_line_vertices.push(vertex);
+                },
+            );
+
+            renderer::debug_lines::draw_marker(
+                player.position + player_body_relative,
+                0.5,
+                |vertex| {
+                    debug_line_vertices.push(vertex);
+                },
+            );
+
+            renderer::debug_lines::draw_marker(
+                player.position + player_head_relative,
+                0.5,
+                |vertex| {
+                    debug_line_vertices.push(vertex);
+                },
+            );
+
+            for face in player_body_debug_mesh.faces() {
+                let points = player_body_debug_mesh.points();
+                let a = vec3_from_arr(points[face.indices.x].coords.into())
+                    + player.position
+                    + player_body_relative;
+                let b = vec3_from_arr(points[face.indices.y].coords.into())
+                    + player.position
+                    + player_body_relative;
+                let c = vec3_from_arr(points[face.indices.z].coords.into())
+                    + player.position
+                    + player_body_relative;
+                renderer::debug_lines::draw_tri(a, b, c, Vec4::new(1.0, 0.5, 0.25, 1.0), |vertex| {
+                    debug_line_vertices.push(vertex);
+                })
+            }
+
+            for face in player_feet_debug_mesh.faces() {
+                let points = player_feet_debug_mesh.points();
+                let a = vec3_from_arr(points[face.indices.x].coords.into())
+                    + player.position
+                    + player_feet_relative;
+                let b = vec3_from_arr(points[face.indices.y].coords.into())
+                    + player.position
+                    + player_feet_relative;
+                let c = vec3_from_arr(points[face.indices.z].coords.into())
+                    + player.position
+                    + player_feet_relative;
+                renderer::debug_lines::draw_tri(a, b, c, Vec4::new(1.0, 0.0, 0.25, 1.0), |vertex| {
+                    debug_line_vertices.push(vertex);
+                })
+            }
+            */
 
             let gun_instance = renderer::single_instance_buffer(
                 &renderer.device,
@@ -473,15 +599,17 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_index_buffer(level.opaque_geometry.indices.slice(..));
                     render_pass.draw_indexed(0..level.opaque_geometry.num_indices, 0, 0..1);
 
-                    render_pass.set_bind_group(1, &robot.textures, &[]);
-                    render_pass.set_vertex_buffer(0, robot.buffers.vertices.slice(..));
-                    render_pass.set_vertex_buffer(1, robot_instances_buffer.slice(..));
-                    render_pass.set_index_buffer(robot.buffers.indices.slice(..));
-                    render_pass.draw_indexed(
-                        0..robot.buffers.num_indices,
-                        0,
-                        0..robot_instances.len() as u32,
-                    );
+                    if robot_instances.len() > 0 {
+                        render_pass.set_bind_group(1, &robot.textures, &[]);
+                        render_pass.set_vertex_buffer(0, robot.buffers.vertices.slice(..));
+                        render_pass.set_vertex_buffer(1, robot_instances_buffer.slice(..));
+                        render_pass.set_index_buffer(robot.buffers.indices.slice(..));
+                        render_pass.draw_indexed(
+                            0..robot.buffers.num_indices,
+                            0,
+                            0..robot_instances.len() as u32,
+                        );
+                    }
 
                     // Render the skybox
 

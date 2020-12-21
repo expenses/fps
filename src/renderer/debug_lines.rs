@@ -78,3 +78,24 @@ pub fn draw_tri(a: Vec3, b: Vec3, c: Vec3, colour: Vec4, mut func: impl FnMut(Ve
     draw_line(b, c, colour, &mut func);
     draw_line(c, a, colour, &mut func);
 }
+
+pub fn draw_marker(at: Vec3, size: f32, mut func: impl FnMut(Vertex)) {
+    draw_line(
+        at - Vec3::unit_x() * size / 2.0,
+        at + Vec3::unit_x() * size / 2.0,
+        Vec4::new(1.0, 0.0, 0.0, 1.0),
+        &mut func,
+    );
+    draw_line(
+        at - Vec3::unit_y() * size / 2.0,
+        at + Vec3::unit_y() * size / 2.0,
+        Vec4::new(0.0, 1.0, 0.0, 1.0),
+        &mut func,
+    );
+    draw_line(
+        at - Vec3::unit_z() * size / 2.0,
+        at + Vec3::unit_z() * size / 2.0,
+        Vec4::new(0.0, 0.0, 1.0, 1.0),
+        &mut func,
+    );
+}
