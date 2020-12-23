@@ -204,6 +204,7 @@ impl Level {
                 if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
                     add_primitive_geometry_to_buffers(
                         &primitive,
+                        &node,
                         transform,
                         normal_matrix,
                         buffer_blob,
@@ -213,6 +214,7 @@ impl Level {
                 } else {
                     add_primitive_geometry_to_buffers(
                         &primitive,
+                        &node,
                         transform,
                         normal_matrix,
                         buffer_blob,
@@ -302,6 +304,7 @@ impl Model {
 
                 add_primitive_geometry_to_buffers(
                     &primitive,
+                    &node,
                     transform,
                     normal_matrix,
                     buffer_blob,
@@ -364,6 +367,7 @@ impl NodeTree {
 
 fn add_primitive_geometry_to_buffers(
     primitive: &gltf::Primitive,
+    node: &gltf::Node,
     transform: Mat4,
     normal_matrix: Mat3,
     buffer_blob: &[u8],
@@ -374,7 +378,13 @@ fn add_primitive_geometry_to_buffers(
         .material()
         .pbr_metallic_roughness()
         .base_color_texture()
-        .ok_or_else(|| anyhow::anyhow!("All level primitives need textures."))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No textures found for the mesh on node {:?}; primitive {}",
+                node.name(),
+                primitive.index()
+            )
+        })?
         .texture()
         .index();
 
@@ -510,6 +520,8 @@ pub fn load_skybox(
     Ok(skybox_bind_group)
 }
 
+// const MIPMAP_LEVELS: u32 = 1;
+
 fn load_texture_array(
     gltf: &gltf::Gltf,
     buffer_blob: &[u8],
@@ -603,13 +615,60 @@ fn load_texture_array(
                 depth: 1,
             },
         );
+
+        /*
+        // Mipmap generation
+        let mipmap_views: Vec<_> = (0.. MIPMAP_LEVELS)
+            .map(|level| {
+                texture_array.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_mip_level: level,
+                    level_count: Some(std::num::NonZeroU32::new(1).unwrap()),
+                    base_array_layer: i as u32,
+                    array_layer_count: Some(std::num::NonZeroU32::new(1).unwrap()),
+                    ..Default::default()
+                })
+            })
+            .collect();
+
+        for level in 1 .. MIPMAP_LEVELS as usize {
+            let bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &renderer.mipmap_generation_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&mipmap_views[0]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&renderer.sampler),
+                    },
+                ]
+            });
+
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                    attachment: &mipmap_views[level],
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: true,
+                    },
+                }],
+                depth_stencil_attachment: None,
+            });
+            rpass.set_pipeline(&renderer.mipmap_generation_pipeline);
+            rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.draw(0..3, 0..1);
+        }
+        */
     }
 
     let (texture_array, ..) = texture_array.unwrap();
 
     let texture_view = texture_array.create_view(&wgpu::TextureViewDescriptor {
         label: Some("level texture array view"),
-        format: Some(TEXTURE_FORMAT),
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
     });

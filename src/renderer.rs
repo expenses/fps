@@ -45,6 +45,11 @@ pub struct Renderer {
     pub opaque_render_pipeline: wgpu::RenderPipeline,
     pub transparent_render_pipeline: wgpu::RenderPipeline,
     pub skybox_render_pipeline: wgpu::RenderPipeline,
+    /*
+    pub sampler: wgpu::Sampler,
+    pub mipmap_generation_pipeline: wgpu::RenderPipeline,
+    pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
+    */
 }
 
 impl Renderer {
@@ -84,12 +89,22 @@ impl Renderer {
             )
             .await?;
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            label: Some("nearest sampler"),
+            ..Default::default()
+        });
+
+        let anisotropic_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Linear,
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
-            label: Some("nearest sampler"),
+            anisotropy_clamp: Some(std::num::NonZeroU8::new(16).unwrap()),
+            label: Some("anisotropic sampler"),
             ..Default::default()
         });
 
@@ -143,6 +158,15 @@ impl Renderer {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -160,7 +184,11 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    resource: wgpu::BindingResource::Sampler(&nearest_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&anisotropic_sampler),
                 },
             ],
         });
@@ -314,6 +342,69 @@ impl Renderer {
             "identity instance buffer",
         );
 
+        /*
+        let mipmap_generation_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("skybox texture bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler {
+                        comparison: false,
+                        filtering: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let mipmap_generation_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mipmap generation pipeline layout"),
+            bind_group_layouts: &[&mipmap_generation_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let vs_full_screen_tri = wgpu::include_spirv!("../shaders/compiled/full_screen_tri.vert.spv");
+        let vs_full_screen_tri_module = device.create_shader_module(vs_full_screen_tri);
+
+        let fs_blit_mipmap = wgpu::include_spirv!("../shaders/compiled/blit_mipmap.frag.spv");
+        let fs_blit_mipmap_module = device.create_shader_module(fs_blit_mipmap);
+
+        let mipmap_generation_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mipmap generation pipeline"),
+            layout: Some(&mipmap_generation_pipeline_layout),
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &vs_full_screen_tri_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &fs_blit_mipmap_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[TEXTURE_FORMAT.into()],
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: INDEX_FORMAT,
+                vertex_buffers: &[],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+        */
+
         Ok(Self {
             device,
             queue,
@@ -333,6 +424,9 @@ impl Renderer {
             lights_bind_group_layout,
             skybox_render_pipeline,
             main_bind_group_layout,
+            // mipmap_generation_bind_group_layout,
+            // mipmap_generation_pipeline,
+            // sampler: nearest_sampler,
         })
     }
 
