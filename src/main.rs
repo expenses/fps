@@ -10,6 +10,16 @@ use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
+pub struct Settings {
+    msaa_sample_count: Option<u32>,
+}
+
+impl Settings {
+    fn sample_count(&self) -> u32 {
+        self.msaa_sample_count.unwrap_or(1)
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     futures::executor::block_on(run())
 }
@@ -67,7 +77,12 @@ async fn run() -> anyhow::Result<()> {
     let level_bytes = std::fs::read(&level_filename)?;
 
     let event_loop = winit::event_loop::EventLoop::new();
-    let mut renderer = renderer::Renderer::new(&event_loop).await?;
+
+    let settings = Settings {
+        msaa_sample_count: Some(4),
+    };
+
+    let mut renderer = renderer::Renderer::new(&event_loop, &settings).await?;
 
     let mut init_encoder =
         renderer
@@ -76,11 +91,7 @@ async fn run() -> anyhow::Result<()> {
                 label: Some("init encoder"),
             });
 
-    let level = assets::Level::load_gltf(
-        &level_bytes,
-        &renderer,
-        &mut init_encoder,
-    )?;
+    let level = assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder)?;
 
     let robot = assets::Model::load_gltf(
         include_bytes!("../warehouse_robot.glb"),
@@ -125,7 +136,7 @@ async fn run() -> anyhow::Result<()> {
                 usage: wgpu::BufferUsage::VERTEX,
             });
 
-    let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer);
+    let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
     let mut debug_line_vertices: Vec<renderer::debug_lines::Vertex> = Vec::new();
@@ -149,7 +160,7 @@ async fn run() -> anyhow::Result<()> {
 
     let mut decals_vertices = Vec::new();
 
-    let debug_lines_pipeline = renderer::debug_lines::debug_lines_pipeline(&renderer);
+    let debug_lines_pipeline = renderer::debug_lines::debug_lines_pipeline(&renderer, &settings);
 
     let mut control_states = ControlStates::default();
     let mut player = Player {
@@ -203,7 +214,7 @@ async fn run() -> anyhow::Result<()> {
         Event::WindowEvent { ref event, .. } => match event {
             WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
             WindowEvent::Resized(size) => {
-                renderer.resize(size.width as u32, size.height as u32);
+                renderer.resize(size.width as u32, size.height as u32, &settings);
                 screen_center = renderer.screen_center();
                 renderer.window.set_cursor_position(screen_center).unwrap();
                 overlay_pipeline.resize(&renderer, size.width as u32, size.height as u32);
@@ -559,10 +570,19 @@ async fn run() -> anyhow::Result<()> {
                                 label: Some("render encoder"),
                             });
 
+                    let (attachment, resolve_target) = if settings.msaa_sample_count.is_some() {
+                        (
+                            &renderer.multisampled_framebuffer_texture,
+                            Some(&frame.output.view),
+                        )
+                    } else {
+                        (&frame.output.view, None)
+                    };
+
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &renderer.multisampled_framebuffer_texture,
-                            resolve_target: Some(&frame.output.view),
+                            attachment,
+                            resolve_target,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                 store: true,

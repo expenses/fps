@@ -1,3 +1,4 @@
+use crate::Settings;
 use ultraviolet::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
@@ -8,7 +9,6 @@ const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
-const SAMPLE_COUNT: u32 = 4;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -48,7 +48,10 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub async fn new(event_loop: &winit::event_loop::EventLoop<()>) -> anyhow::Result<Self> {
+    pub async fn new(
+        event_loop: &winit::event_loop::EventLoop<()>,
+        settings: &Settings,
+    ) -> anyhow::Result<Self> {
         let window = winit::window::WindowBuilder::new().build(event_loop)?;
 
         window.set_cursor_visible(false);
@@ -180,7 +183,7 @@ impl Renderer {
             window_size.height,
             DEPTH_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
-            SAMPLE_COUNT,
+            settings.sample_count(),
         );
 
         let multisampled_framebuffer_texture = create_texture(
@@ -190,7 +193,7 @@ impl Renderer {
             window_size.height,
             DISPLAY_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
-            SAMPLE_COUNT,
+            settings.sample_count(),
         );
 
         let texture_array_bind_group_layout =
@@ -275,6 +278,7 @@ impl Renderer {
             replace_colour_descriptor(),
             true,
             wgpu::CompareFunction::Less,
+            settings.sample_count(),
         );
 
         let transparent_render_pipeline = create_render_pipeline(
@@ -287,6 +291,7 @@ impl Renderer {
             // Can't remember if this is a good idea or not.
             false,
             wgpu::CompareFunction::Less,
+            settings.sample_count(),
         );
 
         let skybox_render_pipeline = create_render_pipeline(
@@ -298,6 +303,7 @@ impl Renderer {
             replace_colour_descriptor(),
             true,
             wgpu::CompareFunction::Equal,
+            settings.sample_count(),
         );
 
         let identity_instance_buffer = single_instance_buffer(
@@ -335,7 +341,7 @@ impl Renderer {
             .write_buffer(&self.view_buffer, 0, bytemuck::bytes_of(&view));
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub fn resize(&mut self, width: u32, height: u32, settings: &Settings) {
         self.swap_chain = self.device.create_swap_chain(
             &self.surface,
             &wgpu::SwapChainDescriptor {
@@ -354,7 +360,7 @@ impl Renderer {
             height,
             DEPTH_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
-            SAMPLE_COUNT,
+            settings.sample_count(),
         );
 
         self.multisampled_framebuffer_texture = create_texture(
@@ -364,7 +370,7 @@ impl Renderer {
             height,
             DISPLAY_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
-            SAMPLE_COUNT,
+            settings.sample_count(),
         );
 
         self.queue.write_buffer(
@@ -466,6 +472,7 @@ fn create_render_pipeline(
     colour_descriptor: wgpu::ColorStateDescriptor,
     depth_write_enabled: bool,
     depth_compare: wgpu::CompareFunction,
+    sample_count: u32,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -505,7 +512,7 @@ fn create_render_pipeline(
                 },
             ],
         },
-        sample_count: SAMPLE_COUNT,
+        sample_count,
         sample_mask: !0,
         alpha_to_coverage_enabled: false,
     })

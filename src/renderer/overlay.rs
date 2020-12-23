@@ -1,4 +1,5 @@
 use super::{alpha_blend_colour_descriptor, DynamicBuffer, Renderer, DEPTH_FORMAT, INDEX_FORMAT};
+use crate::Settings;
 use ultraviolet::{Vec2, Vec4};
 use wgpu::util::DeviceExt;
 
@@ -9,7 +10,7 @@ pub struct OverlayPipeline {
 }
 
 impl OverlayPipeline {
-    pub fn new(renderer: &Renderer) -> Self {
+    pub fn new(renderer: &Renderer, settings: &Settings) -> Self {
         let window_size = renderer.window.inner_size();
 
         let screen_dimension_uniform_buffer =
@@ -100,7 +101,7 @@ impl OverlayPipeline {
                         attributes: &wgpu::vertex_attr_array![0 => Float2, 1 => Float4],
                     }],
                 },
-                sample_count: 4,
+                sample_count: settings.sample_count(),
                 sample_mask: !0,
                 alpha_to_coverage_enabled: false,
             });
