@@ -121,13 +121,13 @@ impl Level {
             })
             .collect::<anyhow::Result<HashMap<usize, Property>>>()?;
 
-        let buffers = load_buffers(&gltf)?;
+        let buffer_blob = gltf.blob.as_ref().unwrap();
 
         let mut opaque_geometry = StagingModelBuffers::default();
         let mut transparent_geometry = StagingModelBuffers::default();
         let mut collision_geometry = StagingModelBuffers::default();
 
-        let texture_array_bind_group = load_texture_array(&gltf, &buffers, renderer, encoder)?;
+        let texture_array_bind_group = load_texture_array(&gltf, buffer_blob, renderer, encoder)?;
 
         let lights: Vec<_> = gltf
             .nodes()
@@ -206,7 +206,7 @@ impl Level {
                         &primitive,
                         transform,
                         normal_matrix,
-                        &buffers,
+                        buffer_blob,
                         &mut transparent_geometry,
                         collision_geometry,
                     )?;
@@ -215,7 +215,7 @@ impl Level {
                         &primitive,
                         transform,
                         normal_matrix,
-                        &buffers,
+                        buffer_blob,
                         &mut opaque_geometry,
                         collision_geometry,
                     )?;
@@ -273,9 +273,10 @@ impl Model {
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
-        let buffers = load_buffers(&gltf)?;
 
-        let textures = load_texture_array(&gltf, &buffers, renderer, encoder)?;
+        let buffer_blob = gltf.blob.as_ref().unwrap();
+
+        let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder)?;
 
         let mut staging_buffers = StagingModelBuffers::default();
 
@@ -303,7 +304,7 @@ impl Model {
                     &primitive,
                     transform,
                     normal_matrix,
-                    &buffers,
+                    buffer_blob,
                     &mut staging_buffers,
                     None,
                 )?;
@@ -328,38 +329,6 @@ fn normal_matrix(transform: Mat4) -> Mat3 {
     let inverse_transpose = transform.inversed().transposed();
     let array = inverse_transpose.as_component_array();
     Mat3::new(array[0].xyz(), array[1].xyz(), array[2].xyz())
-}
-
-// Load the buffers from a gltf document into a vector of byte vectors.
-// I mostly copied what bevy does for this because it's a little confusing at first.
-// https://github.com/bevyengine/bevy/blob/master/crates/bevy_gltf/src/loader.rs
-fn load_buffers(gltf: &gltf::Gltf) -> anyhow::Result<Vec<Vec<u8>>> {
-    const OCTET_STREAM_URI: &str = "data:application/octet-stream;base64,";
-
-    let mut buffers = Vec::new();
-
-    for buffer in gltf.buffers() {
-        match buffer.source() {
-            gltf::buffer::Source::Uri(uri) => {
-                if uri.starts_with(OCTET_STREAM_URI) {
-                    buffers.push(base64::decode(&uri[OCTET_STREAM_URI.len()..])?);
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Only octet streams are supported with data:"
-                    ));
-                }
-            }
-            gltf::buffer::Source::Bin => {
-                if let Some(blob) = gltf.blob.as_deref() {
-                    buffers.push(blob.into());
-                } else {
-                    return Err(anyhow::anyhow!("Missing blob"));
-                }
-            }
-        }
-    }
-
-    Ok(buffers)
 }
 
 pub struct NodeTree {
@@ -397,7 +366,7 @@ fn add_primitive_geometry_to_buffers(
     primitive: &gltf::Primitive,
     transform: Mat4,
     normal_matrix: Mat3,
-    gltf_buffers: &Vec<Vec<u8>>,
+    buffer_blob: &[u8],
     staging_buffers: &mut StagingModelBuffers<Vertex>,
     mut collision_buffers: Option<&mut StagingModelBuffers<Vec3>>,
 ) -> anyhow::Result<()> {
@@ -409,7 +378,10 @@ fn add_primitive_geometry_to_buffers(
         .texture()
         .index();
 
-    let reader = primitive.reader(|buffer| Some(&gltf_buffers[buffer.index()]));
+    let reader = primitive.reader(|buffer| {
+        assert_eq!(buffer.index(), 0);
+        Some(buffer_blob)
+    });
 
     let positions = reader.read_positions().unwrap();
     let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
@@ -540,7 +512,7 @@ pub fn load_skybox(
 
 fn load_texture_array(
     gltf: &gltf::Gltf,
-    gltf_buffers: &Vec<Vec<u8>>,
+    buffer_blob: &[u8],
     renderer: &Renderer,
     encoder: &mut wgpu::CommandEncoder,
 ) -> anyhow::Result<wgpu::BindGroup> {
@@ -563,9 +535,11 @@ fn load_texture_array(
             }
         };
 
+        assert_eq!(view.buffer().index(), 0);
+
         let start = view.offset();
         let end = start + view.length();
-        let bytes = &gltf_buffers[view.buffer().index()][start..end];
+        let bytes = &buffer_blob[start..end];
         let image =
             image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
 
