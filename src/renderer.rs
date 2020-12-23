@@ -17,6 +17,7 @@ pub struct Vertex {
     pub normal: Vec3,
     pub uv: Vec2,
     pub texture_index: i32,
+    pub emission_colour: Vec3,
 }
 
 #[repr(C)]
@@ -495,12 +496,12 @@ fn create_render_pipeline(
                 wgpu::VertexBufferDescriptor {
                     stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int],
+                    attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float3],
                 },
                 wgpu::VertexBufferDescriptor {
                     stride: std::mem::size_of::<Instance>() as u64,
                     step_mode: wgpu::InputStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![4 => Float4, 5 => Float4, 6 => Float4, 7 => Float4],
+                    attributes: &wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4],
                 },
             ],
         },
@@ -561,6 +562,7 @@ pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [
         normal,
         uv: uvs[index],
         texture_index: 0,
+        emission_colour: Vec3::zero(),
     };
 
     [

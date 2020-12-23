@@ -4,6 +4,7 @@ layout(location = 0) in vec2 uv;
 layout(location = 1) flat in int texture_index;
 layout(location = 2) in vec3 pos;
 layout(location = 3) in vec3 normal;
+layout(location = 4) in vec3 emissive_colour;
 
 layout(location = 0) out vec4 colour;
 
@@ -45,5 +46,5 @@ void main() {
 
     vec4 sampled = texture(sampler2DArray(u_texture, u_sampler), vec3(uv, texture_index));
 
-    colour = vec4(total * sampled.rgb, sampled.a);
+    colour = vec4(total * sampled.rgb + emissive_colour, sampled.a);
 }

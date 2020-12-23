@@ -63,6 +63,9 @@ fn vec3_from_arr(arr: [f32; 3]) -> Vec3 {
 }
 
 async fn run() -> anyhow::Result<()> {
+    let level_filename = std::env::args().nth(1).unwrap();
+    let level_bytes = std::fs::read(&level_filename)?;
+
     let event_loop = winit::event_loop::EventLoop::new();
     let mut renderer = renderer::Renderer::new(&event_loop).await?;
 
@@ -74,7 +77,7 @@ async fn run() -> anyhow::Result<()> {
             });
 
     let level = assets::Level::load_gltf(
-        include_bytes!("../warehouse.glb"),
+        &level_bytes,
         &renderer,
         &mut init_encoder,
     )?;
@@ -150,7 +153,7 @@ async fn run() -> anyhow::Result<()> {
 
     let mut control_states = ControlStates::default();
     let mut player = Player {
-        position: Vec3::new(0.0, 5.0, 0.0),
+        position: Vec3::new(0.0, 0.0, 0.0),
         facing: PlayerFacing {
             horizontal: 0.0,
             vertical: 0.0,
@@ -281,6 +284,8 @@ async fn run() -> anyhow::Result<()> {
                 movement.x += speed;
             }
 
+            player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
+
             if player.on_ground {
                 player.velocity = 0.0;
 
@@ -294,8 +299,6 @@ async fn run() -> anyhow::Result<()> {
                 player.velocity += 0.025;
                 player.position.y -= player.velocity;
             }
-
-            player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
 
             if control_states.mouse_held && player.gun_cooldown < 0.0 {
                 player.gun_cooldown = 0.05;

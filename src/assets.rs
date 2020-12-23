@@ -184,8 +184,6 @@ impl Level {
                 None => true,
             };
 
-            assert_eq!(mesh.primitives().count(), 1);
-
             let transform = node_tree.transform_of(node.index());
             let normal_matrix = normal_matrix(transform);
 
@@ -285,8 +283,6 @@ impl Model {
             .nodes()
             .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
         {
-            assert_eq!(mesh.primitives().count(), 1);
-
             let transform = if node.skin().is_some() {
                 // We can't use node transforms for animated models.
                 Mat4::identity()
@@ -457,6 +453,7 @@ fn add_primitive_geometry_to_buffers(
                 normal,
                 uv: uv.into(),
                 texture_index: texture_index as i32,
+                emission_colour: primitive.material().emissive_factor().into(),
             });
 
             if let Some(collision_buffers) = collision_buffers.as_mut() {
