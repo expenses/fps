@@ -251,9 +251,9 @@ impl Renderer {
                 }],
             });
 
-        let vs_model = wgpu::include_spirv!("../shaders/compiled/scene.vert.spv");
+        let vs_model = wgpu::include_spirv!("../shaders/compiled/model.vert.spv");
         let vs_model_module = device.create_shader_module(&vs_model);
-        let fs_model = wgpu::include_spirv!("../shaders/compiled/scene.frag.spv");
+        let fs_model = wgpu::include_spirv!("../shaders/compiled/model.frag.spv");
         let fs_model_module = device.create_shader_module(&fs_model);
 
         let vs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.vert.spv");
