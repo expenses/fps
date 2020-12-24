@@ -1,16 +1,15 @@
 [package]
 name = "fps"
-version = "0.1.0"
+version = "0.0.0"
 authors = ["Ashley Ruglys <ashley.ruglys@gmail.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow = "1.0.35"
 base64 = "0.13.0"
 bytemuck = { version = "1.4.1", features = ["derive"] }
 cgmath = "0.17.0"
+env_logger = "0.8.2"
 float-cmp = "0.8.0"
 futures = "0.3.8"
 gltf = { version = "0.15.2", default-features = false, features= ["utils", "names", "extras", "KHR_lights_punctual"] }
@@ -22,7 +21,3 @@ serde_json = "1.0.60"
 ultraviolet = { version = "0.7.5", features = ["bytemuck"] }
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", branch = "gecko" }
 winit = "0.24.0"
-
-[patch."https://github.com/gfx-rs/wgpu"]
-wgpu-core = { path = "wgpu/wgpu-core" }
-wgpu-types = { path = "wgpu/wgpu-types" }

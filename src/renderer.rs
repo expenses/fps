@@ -45,11 +45,9 @@ pub struct Renderer {
     pub opaque_render_pipeline: wgpu::RenderPipeline,
     pub transparent_render_pipeline: wgpu::RenderPipeline,
     pub skybox_render_pipeline: wgpu::RenderPipeline,
-    /*
-    pub sampler: wgpu::Sampler,
+    pub mipmap_generation_sampler: wgpu::Sampler,
     pub mipmap_generation_pipeline: wgpu::RenderPipeline,
     pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
-    */
 }
 
 impl Renderer {
@@ -92,19 +90,17 @@ impl Renderer {
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Linear,
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             label: Some("nearest sampler"),
             ..Default::default()
         });
 
-        let anisotropic_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Nearest,
+        let mipmap_generation_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            anisotropy_clamp: Some(std::num::NonZeroU8::new(16).unwrap()),
-            label: Some("anisotropic sampler"),
+            label: Some("mipmap generation sampler"),
             ..Default::default()
         });
 
@@ -158,15 +154,6 @@ impl Renderer {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler {
-                            comparison: false,
-                            filtering: false,
-                        },
-                        count: None,
-                    },
                 ],
             });
 
@@ -185,10 +172,6 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&nearest_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&anisotropic_sampler),
                 },
             ],
         });
@@ -342,7 +325,6 @@ impl Renderer {
             "identity instance buffer",
         );
 
-        /*
         let mipmap_generation_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("skybox texture bind group layout"),
             entries: &[
@@ -403,7 +385,6 @@ impl Renderer {
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         });
-        */
 
         Ok(Self {
             device,
@@ -424,9 +405,9 @@ impl Renderer {
             lights_bind_group_layout,
             skybox_render_pipeline,
             main_bind_group_layout,
-            // mipmap_generation_bind_group_layout,
-            // mipmap_generation_pipeline,
-            // sampler: nearest_sampler,
+            mipmap_generation_bind_group_layout,
+            mipmap_generation_pipeline,
+            mipmap_generation_sampler,
         })
     }
 

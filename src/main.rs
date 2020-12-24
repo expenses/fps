@@ -21,6 +21,8 @@ impl Settings {
 }
 
 fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
     futures::executor::block_on(run())
 }
 
@@ -143,7 +145,7 @@ async fn run() -> anyhow::Result<()> {
 
     /*
     for face in level.collision_mesh.faces() {
-        let points = level_collider.collision_mesh.points();
+        let points = level.collision_mesh.points();
         let a: [f32; 3] = points[face.indices.x].coords.into();
         let b: [f32; 3] = points[face.indices.y].coords.into();
         let c: [f32; 3] = points[face.indices.z].coords.into();
@@ -156,7 +158,8 @@ async fn run() -> anyhow::Result<()> {
                 debug_line_vertices.push(vertex);
             },
         )
-    }*/
+    }
+    */
 
     let mut decals_vertices = Vec::new();
 
@@ -410,15 +413,16 @@ async fn run() -> anyhow::Result<()> {
                                 vector_away_from_wall.y = 0.0;
                                 let push_strength =
                                     (PLAYER_RADIUS - vector_away_from_wall.mag()) + epsilon;
-                                //let push_strength = push_strength.max(0.0);
                                 let push = vector_away_from_wall.normalized() * push_strength;
 
-                                /*println!(
+                                /*
+                                println!(
                                     "player: {:?}\nvector_away_from_wall: {:?}\npush: {:?}\ncp {:?} ps {}\nnew: {:?}\nxxx",
                                     player.position, vector_away_from_wall, push, contact_point, push_strength, player.position + push
                                 );
 
-                                println!("{:?}", push.y);*/
+                                println!("{:?}", push.y);
+                                */
 
                                 player.position += push;
                             }

@@ -8,5 +8,5 @@ layout(set = 0, binding = 0) uniform texture2D u_texture;
 layout(set = 0, binding = 1) uniform sampler u_sampler;
 
 void main() {
-    colour = texture(sampler2D(u_texture, u_sampler), uv, 0.0);
+    colour = texture(sampler2D(u_texture, u_sampler), uv);
 }

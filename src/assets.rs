@@ -520,7 +520,7 @@ pub fn load_skybox(
     Ok(skybox_bind_group)
 }
 
-// const MIPMAP_LEVELS: u32 = 1;
+const MIPMAP_LEVELS: u32 = 7;
 
 fn load_texture_array(
     gltf: &gltf::Gltf,
@@ -569,11 +569,11 @@ fn load_texture_array(
                         height: image_height,
                         depth: num_textures,
                     },
-                    mip_level_count: 1,
+                    mip_level_count: MIPMAP_LEVELS,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: TEXTURE_FORMAT,
-                    usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+                    usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST | wgpu::TextureUsage::RENDER_ATTACHMENT,
                 });
 
                 (texture_array, image_width, image_height)
@@ -616,7 +616,6 @@ fn load_texture_array(
             },
         );
 
-        /*
         // Mipmap generation
         let mipmap_views: Vec<_> = (0.. MIPMAP_LEVELS)
             .map(|level| {
@@ -642,7 +641,7 @@ fn load_texture_array(
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&renderer.sampler),
+                        resource: wgpu::BindingResource::Sampler(&renderer.mipmap_generation_sampler),
                     },
                 ]
             });
@@ -662,7 +661,6 @@ fn load_texture_array(
             rpass.set_bind_group(0, &bind_group, &[]);
             rpass.draw(0..3, 0..1);
         }
-        */
     }
 
     let (texture_array, ..) = texture_array.unwrap();
