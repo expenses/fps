@@ -67,9 +67,9 @@ impl OverlayPipeline {
                 });
 
         let vs = wgpu::include_spirv!("../../shaders/compiled/overlay.vert.spv");
-        let vs_module = renderer.device.create_shader_module(vs);
+        let vs_module = renderer.device.create_shader_module(&vs);
         let fs = wgpu::include_spirv!("../../shaders/compiled/overlay.frag.spv");
-        let fs_module = renderer.device.create_shader_module(fs);
+        let fs_module = renderer.device.create_shader_module(&fs);
 
         let pipeline = renderer
             .device
@@ -94,7 +94,7 @@ impl OverlayPipeline {
                     stencil: wgpu::StencilStateDescriptor::default(),
                 }),
                 vertex_state: wgpu::VertexStateDescriptor {
-                    index_format: INDEX_FORMAT,
+                    index_format: Some(INDEX_FORMAT),
                     vertex_buffers: &[wgpu::VertexBufferDescriptor {
                         stride: std::mem::size_of::<Vertex>() as u64,
                         step_mode: wgpu::InputStepMode::Vertex,
@@ -203,6 +203,8 @@ impl OverlayBuffers {
     pub fn upload(&mut self, renderer: &Renderer) {
         self.vertices.upload(renderer);
         self.indices.upload(renderer);
+        self.vertices.clear();
+        self.indices.clear();
     }
 
     pub fn get(&self) -> Option<(wgpu::BufferSlice, wgpu::BufferSlice, u32)> {

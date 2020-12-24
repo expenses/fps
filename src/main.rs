@@ -2,6 +2,7 @@
 mod assets;
 mod renderer;
 
+use crate::renderer::INDEX_FORMAT;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
@@ -93,30 +94,34 @@ async fn run() -> anyhow::Result<()> {
                 label: Some("init encoder"),
             });
 
-    let level = assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder)?;
+    let level =
+        assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder, &level_filename)?;
 
     let robot = assets::Model::load_gltf(
         include_bytes!("../warehouse_robot.glb"),
         &renderer,
         &mut init_encoder,
+        "warehouse robot",
     )?;
 
     let monkey_gun = assets::Model::load_gltf(
         include_bytes!("../monkey_test_gun.glb"),
         &renderer,
         &mut init_encoder,
+        "monkey gun",
     )?;
 
     let skybox_texture = assets::load_skybox(
         include_bytes!("../textures/skybox.png"),
         &renderer,
         &mut init_encoder,
+        "star skybox",
     )?;
 
     let decals_texture = assets::load_single_texture(
         include_bytes!("../textures/decals.png"),
         &renderer,
-        &mut init_encoder,
+        "decals",
     )?;
 
     renderer.queue.submit(Some(init_encoder.finish()));
@@ -141,7 +146,12 @@ async fn run() -> anyhow::Result<()> {
     let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
-    let mut debug_line_vertices: Vec<renderer::debug_lines::Vertex> = Vec::new();
+    let mut debug_lines_buffer = renderer::DynamicBuffer::new(
+        &renderer.device,
+        40,
+        "debug lines buffer",
+        wgpu::BufferUsage::VERTEX,
+    );
 
     /*
     for face in level.collision_mesh.faces() {
@@ -155,13 +165,18 @@ async fn run() -> anyhow::Result<()> {
             c.into(),
             Vec4::new(1.0, 0.5, 0.25, 1.0),
             |vertex| {
-                debug_line_vertices.push(vertex);
+                debug_lines_buffer.push(vertex);
             },
         )
     }
     */
 
-    let mut decals_vertices = Vec::new();
+    let mut decal_buffer = renderer::DynamicBuffer::new(
+        &renderer.device,
+        10,
+        "decal buffer",
+        wgpu::BufferUsage::VERTEX,
+    );
 
     let debug_lines_pipeline = renderer::debug_lines::debug_lines_pipeline(&renderer, &settings);
 
@@ -334,19 +349,25 @@ async fn run() -> anyhow::Result<()> {
                         player.position + player_head_relative + normal * intersection.toi;
                     let normal = vec3_from_arr(intersection.normal.into());
 
-                    /*renderer::debug_lines::draw_line(
+                    /*
+                    renderer::debug_lines::draw_line(
                         hit_position,
                         hit_position + normal,
                         Vec4::new(1.0, 0.0, 0.0, 1.0),
                         |vertex| debug_line_vertices.push(vertex),
-                    );*/
+                    );
+                    */
 
-                    decals_vertices.extend_from_slice(&renderer::decal_square(
+                    for vertex in renderer::decal_square(
                         hit_position + normal * 0.01,
                         normal,
                         Vec2::broadcast(0.5),
                         renderer::Decal::BulletImpact,
-                    ));
+                    )
+                    .iter()
+                    {
+                        decal_buffer.push(*vertex);
+                    }
                 }
             }
 
@@ -379,7 +400,7 @@ async fn run() -> anyhow::Result<()> {
                                     contact_point,
                                     player.position + player_head_relative,
                                     Vec4::one(),
-                                    |vertex| debug_line_vertices.push(vertex),
+                                    |vertex| debug_lines_buffer.push(vertex),
                                 );
 
                                 // Handle hitting the top hemisphere on the ceiling.
@@ -397,6 +418,7 @@ async fn run() -> anyhow::Result<()> {
                             } else {
                                 // Handle horizontal contacts.
 
+                                /*
                                 renderer::debug_lines::draw_line(
                                     contact_point,
                                     Vec3::new(
@@ -405,8 +427,9 @@ async fn run() -> anyhow::Result<()> {
                                         player.position.z,
                                     ),
                                     Vec4::one(),
-                                    |vertex| debug_line_vertices.push(vertex),
+                                    |vertex| debug_lines_buffer.push(vertex),
                                 );
+                                */
 
                                 let mut vector_away_from_wall = player.position - contact_point;
 
@@ -469,24 +492,26 @@ async fn run() -> anyhow::Result<()> {
 
             renderer.set_camera_view(camera_view);
 
+            /*
             overlay_buffers.draw_circle_outline(
                 Vec2::new(screen_center.x as f32, screen_center.y as f32),
                 100.0,
             );
+            */
             overlay_buffers.upload(&renderer);
 
             /*
-            debug_line_vertices.clear();
+            debug_lines_buffer.clear();
 
             renderer::debug_lines::draw_marker(player.position, 0.5, |vertex| {
-                debug_line_vertices.push(vertex);
+                debug_lines_buffer.push(vertex);
             });
 
             renderer::debug_lines::draw_marker(
                 player.position + player_feet_relative,
                 0.5,
                 |vertex| {
-                    debug_line_vertices.push(vertex);
+                    debug_lines_buffer.push(vertex);
                 },
             );
 
@@ -494,7 +519,7 @@ async fn run() -> anyhow::Result<()> {
                 player.position + player_body_relative,
                 0.5,
                 |vertex| {
-                    debug_line_vertices.push(vertex);
+                    debug_lines_buffer.push(vertex);
                 },
             );
 
@@ -502,7 +527,7 @@ async fn run() -> anyhow::Result<()> {
                 player.position + player_head_relative,
                 0.5,
                 |vertex| {
-                    debug_line_vertices.push(vertex);
+                    debug_lines_buffer.push(vertex);
                 },
             );
 
@@ -518,7 +543,7 @@ async fn run() -> anyhow::Result<()> {
                     + player.position
                     + player_body_relative;
                 renderer::debug_lines::draw_tri(a, b, c, Vec4::new(1.0, 0.5, 0.25, 1.0), |vertex| {
-                    debug_line_vertices.push(vertex);
+                    debug_lines_buffer.push(vertex);
                 })
             }
 
@@ -534,7 +559,7 @@ async fn run() -> anyhow::Result<()> {
                     + player.position
                     + player_feet_relative;
                 renderer::debug_lines::draw_tri(a, b, c, Vec4::new(1.0, 0.0, 0.25, 1.0), |vertex| {
-                    debug_line_vertices.push(vertex);
+                    debug_lines_buffer.push(vertex);
                 })
             }
             */
@@ -547,23 +572,8 @@ async fn run() -> anyhow::Result<()> {
                 "gun instance",
             );
 
-            let debug_lines_buffer =
-                renderer
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("debug line vertices"),
-                        contents: bytemuck::cast_slice(&debug_line_vertices),
-                        usage: wgpu::BufferUsage::VERTEX,
-                    });
-
-            let decals_buffer =
-                renderer
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("decals buffer"),
-                        contents: bytemuck::cast_slice(&decals_vertices),
-                        usage: wgpu::BufferUsage::VERTEX,
-                    });
+            decal_buffer.upload(&renderer);
+            debug_lines_buffer.upload(&renderer);
 
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
@@ -584,6 +594,7 @@ async fn run() -> anyhow::Result<()> {
                     };
 
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("main render pass"),
                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                             attachment,
                             resolve_target,
@@ -615,7 +626,8 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_bind_group(1, &monkey_gun.textures, &[]);
                     render_pass.set_vertex_buffer(0, monkey_gun.buffers.vertices.slice(..));
                     render_pass.set_vertex_buffer(1, gun_instance.slice(..));
-                    render_pass.set_index_buffer(monkey_gun.buffers.indices.slice(..));
+                    render_pass
+                        .set_index_buffer(monkey_gun.buffers.indices.slice(..), INDEX_FORMAT);
                     render_pass.draw_indexed(0..monkey_gun.buffers.num_indices, 0, 0..1);
 
                     // Render level
@@ -623,14 +635,15 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, level.opaque_geometry.vertices.slice(..));
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
-                    render_pass.set_index_buffer(level.opaque_geometry.indices.slice(..));
+                    render_pass
+                        .set_index_buffer(level.opaque_geometry.indices.slice(..), INDEX_FORMAT);
                     render_pass.draw_indexed(0..level.opaque_geometry.num_indices, 0, 0..1);
 
                     if robot_instances.len() > 0 {
                         render_pass.set_bind_group(1, &robot.textures, &[]);
                         render_pass.set_vertex_buffer(0, robot.buffers.vertices.slice(..));
                         render_pass.set_vertex_buffer(1, robot_instances_buffer.slice(..));
-                        render_pass.set_index_buffer(robot.buffers.indices.slice(..));
+                        render_pass.set_index_buffer(robot.buffers.indices.slice(..), INDEX_FORMAT);
                         render_pass.draw_indexed(
                             0..robot.buffers.num_indices,
                             0,
@@ -651,27 +664,36 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, level.transparent_geometry.vertices.slice(..));
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
-                    render_pass.set_index_buffer(level.transparent_geometry.indices.slice(..));
+                    render_pass.set_index_buffer(
+                        level.transparent_geometry.indices.slice(..),
+                        INDEX_FORMAT,
+                    );
                     render_pass.draw_indexed(0..level.transparent_geometry.num_indices, 0, 0..1);
 
                     // Render decals
 
-                    render_pass.set_bind_group(1, &decals_texture, &[]);
-                    render_pass.set_vertex_buffer(0, decals_buffer.slice(..));
-                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
-                    render_pass.draw(0..decals_vertices.len() as u32, 0..1);
+                    if let Some((slice, len)) = decal_buffer.get() {
+                        render_pass.set_bind_group(1, &decals_texture, &[]);
+                        render_pass.set_vertex_buffer(0, slice);
+                        render_pass
+                            .set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
+                        render_pass.draw(0..len, 0..1);
+                    }
 
                     // Render debug lines
+                    if let Some((slice, len)) = debug_lines_buffer.get() {
+                        render_pass.set_pipeline(&debug_lines_pipeline);
+                        render_pass.set_vertex_buffer(0, slice);
+                        render_pass.draw(0..len, 0..1);
+                    }
 
-                    render_pass.set_pipeline(&debug_lines_pipeline);
-                    render_pass.set_vertex_buffer(0, debug_lines_buffer.slice(..));
-                    render_pass.draw(0..debug_line_vertices.len() as u32, 0..1);
+                    // Render overlay
 
                     if let Some((vertices, indices, num_indices)) = overlay_buffers.get() {
                         render_pass.set_pipeline(&overlay_pipeline.pipeline);
                         render_pass.set_bind_group(0, &overlay_pipeline.bind_group, &[]);
                         render_pass.set_vertex_buffer(0, vertices);
-                        render_pass.set_index_buffer(indices);
+                        render_pass.set_index_buffer(indices, INDEX_FORMAT);
                         render_pass.draw_indexed(0..num_indices, 0, 0..1);
                     }
 

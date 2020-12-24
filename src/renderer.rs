@@ -8,7 +8,7 @@ pub mod overlay;
 const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
+pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -81,7 +81,6 @@ impl Renderer {
                     label: Some("device"),
                     features: wgpu::Features::empty(),
                     limits: wgpu::Limits::default(),
-                    shader_validation: true,
                 },
                 None,
             )
@@ -253,14 +252,14 @@ impl Renderer {
             });
 
         let vs_model = wgpu::include_spirv!("../shaders/compiled/scene.vert.spv");
-        let vs_model_module = device.create_shader_module(vs_model);
+        let vs_model_module = device.create_shader_module(&vs_model);
         let fs_model = wgpu::include_spirv!("../shaders/compiled/scene.frag.spv");
-        let fs_model_module = device.create_shader_module(fs_model);
+        let fs_model_module = device.create_shader_module(&fs_model);
 
         let vs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.vert.spv");
-        let vs_skybox_module = device.create_shader_module(vs_skybox);
+        let vs_skybox_module = device.create_shader_module(&vs_skybox);
         let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
-        let fs_skybox_module = device.create_shader_module(fs_skybox);
+        let fs_skybox_module = device.create_shader_module(&fs_skybox);
 
         let model_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -325,66 +324,70 @@ impl Renderer {
             "identity instance buffer",
         );
 
-        let mipmap_generation_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("skybox texture bind group layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+        let mipmap_generation_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("skybox texture bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler {
-                        comparison: false,
-                        filtering: false,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
-        let mipmap_generation_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("mipmap generation pipeline layout"),
-            bind_group_layouts: &[&mipmap_generation_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let mipmap_generation_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("mipmap generation pipeline layout"),
+                bind_group_layouts: &[&mipmap_generation_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let vs_full_screen_tri = wgpu::include_spirv!("../shaders/compiled/full_screen_tri.vert.spv");
-        let vs_full_screen_tri_module = device.create_shader_module(vs_full_screen_tri);
+        let vs_full_screen_tri =
+            wgpu::include_spirv!("../shaders/compiled/full_screen_tri.vert.spv");
+        let vs_full_screen_tri_module = device.create_shader_module(&vs_full_screen_tri);
 
         let fs_blit_mipmap = wgpu::include_spirv!("../shaders/compiled/blit_mipmap.frag.spv");
-        let fs_blit_mipmap_module = device.create_shader_module(fs_blit_mipmap);
+        let fs_blit_mipmap_module = device.create_shader_module(&fs_blit_mipmap);
 
-        let mipmap_generation_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mipmap generation pipeline"),
-            layout: Some(&mipmap_generation_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_full_screen_tri_module,
-                entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_blit_mipmap_module,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[TEXTURE_FORMAT.into()],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: INDEX_FORMAT,
-                vertex_buffers: &[],
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
-        });
+        let mipmap_generation_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mipmap generation pipeline"),
+                layout: Some(&mipmap_generation_pipeline_layout),
+                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &vs_full_screen_tri_module,
+                    entry_point: "main",
+                },
+                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                    module: &fs_blit_mipmap_module,
+                    entry_point: "main",
+                }),
+                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+                color_states: &[TEXTURE_FORMAT.into()],
+                depth_stencil_state: None,
+                vertex_state: wgpu::VertexStateDescriptor {
+                    index_format: Some(INDEX_FORMAT),
+                    vertex_buffers: &[],
+                },
+                sample_count: 1,
+                sample_mask: !0,
+                alpha_to_coverage_enabled: false,
+            });
 
         Ok(Self {
             device,
@@ -573,7 +576,7 @@ fn create_render_pipeline(
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
         vertex_state: wgpu::VertexStateDescriptor {
-            index_format: INDEX_FORMAT,
+            index_format: Some(INDEX_FORMAT),
             vertex_buffers: &[
                 wgpu::VertexBufferDescriptor {
                     stride: std::mem::size_of::<Vertex>() as u64,
@@ -664,10 +667,12 @@ pub struct DynamicBuffer<T: bytemuck::Pod> {
     label: &'static str,
     waiting: Vec<T>,
     usage: wgpu::BufferUsage,
+    // the offset of `waiting` to upload.
+    upload_offset: usize,
 }
 
 impl<T: bytemuck::Pod> DynamicBuffer<T> {
-    fn new(
+    pub fn new(
         device: &wgpu::Device,
         base_capacity: usize,
         label: &'static str,
@@ -685,6 +690,7 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
             label,
             waiting: Vec::with_capacity(base_capacity),
             usage,
+            upload_offset: 0,
         }
     }
 
@@ -693,24 +699,38 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
     }
 
     // Upload the waiting buffer to the gpu. Returns whether the gpu buffer was resized.
-    fn upload(&mut self, renderer: &Renderer) -> bool {
+    pub fn upload(&mut self, renderer: &Renderer) -> bool {
         if self.waiting.is_empty() {
             self.len = 0;
             return false;
         }
 
-        self.len = self.waiting.len();
-        let bytes = bytemuck::cast_slice(&self.waiting);
+        if self.waiting.len() == self.upload_offset {
+            return false;
+        }
 
-        if self.waiting.len() <= self.capacity {
-            renderer.queue.write_buffer(&self.buffer, 0, bytes);
-            self.waiting.clear();
+        let size_of_t = std::mem::size_of::<T>() as u64;
+
+        self.len = self.waiting.len();
+
+        let return_bool = if self.waiting.len() <= self.capacity {
+            let bytes = bytemuck::cast_slice(&self.waiting[self.upload_offset..]);
+            renderer
+                .queue
+                .write_buffer(&self.buffer, size_of_t * self.upload_offset as u64, bytes);
             false
         } else {
+            let bytes = bytemuck::cast_slice(&self.waiting);
             self.capacity = (self.capacity * 2).max(self.waiting.len());
+            log::debug!(
+                "Resizing '{}' to {} items to fit {} items",
+                self.label,
+                self.capacity,
+                self.len
+            );
             self.buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(self.label),
-                size: (self.capacity * std::mem::size_of::<T>()) as u64,
+                size: self.capacity as u64 * size_of_t,
                 usage: self.usage | wgpu::BufferUsage::COPY_DST,
                 mapped_at_creation: true,
             });
@@ -719,12 +739,26 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
                 .get_mapped_range_mut()
                 .copy_from_slice(bytes);
             self.buffer.unmap();
-            self.waiting.clear();
             true
+        };
+
+        self.upload_offset = self.waiting.len();
+
+        return_bool
+    }
+
+    pub fn pop(&mut self) {
+        if self.waiting.pop().is_some() {
+            self.upload_offset -= 1;
         }
     }
 
-    fn get(&self) -> Option<(wgpu::BufferSlice, u32)> {
+    pub fn clear(&mut self) {
+        self.waiting.clear();
+        self.upload_offset = 0;
+    }
+
+    pub fn get(&self) -> Option<(wgpu::BufferSlice, u32)> {
         if self.len > 0 {
             let byte_len = (self.len * std::mem::size_of::<T>()) as u64;
 

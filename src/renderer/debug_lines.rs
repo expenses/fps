@@ -13,9 +13,9 @@ pub fn debug_lines_pipeline(renderer: &Renderer, settings: &Settings) -> wgpu::R
             });
 
     let vs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.vert.spv");
-    let vs_module = renderer.device.create_shader_module(vs);
+    let vs_module = renderer.device.create_shader_module(&vs);
     let fs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.frag.spv");
-    let fs_module = renderer.device.create_shader_module(fs);
+    let fs_module = renderer.device.create_shader_module(&fs);
 
     renderer
         .device
@@ -43,7 +43,7 @@ pub fn debug_lines_pipeline(renderer: &Renderer, settings: &Settings) -> wgpu::R
                 stencil: wgpu::StencilStateDescriptor::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {
-                index_format: INDEX_FORMAT,
+                index_format: Some(INDEX_FORMAT),
                 vertex_buffers: &[wgpu::VertexBufferDescriptor {
                     stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::InputStepMode::Vertex,
