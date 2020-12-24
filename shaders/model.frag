@@ -14,6 +14,7 @@ layout(set = 1, binding = 0) uniform texture2DArray u_texture;
 
 struct Light {
     vec3 colour_output;
+    float range;
     vec3 position;
 };
 
@@ -47,14 +48,17 @@ void main() {
 
         vec3 vector = light.position - pos;
 
-        float distance = max(length(vector), MIN_LIGHT_DISTANCE);
-        float intensity_at_point = pow(distance, -2.0);
+        float distance = length(vector);
+        // This uses the following equation except without raising 'distance / light.range' to a
+        // power in order to match what blender does.
+        // https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_lights_punctual/README.md#range-property
+        float attenuation = clamp(1.0 - (distance / light.range), 0.0, 1.0) / pow(distance, 2);
 
         vec3 light_dir = normalize(vector);
         float facing = max(dot(norm, light_dir), 0.0);
 
         // Multiplying the `floats` first results in one less `OpVectorTimesScalar` in the spirv
-        total += (facing * intensity_at_point) * light.colour_output;
+        total += (facing * attenuation) * light.colour_output;
     }
 
     vec4 sampled = texture(sampler2DArray(u_texture, u_nearest_sampler), vec3(uv, texture_index));

@@ -7,9 +7,9 @@ use wgpu::util::DeviceExt;
 #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 struct Light {
     output: Vec3,
-    padding_0: i32,
+    range: f32,
     position: Vec3,
-    padding_1: i32,
+    padding: i32,
 }
 
 struct StagingModelBuffers<T> {
@@ -155,9 +155,9 @@ impl Level {
 
                 Light {
                     output: colour * intensity,
-                    padding_0: 0,
+                    range: light.range().unwrap_or(std::f32::INFINITY),
                     position: transform.extract_translation(),
-                    padding_1: 0,
+                    padding: 0,
                 }
             })
             .collect();

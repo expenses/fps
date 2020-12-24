@@ -146,7 +146,7 @@ async fn run() -> anyhow::Result<()> {
     let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
-    let mut debug_lines_buffer = renderer::DynamicBuffer::new(
+    let mut debug_lines_buffer = renderer::DynamicBuffer::<renderer::debug_lines::Vertex>::new(
         &renderer.device,
         40,
         "debug lines buffer",
@@ -396,12 +396,14 @@ async fn run() -> anyhow::Result<()> {
                                 // Ignore contacts on the bottom hemisphere of the body capsule.
                                 break;
                             } else if contact_point.y - player.position.y > player_head_relative.y {
+                                /*
                                 renderer::debug_lines::draw_line(
                                     contact_point,
                                     player.position + player_head_relative,
                                     Vec4::one(),
                                     |vertex| debug_lines_buffer.push(vertex),
                                 );
+                                */
 
                                 // Handle hitting the top hemisphere on the ceiling.
                                 let vector_away_from_ceiling =
