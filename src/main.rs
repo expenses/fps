@@ -108,13 +108,13 @@ async fn run() -> anyhow::Result<()> {
     )?;
 
     let skybox_texture = assets::load_skybox(
-        include_bytes!("../skybox.png"),
+        include_bytes!("../textures/skybox.png"),
         &renderer,
         &mut init_encoder,
     )?;
 
     let decals_texture = assets::load_single_texture(
-        include_bytes!("../decals.png"),
+        include_bytes!("../textures/decals.png"),
         &renderer,
         &mut init_encoder,
     )?;
