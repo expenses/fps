@@ -9,6 +9,7 @@ const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
+const PRE_TONEMAP_FRAMEBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -40,7 +41,6 @@ pub struct Renderer {
     view_buffer: wgpu::Buffer,
     perspective_buffer: wgpu::Buffer,
     pub main_bind_group: wgpu::BindGroup,
-    pub framebuffer: wgpu::TextureView,
     pub identity_instance_buffer: wgpu::Buffer,
     pub opaque_render_pipeline: wgpu::RenderPipeline,
     pub transparent_render_pipeline: wgpu::RenderPipeline,
@@ -50,9 +50,13 @@ pub struct Renderer {
     pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
     screen_dimension_uniform_buffer: wgpu::Buffer,
 
+    pub pre_fxaa_framebuffer: wgpu::TextureView,
     pub fxaa_bind_group: wgpu::BindGroup,
-    fxaa_bind_group_layout: wgpu::BindGroupLayout,
+    pub pre_tonemap_framebuffer: wgpu::TextureView,
+    pub tonemap_bind_group: wgpu::BindGroup,
+    post_processing_bind_group_layout: wgpu::BindGroupLayout,
     pub fxaa_pipeline: wgpu::RenderPipeline,
+    pub tonemap_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -200,15 +204,6 @@ impl Renderer {
             wgpu::TextureUsage::RENDER_ATTACHMENT,
         );
 
-        let framebuffer = create_texture(
-            &device,
-            "framebuffer",
-            window_size.width,
-            window_size.height,
-            DISPLAY_FORMAT,
-            wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
-        );
-
         let texture_array_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("texture array bind group layout"),
@@ -288,7 +283,7 @@ impl Renderer {
             &model_render_pipeline_layout,
             &vs_model_module,
             &fs_model_module,
-            replace_colour_descriptor(),
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
             wgpu::CompareFunction::Less,
         );
@@ -311,7 +306,7 @@ impl Renderer {
             &skybox_render_pipeline_layout,
             &vs_skybox_module,
             &fs_skybox_module,
-            replace_colour_descriptor(),
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
             wgpu::CompareFunction::Equal,
         );
@@ -399,9 +394,9 @@ impl Renderer {
                 usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             });
 
-        let fxaa_bind_group_layout =
+        let post_processing_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("fxaa bind group layout"),
+                label: Some("post processing bind group layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -435,41 +430,42 @@ impl Renderer {
                 ],
             });
 
-        let fxaa_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fxaa bind group"),
-            layout: &fxaa_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&framebuffer),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &screen_dimension_uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    },
-                },
-            ],
-        });
+        let (pre_tonemap_framebuffer, tonemap_bind_group) =
+            post_processing_framebuffer_and_bind_group(
+                &device,
+                window_size.width,
+                window_size.height,
+                "tonemap",
+                &post_processing_bind_group_layout,
+                &linear_sampler,
+                &screen_dimension_uniform_buffer,
+                DISPLAY_FORMAT,
+            );
 
-        let fxaa_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("fxaa pipeline layout"),
-            bind_group_layouts: &[&fxaa_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let (pre_fxaa_framebuffer, fxaa_bind_group) = post_processing_framebuffer_and_bind_group(
+            &device,
+            window_size.width,
+            window_size.height,
+            "fxaa",
+            &post_processing_bind_group_layout,
+            &linear_sampler,
+            &screen_dimension_uniform_buffer,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT,
+        );
+
+        let post_processing_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("post processing pipeline layout"),
+                bind_group_layouts: &[&post_processing_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let fs_fxaa = wgpu::include_spirv!("../shaders/compiled/fxaa.frag.spv");
         let fs_fxaa_module = device.create_shader_module(&fs_fxaa);
 
         let fxaa_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("fxaa pipeline"),
-            layout: Some(&fxaa_pipeline_layout),
+            layout: Some(&post_processing_pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &vs_full_screen_tri_module,
                 entry_point: "main",
@@ -480,7 +476,34 @@ impl Renderer {
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[replace_colour_descriptor()],
+            color_states: &[DISPLAY_FORMAT.into()],
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: Some(INDEX_FORMAT),
+                vertex_buffers: &[],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+
+        let fs_tonemap = wgpu::include_spirv!("../shaders/compiled/tonemap.frag.spv");
+        let fs_tonemap_module = device.create_shader_module(&fs_tonemap);
+
+        let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("tonemap pipeline"),
+            layout: Some(&post_processing_pipeline_layout),
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &vs_full_screen_tri_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &fs_tonemap_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[DISPLAY_FORMAT.into()],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: Some(INDEX_FORMAT),
@@ -503,7 +526,6 @@ impl Renderer {
             depth_texture,
             opaque_render_pipeline,
             transparent_render_pipeline,
-            framebuffer,
             identity_instance_buffer,
             texture_array_bind_group_layout,
             skybox_texture_bind_group_layout,
@@ -515,9 +537,13 @@ impl Renderer {
             linear_sampler,
             screen_dimension_uniform_buffer,
 
-            fxaa_bind_group_layout,
+            post_processing_bind_group_layout,
+            pre_fxaa_framebuffer,
             fxaa_bind_group,
             fxaa_pipeline,
+            pre_tonemap_framebuffer,
+            tonemap_bind_group,
+            tonemap_pipeline,
         })
     }
 
@@ -547,15 +573,6 @@ impl Renderer {
             wgpu::TextureUsage::RENDER_ATTACHMENT,
         );
 
-        self.framebuffer = create_texture(
-            &self.device,
-            "framebuffer",
-            width,
-            height,
-            DISPLAY_FORMAT,
-            wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
-        );
-
         self.queue.write_buffer(
             &self.perspective_buffer,
             0,
@@ -568,28 +585,32 @@ impl Renderer {
             bytemuck::bytes_of(&Vec2::new(width as f32, height as f32)),
         );
 
-        self.fxaa_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fxaa bind group"),
-            layout: &self.fxaa_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.framebuffer),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &self.screen_dimension_uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    },
-                },
-            ],
-        });
+        let (pre_fxaa_framebuffer, fxaa_bind_group) = post_processing_framebuffer_and_bind_group(
+            &self.device,
+            width,
+            height,
+            "fxaa",
+            &self.post_processing_bind_group_layout,
+            &self.linear_sampler,
+            &self.screen_dimension_uniform_buffer,
+            DISPLAY_FORMAT,
+        );
+        self.pre_fxaa_framebuffer = pre_fxaa_framebuffer;
+        self.fxaa_bind_group = fxaa_bind_group;
+
+        let (pre_tonemap_framebuffer, tonemap_bind_group) =
+            post_processing_framebuffer_and_bind_group(
+                &self.device,
+                width,
+                height,
+                "tonemap",
+                &self.post_processing_bind_group_layout,
+                &self.linear_sampler,
+                &self.screen_dimension_uniform_buffer,
+                PRE_TONEMAP_FRAMEBUFFER_FORMAT,
+            );
+        self.pre_tonemap_framebuffer = pre_tonemap_framebuffer;
+        self.tonemap_bind_group = tonemap_bind_group;
     }
 
     pub fn screen_center(&self) -> winit::dpi::LogicalPosition<f64> {
@@ -648,18 +669,9 @@ pub fn single_instance_buffer(
     })
 }
 
-fn replace_colour_descriptor() -> wgpu::ColorStateDescriptor {
-    wgpu::ColorStateDescriptor {
-        format: DISPLAY_FORMAT,
-        color_blend: wgpu::BlendDescriptor::REPLACE,
-        alpha_blend: wgpu::BlendDescriptor::REPLACE,
-        write_mask: wgpu::ColorWrite::ALL,
-    }
-}
-
 pub fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
     wgpu::ColorStateDescriptor {
-        format: DISPLAY_FORMAT,
+        format: PRE_TONEMAP_FRAMEBUFFER_FORMAT,
         color_blend: wgpu::BlendDescriptor {
             src_factor: wgpu::BlendFactor::SrcAlpha,
             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
@@ -903,4 +915,49 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
     pub fn len_waiting(&self) -> usize {
         self.waiting.len()
     }
+}
+
+fn post_processing_framebuffer_and_bind_group(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    name: &str,
+    bind_group_layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    screen_dimension_uniform_buffer: &wgpu::Buffer,
+    texture_format: wgpu::TextureFormat,
+) -> (wgpu::TextureView, wgpu::BindGroup) {
+    let framebuffer = create_texture(
+        &device,
+        &format!("pre-{} framebuffer", name),
+        width,
+        height,
+        texture_format,
+        wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
+    );
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(&format!("{} bind group", name)),
+        layout: bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&framebuffer),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: screen_dimension_uniform_buffer,
+                    offset: 0,
+                    size: None,
+                },
+            },
+        ],
+    });
+
+    (framebuffer, bind_group)
 }

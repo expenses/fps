@@ -576,7 +576,7 @@ async fn run() -> anyhow::Result<()> {
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("main render pass"),
                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &renderer.framebuffer,
+                            attachment: &renderer.pre_tonemap_framebuffer,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -676,6 +676,25 @@ async fn run() -> anyhow::Result<()> {
                         render_pass.set_index_buffer(indices, INDEX_FORMAT);
                         render_pass.draw_indexed(0..num_indices, 0, 0..1);
                     }
+
+                    drop(render_pass);
+
+                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("tonemap render pass"),
+                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                            attachment: &renderer.pre_fxaa_framebuffer,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: true,
+                            },
+                        }],
+                        depth_stencil_attachment: None,
+                    });
+
+                    render_pass.set_pipeline(&renderer.tonemap_pipeline);
+                    render_pass.set_bind_group(0, &renderer.tonemap_bind_group, &[]);
+                    render_pass.draw(0..3, 0..1);
 
                     drop(render_pass);
 

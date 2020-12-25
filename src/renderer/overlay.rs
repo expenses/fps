@@ -105,10 +105,8 @@ struct Vertex {
 }
 
 use lyon_tessellation::{
-    basic_shapes::stroke_circle,
-    math::{rect, Point},
-    BasicVertexConstructor, BuffersBuilder, FillOptions, StrokeAttributes, StrokeOptions,
-    StrokeVertexConstructor, VertexBuffers,
+    basic_shapes::stroke_circle, math::Point, BasicVertexConstructor, BuffersBuilder,
+    StrokeAttributes, StrokeOptions, StrokeVertexConstructor, VertexBuffers,
 };
 
 struct Constructor {

@@ -12,7 +12,6 @@ layout(set = 0, binding = 2) uniform Uniforms {
 
 #define FXAA_PC 1
 #define FXAA_GLSL_130 1
-#define FXAA_GREEN_AS_LUMA 1
 // This is same as the file linked below, except I have commented where 'FxaaTex' is used and 
 // replaced it with 'sampler2D(u_texture, u_sampler)' instead.
 // https://gist.github.com/kosua20/0c506b81b3812ac900048059d2383126
