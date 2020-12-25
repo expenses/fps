@@ -734,19 +734,19 @@ FxaaFloat4 FxaaPixelShader(
     // {rgb_} = color in linear or perceptual color space
     // if (FXAA_GREEN_AS_LUMA == 0)
     //     {___a} = luma in perceptual color space (not linear)
-    FxaaTex tex,
+    // FxaaTex tex,
     //
     // Only used on the optimized 360 version of FXAA Console.
     // For everything but 360, just use the same input here as for "tex".
     // For 360, same texture, just alias with a 2nd sampler.
     // This sampler needs to have an exponent bias of -1.
-    FxaaTex fxaaConsole360TexExpBiasNegOne,
+    // FxaaTex fxaaConsole360TexExpBiasNegOne,
     //
     // Only used on the optimized 360 version of FXAA Console.
     // For everything but 360, just use the same input here as for "tex".
     // For 360, same texture, just alias with a 3nd sampler.
     // This sampler needs to have an exponent bias of -2.
-    FxaaTex fxaaConsole360TexExpBiasNegTwo,
+    // FxaaTex fxaaConsole360TexExpBiasNegTwo,
     //
     // Only used on FXAA Quality.
     // This must be from a constant/uniform.
@@ -882,7 +882,7 @@ FxaaFloat4 FxaaPixelShader(
     posM.y = pos.y;
     #if (FXAA_GATHER4_ALPHA == 1)
         #if (FXAA_DISCARD == 0)
-            FxaaFloat4 rgbyM = FxaaTexTop(tex, posM);
+            FxaaFloat4 rgbyM = FxaaTexTop(sampler2D(u_texture, u_sampler), posM);
             #if (FXAA_GREEN_AS_LUMA == 0)
                 #define lumaM rgbyM.w
             #else
@@ -890,11 +890,11 @@ FxaaFloat4 FxaaPixelShader(
             #endif
         #endif
         #if (FXAA_GREEN_AS_LUMA == 0)
-            FxaaFloat4 luma4A = FxaaTexAlpha4(tex, posM);
-            FxaaFloat4 luma4B = FxaaTexOffAlpha4(tex, posM, FxaaInt2(-1, -1));
+            FxaaFloat4 luma4A = FxaaTexAlpha4(sampler2D(u_texture, u_sampler), posM);
+            FxaaFloat4 luma4B = FxaaTexOffAlpha4(sampler2D(u_texture, u_sampler), posM, FxaaInt2(-1, -1));
         #else
-            FxaaFloat4 luma4A = FxaaTexGreen4(tex, posM);
-            FxaaFloat4 luma4B = FxaaTexOffGreen4(tex, posM, FxaaInt2(-1, -1));
+            FxaaFloat4 luma4A = FxaaTexGreen4(sampler2D(u_texture, u_sampler), posM);
+            FxaaFloat4 luma4B = FxaaTexOffGreen4(sampler2D(u_texture, u_sampler), posM, FxaaInt2(-1, -1));
         #endif
         #if (FXAA_DISCARD == 1)
             #define lumaM luma4A.w
@@ -906,16 +906,16 @@ FxaaFloat4 FxaaPixelShader(
         #define lumaN luma4B.z
         #define lumaW luma4B.x
     #else
-        FxaaFloat4 rgbyM = FxaaTexTop(tex, posM);
+        FxaaFloat4 rgbyM = FxaaTexTop(sampler2D(u_texture, u_sampler), posM);
         #if (FXAA_GREEN_AS_LUMA == 0)
             #define lumaM rgbyM.w
         #else
             #define lumaM rgbyM.y
         #endif
-        FxaaFloat lumaS = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2( 0, 1), fxaaQualityRcpFrame.xy));
-        FxaaFloat lumaE = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2( 1, 0), fxaaQualityRcpFrame.xy));
-        FxaaFloat lumaN = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2( 0,-1), fxaaQualityRcpFrame.xy));
-        FxaaFloat lumaW = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2(-1, 0), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaS = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2( 0, 1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaE = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2( 1, 0), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaN = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2( 0,-1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaW = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2(-1, 0), fxaaQualityRcpFrame.xy));
     #endif
 /*--------------------------------------------------------------------------*/
     FxaaFloat maxSM = max(lumaS, lumaM);
@@ -939,13 +939,13 @@ FxaaFloat4 FxaaPixelShader(
         #endif
 /*--------------------------------------------------------------------------*/
     #if (FXAA_GATHER4_ALPHA == 0)
-        FxaaFloat lumaNW = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2(-1,-1), fxaaQualityRcpFrame.xy));
-        FxaaFloat lumaSE = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2( 1, 1), fxaaQualityRcpFrame.xy));
-        FxaaFloat lumaNE = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2( 1,-1), fxaaQualityRcpFrame.xy));
-        FxaaFloat lumaSW = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2(-1, 1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaNW = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2(-1,-1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaSE = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2( 1, 1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaNE = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2( 1,-1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaSW = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2(-1, 1), fxaaQualityRcpFrame.xy));
     #else
-        FxaaFloat lumaNE = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2(1, -1), fxaaQualityRcpFrame.xy));
-        FxaaFloat lumaSW = FxaaLuma(FxaaTexOff(tex, posM, FxaaInt2(-1, 1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaNE = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2(1, -1), fxaaQualityRcpFrame.xy));
+        FxaaFloat lumaSW = FxaaLuma(FxaaTexOff(sampler2D(u_texture, u_sampler), posM, FxaaInt2(-1, 1), fxaaQualityRcpFrame.xy));
     #endif
 /*--------------------------------------------------------------------------*/
     FxaaFloat lumaNS = lumaN + lumaS;
@@ -1004,9 +1004,9 @@ FxaaFloat4 FxaaPixelShader(
     posP.x = posB.x + offNP.x * FXAA_QUALITY__P0;
     posP.y = posB.y + offNP.y * FXAA_QUALITY__P0;
     FxaaFloat subpixD = ((-2.0)*subpixC) + 3.0;
-    FxaaFloat lumaEndN = FxaaLuma(FxaaTexTop(tex, posN));
+    FxaaFloat lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN));
     FxaaFloat subpixE = subpixC * subpixC;
-    FxaaFloat lumaEndP = FxaaLuma(FxaaTexTop(tex, posP));
+    FxaaFloat lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP));
 /*--------------------------------------------------------------------------*/
     if(!pairN) lumaNN = lumaSS;
     FxaaFloat gradientScaled = gradient * 1.0/4.0;
@@ -1025,8 +1025,8 @@ FxaaFloat4 FxaaPixelShader(
     if(!doneP) posP.y += offNP.y * FXAA_QUALITY__P1;
 /*--------------------------------------------------------------------------*/
     if(doneNP) {
-        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
         if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
         if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
         doneN = abs(lumaEndN) >= gradientScaled;
@@ -1039,8 +1039,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
         #if (FXAA_QUALITY__PS > 3)
         if(doneNP) {
-            if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-            if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+            if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+            if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
             if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
             if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
             doneN = abs(lumaEndN) >= gradientScaled;
@@ -1053,8 +1053,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
             #if (FXAA_QUALITY__PS > 4)
             if(doneNP) {
-                if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-                if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+                if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+                if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
                 if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
                 if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
                 doneN = abs(lumaEndN) >= gradientScaled;
@@ -1067,8 +1067,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
                 #if (FXAA_QUALITY__PS > 5)
                 if(doneNP) {
-                    if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-                    if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+                    if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+                    if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
                     if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
                     if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
                     doneN = abs(lumaEndN) >= gradientScaled;
@@ -1081,8 +1081,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
                     #if (FXAA_QUALITY__PS > 6)
                     if(doneNP) {
-                        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-                        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+                        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+                        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
                         if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
                         if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
                         doneN = abs(lumaEndN) >= gradientScaled;
@@ -1095,8 +1095,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
                         #if (FXAA_QUALITY__PS > 7)
                         if(doneNP) {
-                            if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-                            if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+                            if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+                            if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
                             if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
                             if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
                             doneN = abs(lumaEndN) >= gradientScaled;
@@ -1109,8 +1109,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
     #if (FXAA_QUALITY__PS > 8)
     if(doneNP) {
-        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
         if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
         if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
         doneN = abs(lumaEndN) >= gradientScaled;
@@ -1123,8 +1123,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
         #if (FXAA_QUALITY__PS > 9)
         if(doneNP) {
-            if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-            if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+            if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+            if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
             if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
             if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
             doneN = abs(lumaEndN) >= gradientScaled;
@@ -1137,8 +1137,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
             #if (FXAA_QUALITY__PS > 10)
             if(doneNP) {
-                if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-                if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+                if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+                if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
                 if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
                 if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
                 doneN = abs(lumaEndN) >= gradientScaled;
@@ -1151,8 +1151,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
                 #if (FXAA_QUALITY__PS > 11)
                 if(doneNP) {
-                    if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-                    if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+                    if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+                    if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
                     if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
                     if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
                     doneN = abs(lumaEndN) >= gradientScaled;
@@ -1165,8 +1165,8 @@ FxaaFloat4 FxaaPixelShader(
 /*--------------------------------------------------------------------------*/
                     #if (FXAA_QUALITY__PS > 12)
                     if(doneNP) {
-                        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(tex, posN.xy));
-                        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(tex, posP.xy));
+                        if(!doneN) lumaEndN = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posN.xy));
+                        if(!doneP) lumaEndP = FxaaLuma(FxaaTexTop(sampler2D(u_texture, u_sampler), posP.xy));
                         if(!doneN) lumaEndN = lumaEndN - lumaNN * 0.5;
                         if(!doneP) lumaEndP = lumaEndP - lumaNN * 0.5;
                         doneN = abs(lumaEndN) >= gradientScaled;
@@ -1231,9 +1231,9 @@ FxaaFloat4 FxaaPixelShader(
     if(!horzSpan) posM.x += pixelOffsetSubpix * lengthSign;
     if( horzSpan) posM.y += pixelOffsetSubpix * lengthSign;
     #if (FXAA_DISCARD == 1)
-        return FxaaTexTop(tex, posM);
+        return FxaaTexTop(sampler2D(u_texture, u_sampler), posM);
     #else
-        return FxaaFloat4(FxaaTexTop(tex, posM).xyz, lumaM);
+        return FxaaFloat4(FxaaTexTop(sampler2D(u_texture, u_sampler), posM).xyz, lumaM);
     #endif
 }
 /*==========================================================================*/

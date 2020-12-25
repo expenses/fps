@@ -40,20 +40,25 @@ pub struct Renderer {
     view_buffer: wgpu::Buffer,
     perspective_buffer: wgpu::Buffer,
     pub main_bind_group: wgpu::BindGroup,
-    pub multisampled_framebuffer_texture: wgpu::TextureView,
+    pub framebuffer: wgpu::TextureView,
     pub identity_instance_buffer: wgpu::Buffer,
     pub opaque_render_pipeline: wgpu::RenderPipeline,
     pub transparent_render_pipeline: wgpu::RenderPipeline,
     pub skybox_render_pipeline: wgpu::RenderPipeline,
-    pub mipmap_generation_sampler: wgpu::Sampler,
+    pub linear_sampler: wgpu::Sampler,
     pub mipmap_generation_pipeline: wgpu::RenderPipeline,
     pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
+    screen_dimension_uniform_buffer: wgpu::Buffer,
+
+    pub fxaa_bind_group: wgpu::BindGroup,
+    fxaa_bind_group_layout: wgpu::BindGroupLayout,
+    pub fxaa_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
     pub async fn new(
         event_loop: &winit::event_loop::EventLoop<()>,
-        settings: &Settings,
+        _settings: &Settings,
     ) -> anyhow::Result<Self> {
         let window = winit::window::WindowBuilder::new().build(event_loop)?;
 
@@ -96,10 +101,10 @@ impl Renderer {
             ..Default::default()
         });
 
-        let mipmap_generation_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            label: Some("mipmap generation sampler"),
+            label: Some("linear sampler"),
             ..Default::default()
         });
 
@@ -193,17 +198,15 @@ impl Renderer {
             window_size.height,
             DEPTH_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
-            settings.sample_count(),
         );
 
-        let multisampled_framebuffer_texture = create_texture(
+        let framebuffer = create_texture(
             &device,
-            "multisampled framebuffer texture",
+            "framebuffer",
             window_size.width,
             window_size.height,
             DISPLAY_FORMAT,
-            wgpu::TextureUsage::RENDER_ATTACHMENT,
-            settings.sample_count(),
+            wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
         );
 
         let texture_array_bind_group_layout =
@@ -288,7 +291,6 @@ impl Renderer {
             replace_colour_descriptor(),
             true,
             wgpu::CompareFunction::Less,
-            settings.sample_count(),
         );
 
         let transparent_render_pipeline = create_render_pipeline(
@@ -301,7 +303,6 @@ impl Renderer {
             // Can't remember if this is a good idea or not.
             false,
             wgpu::CompareFunction::Less,
-            settings.sample_count(),
         );
 
         let skybox_render_pipeline = create_render_pipeline(
@@ -313,7 +314,6 @@ impl Renderer {
             replace_colour_descriptor(),
             true,
             wgpu::CompareFunction::Equal,
-            settings.sample_count(),
         );
 
         let identity_instance_buffer = single_instance_buffer(
@@ -389,6 +389,108 @@ impl Renderer {
                 alpha_to_coverage_enabled: false,
             });
 
+        let screen_dimension_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("screen_dimension_uniform_buffer"),
+                contents: bytemuck::bytes_of(&Vec2::new(
+                    window_size.width as f32,
+                    window_size.height as f32,
+                )),
+                usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            });
+
+        let fxaa_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("fxaa bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let fxaa_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fxaa bind group"),
+            layout: &fxaa_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&framebuffer),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &screen_dimension_uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    },
+                },
+            ],
+        });
+
+        let fxaa_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fxaa pipeline layout"),
+            bind_group_layouts: &[&fxaa_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let fs_fxaa = wgpu::include_spirv!("../shaders/compiled/fxaa.frag.spv");
+        let fs_fxaa_module = device.create_shader_module(&fs_fxaa);
+
+        let fxaa_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("fxaa pipeline"),
+            layout: Some(&fxaa_pipeline_layout),
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &vs_full_screen_tri_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &fs_fxaa_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[replace_colour_descriptor()],
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: Some(INDEX_FORMAT),
+                vertex_buffers: &[],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+
         Ok(Self {
             device,
             queue,
@@ -401,7 +503,7 @@ impl Renderer {
             depth_texture,
             opaque_render_pipeline,
             transparent_render_pipeline,
-            multisampled_framebuffer_texture,
+            framebuffer,
             identity_instance_buffer,
             texture_array_bind_group_layout,
             skybox_texture_bind_group_layout,
@@ -410,7 +512,12 @@ impl Renderer {
             main_bind_group_layout,
             mipmap_generation_bind_group_layout,
             mipmap_generation_pipeline,
-            mipmap_generation_sampler,
+            linear_sampler,
+            screen_dimension_uniform_buffer,
+
+            fxaa_bind_group_layout,
+            fxaa_bind_group,
+            fxaa_pipeline,
         })
     }
 
@@ -419,7 +526,7 @@ impl Renderer {
             .write_buffer(&self.view_buffer, 0, bytemuck::bytes_of(&view));
     }
 
-    pub fn resize(&mut self, width: u32, height: u32, settings: &Settings) {
+    pub fn resize(&mut self, width: u32, height: u32, _settings: &Settings) {
         self.swap_chain = self.device.create_swap_chain(
             &self.surface,
             &wgpu::SwapChainDescriptor {
@@ -438,17 +545,15 @@ impl Renderer {
             height,
             DEPTH_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
-            settings.sample_count(),
         );
 
-        self.multisampled_framebuffer_texture = create_texture(
+        self.framebuffer = create_texture(
             &self.device,
-            "multisampled framebuffer texture",
+            "framebuffer",
             width,
             height,
             DISPLAY_FORMAT,
-            wgpu::TextureUsage::RENDER_ATTACHMENT,
-            settings.sample_count(),
+            wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
         );
 
         self.queue.write_buffer(
@@ -456,6 +561,35 @@ impl Renderer {
             0,
             bytemuck::bytes_of(&perspective_matrix(width, height)),
         );
+
+        self.queue.write_buffer(
+            &self.screen_dimension_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&Vec2::new(width as f32, height as f32)),
+        );
+
+        self.fxaa_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fxaa bind group"),
+            layout: &self.fxaa_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.framebuffer),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &self.screen_dimension_uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    },
+                },
+            ],
+        });
     }
 
     pub fn screen_center(&self) -> winit::dpi::LogicalPosition<f64> {
@@ -484,7 +618,6 @@ fn create_texture(
     height: u32,
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsage,
-    sample_count: u32,
 ) -> wgpu::TextureView {
     device
         .create_texture(&wgpu::TextureDescriptor {
@@ -495,7 +628,7 @@ fn create_texture(
                 depth: 1,
             },
             mip_level_count: 1,
-            sample_count,
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
@@ -550,7 +683,6 @@ fn create_render_pipeline(
     colour_descriptor: wgpu::ColorStateDescriptor,
     depth_write_enabled: bool,
     depth_compare: wgpu::CompareFunction,
-    sample_count: u32,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -590,7 +722,7 @@ fn create_render_pipeline(
                 },
             ],
         },
-        sample_count,
+        sample_count: 1,
         sample_mask: !0,
         alpha_to_coverage_enabled: false,
     })

@@ -1,30 +1,14 @@
 use super::{alpha_blend_colour_descriptor, DynamicBuffer, Renderer, DEPTH_FORMAT, INDEX_FORMAT};
 use crate::Settings;
 use ultraviolet::{Vec2, Vec4};
-use wgpu::util::DeviceExt;
 
 pub struct OverlayPipeline {
     pub bind_group: wgpu::BindGroup,
     pub pipeline: wgpu::RenderPipeline,
-    screen_dimension_uniform_buffer: wgpu::Buffer,
 }
 
 impl OverlayPipeline {
-    pub fn new(renderer: &Renderer, settings: &Settings) -> Self {
-        let window_size = renderer.window.inner_size();
-
-        let screen_dimension_uniform_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("screen_dimension_uniform_buffer"),
-                    contents: bytemuck::bytes_of(&Vec2::new(
-                        window_size.width as f32,
-                        window_size.height as f32,
-                    )),
-                    usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-                });
-
+    pub fn new(renderer: &Renderer, _settings: &Settings) -> Self {
         let bind_group_layout =
             renderer
                 .device
@@ -50,7 +34,7 @@ impl OverlayPipeline {
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
-                        buffer: &screen_dimension_uniform_buffer,
+                        buffer: &renderer.screen_dimension_uniform_buffer,
                         offset: 0,
                         size: None,
                     },
@@ -101,7 +85,7 @@ impl OverlayPipeline {
                         attributes: &wgpu::vertex_attr_array![0 => Float2, 1 => Float4],
                     }],
                 },
-                sample_count: settings.sample_count(),
+                sample_count: 1,
                 sample_mask: !0,
                 alpha_to_coverage_enabled: false,
             });
@@ -109,16 +93,7 @@ impl OverlayPipeline {
         Self {
             bind_group,
             pipeline,
-            screen_dimension_uniform_buffer,
         }
-    }
-
-    pub fn resize(&self, renderer: &Renderer, width: u32, height: u32) {
-        renderer.queue.write_buffer(
-            &self.screen_dimension_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&Vec2::new(width as f32, height as f32)),
-        );
     }
 }
 
@@ -187,7 +162,7 @@ impl OverlayBuffers {
         stroke_circle(
             [position.x, position.y].into(),
             radius,
-            &StrokeOptions::default(),
+            &StrokeOptions::default().with_line_width(2.0),
             &mut BuffersBuilder::new(
                 &mut self.lyon_buffers,
                 Constructor {

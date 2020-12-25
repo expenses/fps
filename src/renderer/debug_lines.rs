@@ -2,7 +2,7 @@ use super::{alpha_blend_colour_descriptor, Renderer, DEPTH_FORMAT, INDEX_FORMAT}
 use crate::Settings;
 use ultraviolet::{Vec3, Vec4};
 
-pub fn debug_lines_pipeline(renderer: &Renderer, settings: &Settings) -> wgpu::RenderPipeline {
+pub fn debug_lines_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::RenderPipeline {
     let debug_lines_pipeline_layout =
         renderer
             .device
@@ -50,7 +50,7 @@ pub fn debug_lines_pipeline(renderer: &Renderer, settings: &Settings) -> wgpu::R
                     attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float4],
                 }],
             },
-            sample_count: settings.sample_count(),
+            sample_count: 1,
             sample_mask: !0,
             alpha_to_coverage_enabled: false,
         })

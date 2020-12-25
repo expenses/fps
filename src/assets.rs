@@ -661,9 +661,7 @@ fn load_texture_array(
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::Sampler(
-                                &renderer.mipmap_generation_sampler,
-                            ),
+                            resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
                         },
                     ],
                 });

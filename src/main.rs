@@ -11,15 +11,7 @@ use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
-pub struct Settings {
-    msaa_sample_count: Option<u32>,
-}
-
-impl Settings {
-    fn sample_count(&self) -> u32 {
-        self.msaa_sample_count.unwrap_or(1)
-    }
-}
+pub struct Settings;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -81,9 +73,7 @@ async fn run() -> anyhow::Result<()> {
 
     let event_loop = winit::event_loop::EventLoop::new();
 
-    let settings = Settings {
-        msaa_sample_count: Some(4),
-    };
+    let settings = Settings;
 
     let mut renderer = renderer::Renderer::new(&event_loop, &settings).await?;
 
@@ -235,7 +225,6 @@ async fn run() -> anyhow::Result<()> {
                 renderer.resize(size.width as u32, size.height as u32, &settings);
                 screen_center = renderer.screen_center();
                 renderer.window.set_cursor_position(screen_center).unwrap();
-                overlay_pipeline.resize(&renderer, size.width as u32, size.height as u32);
             }
             WindowEvent::KeyboardInput {
                 input:
@@ -494,12 +483,10 @@ async fn run() -> anyhow::Result<()> {
 
             renderer.set_camera_view(camera_view);
 
-            /*
             overlay_buffers.draw_circle_outline(
                 Vec2::new(screen_center.x as f32, screen_center.y as f32),
                 100.0,
             );
-            */
             overlay_buffers.upload(&renderer);
 
             /*
@@ -586,20 +573,11 @@ async fn run() -> anyhow::Result<()> {
                                 label: Some("render encoder"),
                             });
 
-                    let (attachment, resolve_target) = if settings.msaa_sample_count.is_some() {
-                        (
-                            &renderer.multisampled_framebuffer_texture,
-                            Some(&frame.output.view),
-                        )
-                    } else {
-                        (&frame.output.view, None)
-                    };
-
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("main render pass"),
                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment,
-                            resolve_target,
+                            attachment: &renderer.framebuffer,
+                            resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                                 store: true,
@@ -698,6 +676,25 @@ async fn run() -> anyhow::Result<()> {
                         render_pass.set_index_buffer(indices, INDEX_FORMAT);
                         render_pass.draw_indexed(0..num_indices, 0, 0..1);
                     }
+
+                    drop(render_pass);
+
+                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("fxaa render pass"),
+                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                            attachment: &frame.output.view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: true,
+                            },
+                        }],
+                        depth_stencil_attachment: None,
+                    });
+
+                    render_pass.set_pipeline(&renderer.fxaa_pipeline);
+                    render_pass.set_bind_group(0, &renderer.fxaa_bind_group, &[]);
+                    render_pass.draw(0..3, 0..1);
 
                     drop(render_pass);
 
