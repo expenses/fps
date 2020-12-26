@@ -419,21 +419,9 @@ fn add_primitive_geometry_to_buffers(
     staging_buffers: &mut StagingModelBuffers<Vertex>,
     mut collision_buffers: Option<&mut StagingModelBuffers<Vec3>>,
 ) -> anyhow::Result<()> {
-    let emission = {
-        let emissive_colour: Vec3 = primitive.material().emissive_factor().into();
-        let is_black = emissive_colour == Vec3::zero();
-        match (material_properties.get(&primitive.material().index()), is_black) {
-            (Some(MaterialProperty::EmissionStrength(_)), true) => {
-                eprintln!("The emission_strength material propetry is set but the emission colour is black.");
-                emissive_colour
-            },
-            (None, false) => {
-                eprintln!("The emissive colour is set but the emission_strength material property is not. Using 1.0 as the emission_strength.");
-                emissive_colour
-            },
-            (Some(MaterialProperty::EmissionStrength(strength)), false) => *strength * emissive_colour,
-            (None, true) => emissive_colour
-        }
+    let emission_strength = match material_properties.get(&primitive.material().index()) {
+        Some(MaterialProperty::EmissionStrength(strength)) => *strength,
+        _ => 0.0
     };
 
     let texture_index = primitive
@@ -497,7 +485,7 @@ fn add_primitive_geometry_to_buffers(
                 normal,
                 uv: uv.into(),
                 texture_index: texture_index as i32,
-                emission,
+                emission_strength,
             });
 
             if let Some(collision_buffers) = collision_buffers.as_mut() {
