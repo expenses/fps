@@ -89,7 +89,7 @@ impl Character {
 pub enum MaterialProperty {
     // This is to work around this issue:
     // https://github.com/KhronosGroup/glTF-Blender-IO/pull/1159#issuecomment-678563107
-    EmissionStrength(f32)
+    EmissionStrength(f32),
 }
 
 impl MaterialProperty {
@@ -130,26 +130,29 @@ impl Level {
                     .map(|json_value| (node.index(), json_value))
             })
             .map(|(node_index, json_value)| {
-                let map: HashMap<String, f32> =
-                    serde_json::from_str(json_value.get())?;
+                let map: HashMap<String, f32> = serde_json::from_str(json_value.get())?;
                 assert_eq!(map.len(), 1);
                 let key = map.keys().next().unwrap();
                 Ok((node_index, (Property::parse(&key)?)))
             })
             .collect::<anyhow::Result<HashMap<usize, Property>>>()?;
 
-        let material_properties = gltf.materials()
+        let material_properties = gltf
+            .materials()
             .filter_map(|material| {
-                material.extras()
+                material
+                    .extras()
                     .as_ref()
                     .map(|json_value| (material.index(), json_value))
             })
             .map(|(material_index, json_value)| {
-                let map: HashMap<String, f32> =
-                    serde_json::from_str(json_value.get())?;
+                let map: HashMap<String, f32> = serde_json::from_str(json_value.get())?;
                 assert_eq!(map.len(), 1);
                 let key = map.keys().next().unwrap();
-                Ok((material_index, MaterialProperty::parse(&key[..], map[&key[..]])?))
+                Ok((
+                    material_index,
+                    MaterialProperty::parse(&key[..], map[&key[..]])?,
+                ))
             })
             .collect::<anyhow::Result<HashMap<Option<usize>, MaterialProperty>>>()?;
 
@@ -421,7 +424,7 @@ fn add_primitive_geometry_to_buffers(
 ) -> anyhow::Result<()> {
     let emission_strength = match material_properties.get(&primitive.material().index()) {
         Some(MaterialProperty::EmissionStrength(strength)) => *strength,
-        _ => 0.0
+        _ => 0.0,
     };
 
     let texture_index = primitive
