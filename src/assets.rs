@@ -85,6 +85,22 @@ impl Character {
     }
 }
 
+#[derive(Debug)]
+pub enum MaterialProperty {
+    // This is to work around this issue:
+    // https://github.com/KhronosGroup/glTF-Blender-IO/pull/1159#issuecomment-678563107
+    EmissionStrength(f32)
+}
+
+impl MaterialProperty {
+    fn parse(string: &str, value: f32) -> anyhow::Result<Self> {
+        match string {
+            "emission_strength" => Ok(Self::EmissionStrength(value)),
+            _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
+        }
+    }
+}
+
 pub struct Level {
     pub opaque_geometry: ModelBuffers,
     pub transparent_geometry: ModelBuffers,
@@ -114,13 +130,28 @@ impl Level {
                     .map(|json_value| (node.index(), json_value))
             })
             .map(|(node_index, json_value)| {
-                let map: HashMap<String, serde_json::Value> =
+                let map: HashMap<String, f32> =
                     serde_json::from_str(json_value.get())?;
                 assert_eq!(map.len(), 1);
                 let key = map.keys().next().unwrap();
                 Ok((node_index, (Property::parse(&key)?)))
             })
             .collect::<anyhow::Result<HashMap<usize, Property>>>()?;
+
+        let material_properties = gltf.materials()
+            .filter_map(|material| {
+                material.extras()
+                    .as_ref()
+                    .map(|json_value| (material.index(), json_value))
+            })
+            .map(|(material_index, json_value)| {
+                let map: HashMap<String, f32> =
+                    serde_json::from_str(json_value.get())?;
+                assert_eq!(map.len(), 1);
+                let key = map.keys().next().unwrap();
+                Ok((material_index, MaterialProperty::parse(&key[..], map[&key[..]])?))
+            })
+            .collect::<anyhow::Result<HashMap<Option<usize>, MaterialProperty>>>()?;
 
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
@@ -215,6 +246,7 @@ impl Level {
                         transform,
                         normal_matrix,
                         buffer_blob,
+                        &material_properties,
                         &mut transparent_geometry,
                         collision_geometry,
                     )?;
@@ -225,6 +257,7 @@ impl Level {
                         transform,
                         normal_matrix,
                         buffer_blob,
+                        &material_properties,
                         &mut opaque_geometry,
                         collision_geometry,
                     )?;
@@ -318,6 +351,7 @@ impl Model {
                     transform,
                     normal_matrix,
                     buffer_blob,
+                    &HashMap::new(),
                     &mut staging_buffers,
                     None,
                 )?;
@@ -381,9 +415,27 @@ fn add_primitive_geometry_to_buffers(
     transform: Mat4,
     normal_matrix: Mat3,
     buffer_blob: &[u8],
+    material_properties: &HashMap<Option<usize>, MaterialProperty>,
     staging_buffers: &mut StagingModelBuffers<Vertex>,
     mut collision_buffers: Option<&mut StagingModelBuffers<Vec3>>,
 ) -> anyhow::Result<()> {
+    let emission = {
+        let emissive_colour: Vec3 = primitive.material().emissive_factor().into();
+        let is_black = emissive_colour == Vec3::zero();
+        match (material_properties.get(&primitive.material().index()), is_black) {
+            (Some(MaterialProperty::EmissionStrength(_)), true) => {
+                eprintln!("The emission_strength material propetry is set but the emission colour is black.");
+                emissive_colour
+            },
+            (None, false) => {
+                eprintln!("The emissive colour is set but the emission_strength material property is not. Using 1.0 as the emission_strength.");
+                emissive_colour
+            },
+            (Some(MaterialProperty::EmissionStrength(strength)), false) => *strength * emissive_colour,
+            (None, true) => emissive_colour
+        }
+    };
+
     let texture_index = primitive
         .material()
         .pbr_metallic_roughness()
@@ -445,7 +497,7 @@ fn add_primitive_geometry_to_buffers(
                 normal,
                 uv: uv.into(),
                 texture_index: texture_index as i32,
-                emission_colour: primitive.material().emissive_factor().into(),
+                emission,
             });
 
             if let Some(collision_buffers) = collision_buffers.as_mut() {

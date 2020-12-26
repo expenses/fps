@@ -18,7 +18,7 @@ pub struct Vertex {
     pub normal: Vec3,
     pub uv: Vec2,
     pub texture_index: i32,
-    pub emission_colour: Vec3,
+    pub emission: Vec3,
 }
 
 #[repr(C)]
@@ -791,7 +791,7 @@ pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [
         normal,
         uv: uvs[index],
         texture_index: 0,
-        emission_colour: Vec3::zero(),
+        emission: Vec3::zero(),
     };
 
     [
