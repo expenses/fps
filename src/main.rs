@@ -323,13 +323,13 @@ async fn run() -> anyhow::Result<()> {
             _ => {}
         },
         Event::MainEventsCleared => {
-            let speed = 0.2;
-
             player.gun_cooldown -= 1.0 / 60.0;
 
             let mut movement = Vec3::zero();
 
             if settings.noclip {
+                let speed = 0.5;
+
                 if control_states.forwards_pressed {
                     movement.z -= speed * player.facing.vertical.cos();
                     movement.y += speed * player.facing.vertical.sin();
@@ -352,6 +352,8 @@ async fn run() -> anyhow::Result<()> {
                 player.position += Vec3::new(0.0, movement.y, 0.0);
 
             } else {
+                let speed = 0.2;
+
                 if control_states.forwards_pressed {
                     movement.z -= speed;
                 }
@@ -446,14 +448,12 @@ async fn run() -> anyhow::Result<()> {
 
                                 let relative = contact_point.y - player.position.y;
 
-                                if relative - BODY_BOTTOM_DISTANCE_FROM_GROUND > PLAYER_RADIUS {
-                                    println!("Adjusting velocity by {} to prevent clipping into the floor", relative);
-                                    player.position.y += relative;
+                                if relative > PLAYER_RADIUS {
+                                    println!("Adjusting vertical position by {} to prevent clipping into the floor", contact.depth);
+                                    player.position.y += contact.depth;
                                 }
                             }
-                        } /*
-                        this looks janky when jumping next to an object unfortunately.
-                        else if player.velocity > PLAYER_RADIUS {
+                        } else if player.velocity > PLAYER_RADIUS {
                             let body_contact = ncollide3d::query::contact(
                                 &vec3_to_ncollide_iso(player.position + player_body_relative),
                                 &player_body,
@@ -468,11 +468,11 @@ async fn run() -> anyhow::Result<()> {
                                 let relative = player.position.y + player_head_relative.y - contact_point.y;
 
                                 if relative > 0.0 {
-                                    println!("Adjusting velocity by {} to prevent clipping through the ceiling", relative);
-                                    player.position.y -= relative;
+                                    println!("Adjusting vertical position by {} to prevent clipping through the ceiling", -contact.depth);
+                                    player.position.y -= contact.depth;
                                 }
                             }
-                        }*/
+                        }
                     }
 
                     for _ in 0..10 {
@@ -494,8 +494,36 @@ async fn run() -> anyhow::Result<()> {
                                     - BODY_BOTTOM_DISTANCE_FROM_GROUND
                                     < PLAYER_RADIUS
                                 {
-                                    // Ignore contacts on the bottom hemisphere of the body capsule.
-                                    break;
+                                    let normal = vec3_from_arr(contact.normal.into_inner().into());
+                                    let slope = normal.dot(-Vec3::unit_y()).acos().to_degrees();
+
+                                    if slope < 45.0 {
+                                        // If the deepest(?) contact point is the bottom hemisphere
+                                        // contacting the ground at an acceptable angle, we stop
+                                        // doing body contacts and 'break' to do the feet contacts.
+                                        break;
+                                    } else {
+                                        renderer::debug_lines::draw_line(
+                                            contact_point,
+                                            player.position + Vec3::new(0.0, PLAYER_RADIUS, 0.0),
+                                            Vec4::new(1.0, 0.0, 0.0, 1.0),
+                                            |vertex| debug_contact_points_buffer.push(vertex),
+                                        );
+
+                                        let mut vector_away_from_wall = player.position - contact_point;
+                                        vector_away_from_wall.y = 0.0;
+                                        let push_strength =
+                                        (PLAYER_RADIUS - vector_away_from_wall.mag()) + epsilon;
+                                        let push = vector_away_from_wall.normalized() * push_strength;
+
+                                        renderer::debug_lines::draw_line(
+                                            contact_point,
+                                            Vec3::new(player.position.x, contact_point.y, player.position.z),
+                                            Vec4::new(0.0, 1.0, 0.0, 1.0),
+                                            |vertex| debug_contact_points_buffer.push(vertex),
+                                        );
+                                        player.position += push;
+                                    }
                                 } else if contact_point.y - player.position.y > player_head_relative.y {
                                     renderer::debug_lines::draw_line(
                                         contact_point,
@@ -519,6 +547,7 @@ async fn run() -> anyhow::Result<()> {
                                 } else {
                                     // Handle horizontal contacts.
 
+                                    /*
                                     renderer::debug_lines::draw_line(
                                         contact_point,
                                         Vec3::new(
@@ -535,7 +564,7 @@ async fn run() -> anyhow::Result<()> {
                                         player.position + player_body_relative,
                                         &mut debug_contact_points_buffer,
                                         Vec4::new(1.0, 0.0, 0.0, 1.0),
-                                    );
+                                    );*/
 
                                     let mut vector_away_from_wall = player.position - contact_point;
 
@@ -570,14 +599,11 @@ async fn run() -> anyhow::Result<()> {
 
                     match feet_contact {
                         Some(contact) => {
-                            let normal = vec3_from_arr(contact.normal.into_inner().into());
-                            // todo: do something with this.
-                            let slope = normal.dot(-Vec3::unit_y()).acos().to_degrees();
-
-                            //println!("{}", Vec3::new(1.0, -1.0, 0.0).normalized().dot(-Vec3::unit_y()));
-
                             player.position.y += contact.depth;
+                            player.on_ground = true;
 
+                            /*
+                            let normal = vec3_from_arr(contact.normal.into_inner().into());
                             let contact_point = vec3_from_arr(contact.world2.coords.into());
                             renderer::debug_lines::draw_line(
                                 contact_point,
@@ -585,8 +611,7 @@ async fn run() -> anyhow::Result<()> {
                                 Vec4::new(0.0, 0.0, 1.0, 1.0),
                                 |vertex| debug_contact_points_buffer.push(vertex),
                             );
-
-                            player.on_ground = true;
+                            */
                         }
                         None => {
                             player.on_ground = false;
