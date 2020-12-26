@@ -7,43 +7,7 @@ layout(location = 0) out vec4 colour;
 layout(set = 0, binding = 0) uniform texture2D u_texture;
 layout(set = 0, binding = 1) uniform sampler u_sampler;
 
-const float invGamma = 1.0 / 2.0;
-
-float luminance(vec3 color) {
-    const float RAmount = 0.2126;
-    const float GAmount = 0.7152;
-    const float BAmount = 0.0722;
-
-    return dot(color, vec3(RAmount, GAmount, BAmount));
-}
-
-vec3 applyLuminance(vec3 color, float lum) {
-    float originalLuminance = luminance(color);
-    float scale = lum / originalLuminance;
-
-    return color * scale;
-}
-
-float aces(float lum) {
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-
-    lum = (lum * (a * lum + b)) / (lum * (c * lum + d) + e);
-    lum = pow(lum, invGamma);
-
-    return clamp(lum, 0, 1);
-}
-
-vec3 aces(vec3 color) {
-    float lum = aces(luminance(color));
-
-    return applyLuminance(color, lum);
-}
-
-vec3 tonemap(vec3 col) {
+float tonemap(float x) {
     // see https://www.desmos.com/calculator/0eo9pzo1at
     // toe = 1;
     // shoulder = 0.987
@@ -56,14 +20,36 @@ vec3 tonemap(vec3 col) {
     const float C = 0.746508497591;
     const float D = 0.987;
 
-    vec3 z = pow(col, vec3(A));
+    float z = pow(x, A);
 
-    return z / (pow(z, vec3(D)) * B + vec3(C));
+    return z / (pow(z, D) * B + C);
+}
+
+vec3 lerp(vec3 a, vec3 b, float factor) {
+    return (1.0 - factor) * a + factor * b;
 }
 
 void main() {
     colour = texture(sampler2D(u_texture, u_sampler), uv);
-    colour.rgb = tonemap(colour.rgb); // linear color output
-    colour.a = sqrt(dot(colour.rgb, vec3(0.299, 0.587, 0.114))); // compute luma
+    vec3 rgb = colour.rgb;
+
+    float peak = max(max(rgb.r, rgb.g), rgb.b);
+    vec3 ratio = rgb / peak;
+    peak = tonemap(peak);
+
+    // Apply channel crosstalk
+
+    float saturation = 1.5;
+    float crossSaturation = 2.0;
+    float crosstalk = 1.0 / 10.0;
+
+    ratio = pow(ratio, vec3(saturation / crossSaturation));
+    ratio = lerp(ratio, vec3(1.0), pow(peak, 1.0 / crosstalk));
+    ratio = pow(ratio, vec3(crossSaturation));
+
+    colour.rgb = peak * ratio;
+
+    // compute luma
+    colour.a = sqrt(dot(colour.rgb, vec3(0.299, 0.587, 0.114)));
 }
 

@@ -483,10 +483,12 @@ async fn run() -> anyhow::Result<()> {
 
             renderer.set_camera_view(camera_view);
 
+            /*
             overlay_buffers.draw_circle_outline(
                 Vec2::new(screen_center.x as f32, screen_center.y as f32),
                 100.0,
             );
+            */
             overlay_buffers.upload(&renderer);
 
             /*
