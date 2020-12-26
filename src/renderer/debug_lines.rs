@@ -2,7 +2,11 @@ use super::{alpha_blend_colour_descriptor, Renderer, DEPTH_FORMAT, INDEX_FORMAT}
 use crate::Settings;
 use ultraviolet::{Vec3, Vec4};
 
-pub fn debug_lines_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::RenderPipeline {
+pub fn debug_lines_pipeline(
+    renderer: &Renderer,
+    _settings: &Settings,
+    depth_compare: wgpu::CompareFunction,
+) -> wgpu::RenderPipeline {
     let debug_lines_pipeline_layout =
         renderer
             .device
@@ -39,7 +43,7 @@ pub fn debug_lines_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_compare,
                 stencil: wgpu::StencilStateDescriptor::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {

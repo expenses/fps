@@ -16,4 +16,7 @@ layout(set = 0, binding = 1) uniform View {
 void main() {
     out_colour = colour;
     gl_Position = perspective * view * vec4(position, 1.0);
+    // Put the line closer to the camera in the z buffer so that it can be drawn as an overlay on
+    // the debug geometry.
+    gl_Position.z = gl_Position.z * 0.9999;
 }

@@ -11,7 +11,13 @@ use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
-pub struct Settings;
+pub struct Settings {
+    draw_gun: bool,
+    cursor_grab: bool,
+    draw_collision_geometry: bool,
+    draw_contact_points: bool,
+    draw_player_collider: bool,
+}
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -73,7 +79,13 @@ async fn run() -> anyhow::Result<()> {
 
     let event_loop = winit::event_loop::EventLoop::new();
 
-    let settings = Settings;
+    let mut settings = Settings {
+        draw_gun: true,
+        cursor_grab: true,
+        draw_collision_geometry: false,
+        draw_contact_points: false,
+        draw_player_collider: false,
+    };
 
     let mut renderer = renderer::Renderer::new(&event_loop, &settings).await?;
 
@@ -136,14 +148,27 @@ async fn run() -> anyhow::Result<()> {
     let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
-    let mut debug_lines_buffer = renderer::DynamicBuffer::<renderer::debug_lines::Vertex>::new(
+    let mut debug_contact_points_buffer = renderer::DynamicBuffer::new(
         &renderer.device,
         40,
-        "debug lines buffer",
+        "debug contact points buffer",
         wgpu::BufferUsage::VERTEX,
     );
 
-    /*
+    let mut debug_collision_geometry_buffer = renderer::DynamicBuffer::new(
+        &renderer.device,
+        40,
+        "debug collsion geometry buffer",
+        wgpu::BufferUsage::VERTEX,
+    );
+
+    let mut debug_player_collider_buffer = renderer::DynamicBuffer::new(
+        &renderer.device,
+        40,
+        "debug player collider buffer",
+        wgpu::BufferUsage::VERTEX,
+    );
+
     for face in level.collision_mesh.faces() {
         let points = level.collision_mesh.points();
         let a: [f32; 3] = points[face.indices.x].coords.into();
@@ -155,11 +180,12 @@ async fn run() -> anyhow::Result<()> {
             c.into(),
             Vec4::new(1.0, 0.5, 0.25, 1.0),
             |vertex| {
-                debug_lines_buffer.push(vertex);
+                debug_collision_geometry_buffer.push(vertex);
             },
         )
     }
-    */
+
+    debug_collision_geometry_buffer.upload(&renderer);
 
     let mut decal_buffer = renderer::DynamicBuffer::new(
         &renderer.device,
@@ -168,7 +194,16 @@ async fn run() -> anyhow::Result<()> {
         wgpu::BufferUsage::VERTEX,
     );
 
-    let debug_lines_pipeline = renderer::debug_lines::debug_lines_pipeline(&renderer, &settings);
+    let debug_lines_always_pipeline = renderer::debug_lines::debug_lines_pipeline(
+        &renderer,
+        &settings,
+        wgpu::CompareFunction::Always,
+    );
+    let debug_lines_less_pipeline = renderer::debug_lines::debug_lines_pipeline(
+        &renderer,
+        &settings,
+        wgpu::CompareFunction::Less,
+    );
 
     let mut control_states = ControlStates::default();
     let mut player = Player {
@@ -216,7 +251,6 @@ async fn run() -> anyhow::Result<()> {
     );
 
     let mut screen_center = renderer.screen_center();
-    let mut cursor_grab = true;
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent { ref event, .. } => match event {
@@ -244,15 +278,28 @@ async fn run() -> anyhow::Result<()> {
                     VirtualKeyCode::D => control_states.right_pressed = pressed,
                     VirtualKeyCode::Space => control_states.jump_pressed = pressed,
                     VirtualKeyCode::P if pressed => {
-                        cursor_grab = !cursor_grab;
-                        renderer.window.set_cursor_visible(!cursor_grab);
-                        renderer.window.set_cursor_grab(cursor_grab).unwrap();
+                        settings.cursor_grab = !settings.cursor_grab;
+                        renderer.window.set_cursor_visible(!settings.cursor_grab);
+                        renderer
+                            .window
+                            .set_cursor_grab(settings.cursor_grab)
+                            .unwrap();
+                    }
+                    VirtualKeyCode::G if pressed => settings.draw_gun = !settings.draw_gun,
+                    VirtualKeyCode::C if pressed => {
+                        settings.draw_collision_geometry = !settings.draw_collision_geometry
+                    }
+                    VirtualKeyCode::X if pressed => {
+                        settings.draw_contact_points = !settings.draw_contact_points
+                    }
+                    VirtualKeyCode::Z if pressed => {
+                        settings.draw_player_collider = !settings.draw_player_collider
                     }
                     _ => {}
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if cursor_grab {
+                if settings.cursor_grab {
                     let position = position.to_logical::<f64>(renderer.window.scale_factor());
 
                     let delta = Vec2::new(
@@ -338,14 +385,12 @@ async fn run() -> anyhow::Result<()> {
                         player.position + player_head_relative + normal * intersection.toi;
                     let normal = vec3_from_arr(intersection.normal.into());
 
-                    /*
                     renderer::debug_lines::draw_line(
                         hit_position,
                         hit_position + normal,
                         Vec4::new(1.0, 0.0, 0.0, 1.0),
-                        |vertex| debug_line_vertices.push(vertex),
+                        |vertex| debug_contact_points_buffer.push(vertex),
                     );
-                    */
 
                     for vertex in renderer::decal_square(
                         hit_position + normal * 0.01,
@@ -385,14 +430,12 @@ async fn run() -> anyhow::Result<()> {
                                 // Ignore contacts on the bottom hemisphere of the body capsule.
                                 break;
                             } else if contact_point.y - player.position.y > player_head_relative.y {
-                                /*
                                 renderer::debug_lines::draw_line(
                                     contact_point,
                                     player.position + player_head_relative,
                                     Vec4::one(),
-                                    |vertex| debug_lines_buffer.push(vertex),
+                                    |vertex| debug_contact_points_buffer.push(vertex),
                                 );
-                                */
 
                                 // Handle hitting the top hemisphere on the ceiling.
                                 let vector_away_from_ceiling =
@@ -409,7 +452,6 @@ async fn run() -> anyhow::Result<()> {
                             } else {
                                 // Handle horizontal contacts.
 
-                                /*
                                 renderer::debug_lines::draw_line(
                                     contact_point,
                                     Vec3::new(
@@ -418,9 +460,8 @@ async fn run() -> anyhow::Result<()> {
                                         player.position.z,
                                     ),
                                     Vec4::one(),
-                                    |vertex| debug_lines_buffer.push(vertex),
+                                    |vertex| debug_contact_points_buffer.push(vertex),
                                 );
-                                */
 
                                 let mut vector_away_from_wall = player.position - contact_point;
 
@@ -483,26 +524,25 @@ async fn run() -> anyhow::Result<()> {
 
             renderer.set_camera_view(camera_view);
 
-            /*
-            overlay_buffers.draw_circle_outline(
-                Vec2::new(screen_center.x as f32, screen_center.y as f32),
-                100.0,
-            );
-            */
+            if settings.draw_gun {
+                overlay_buffers.draw_circle_outline(
+                    Vec2::new(screen_center.x as f32, screen_center.y as f32),
+                    100.0,
+                );
+            }
             overlay_buffers.upload(&renderer);
 
-            /*
-            debug_lines_buffer.clear();
+            debug_player_collider_buffer.clear();
 
             renderer::debug_lines::draw_marker(player.position, 0.5, |vertex| {
-                debug_lines_buffer.push(vertex);
+                debug_player_collider_buffer.push(vertex);
             });
 
             renderer::debug_lines::draw_marker(
                 player.position + player_feet_relative,
                 0.5,
                 |vertex| {
-                    debug_lines_buffer.push(vertex);
+                    debug_player_collider_buffer.push(vertex);
                 },
             );
 
@@ -510,7 +550,7 @@ async fn run() -> anyhow::Result<()> {
                 player.position + player_body_relative,
                 0.5,
                 |vertex| {
-                    debug_lines_buffer.push(vertex);
+                    debug_player_collider_buffer.push(vertex);
                 },
             );
 
@@ -518,7 +558,7 @@ async fn run() -> anyhow::Result<()> {
                 player.position + player_head_relative,
                 0.5,
                 |vertex| {
-                    debug_lines_buffer.push(vertex);
+                    debug_player_collider_buffer.push(vertex);
                 },
             );
 
@@ -534,7 +574,7 @@ async fn run() -> anyhow::Result<()> {
                     + player.position
                     + player_body_relative;
                 renderer::debug_lines::draw_tri(a, b, c, Vec4::new(1.0, 0.5, 0.25, 1.0), |vertex| {
-                    debug_lines_buffer.push(vertex);
+                    debug_player_collider_buffer.push(vertex);
                 })
             }
 
@@ -550,10 +590,9 @@ async fn run() -> anyhow::Result<()> {
                     + player.position
                     + player_feet_relative;
                 renderer::debug_lines::draw_tri(a, b, c, Vec4::new(1.0, 0.0, 0.25, 1.0), |vertex| {
-                    debug_lines_buffer.push(vertex);
+                    debug_player_collider_buffer.push(vertex);
                 })
             }
-            */
 
             let gun_instance = renderer::single_instance_buffer(
                 &renderer.device,
@@ -564,7 +603,8 @@ async fn run() -> anyhow::Result<()> {
             );
 
             decal_buffer.upload(&renderer);
-            debug_lines_buffer.upload(&renderer);
+            debug_contact_points_buffer.upload(&renderer);
+            debug_player_collider_buffer.upload(&renderer);
 
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
@@ -605,12 +645,14 @@ async fn run() -> anyhow::Result<()> {
 
                     // Render gun
 
-                    render_pass.set_bind_group(1, &monkey_gun.textures, &[]);
-                    render_pass.set_vertex_buffer(0, monkey_gun.buffers.vertices.slice(..));
-                    render_pass.set_vertex_buffer(1, gun_instance.slice(..));
-                    render_pass
-                        .set_index_buffer(monkey_gun.buffers.indices.slice(..), INDEX_FORMAT);
-                    render_pass.draw_indexed(0..monkey_gun.buffers.num_indices, 0, 0..1);
+                    if settings.draw_gun {
+                        render_pass.set_bind_group(1, &monkey_gun.textures, &[]);
+                        render_pass.set_vertex_buffer(0, monkey_gun.buffers.vertices.slice(..));
+                        render_pass.set_vertex_buffer(1, gun_instance.slice(..));
+                        render_pass
+                            .set_index_buffer(monkey_gun.buffers.indices.slice(..), INDEX_FORMAT);
+                        render_pass.draw_indexed(0..monkey_gun.buffers.num_indices, 0, 0..1);
+                    }
 
                     // Render level
 
@@ -663,10 +705,29 @@ async fn run() -> anyhow::Result<()> {
                     }
 
                     // Render debug lines
-                    if let Some((slice, len)) = debug_lines_buffer.get() {
-                        render_pass.set_pipeline(&debug_lines_pipeline);
-                        render_pass.set_vertex_buffer(0, slice);
-                        render_pass.draw(0..len, 0..1);
+
+                    if settings.draw_collision_geometry {
+                        if let Some((slice, len)) = debug_collision_geometry_buffer.get() {
+                            render_pass.set_pipeline(&debug_lines_less_pipeline);
+                            render_pass.set_vertex_buffer(0, slice);
+                            render_pass.draw(0..len, 0..1);
+                        }
+                    }
+
+                    if settings.draw_contact_points {
+                        if let Some((slice, len)) = debug_contact_points_buffer.get() {
+                            render_pass.set_pipeline(&debug_lines_always_pipeline);
+                            render_pass.set_vertex_buffer(0, slice);
+                            render_pass.draw(0..len, 0..1);
+                        }
+                    }
+
+                    if settings.draw_player_collider {
+                        if let Some((slice, len)) = debug_player_collider_buffer.get() {
+                            render_pass.set_pipeline(&debug_lines_always_pipeline);
+                            render_pass.set_vertex_buffer(0, slice);
+                            render_pass.draw(0..len, 0..1);
+                        }
                     }
 
                     // Render overlay
