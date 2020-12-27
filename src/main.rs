@@ -126,14 +126,14 @@ async fn run() -> anyhow::Result<()> {
         assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder, &level_filename)?;
 
     let robot = assets::Model::load_gltf(
-        include_bytes!("../warehouse_robot.glb"),
+        include_bytes!("../models/warehouse_robot.glb"),
         &renderer,
         &mut init_encoder,
         "warehouse robot",
     )?;
 
     let monkey_gun = assets::Model::load_gltf(
-        include_bytes!("../monkey_test_gun.glb"),
+        include_bytes!("../models/monkey_test_gun.glb"),
         &renderer,
         &mut init_encoder,
         "monkey gun",
