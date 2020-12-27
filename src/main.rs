@@ -1,12 +1,13 @@
 //mod animation;
 mod assets;
+mod ecs;
 mod renderer;
 
 use crate::renderer::INDEX_FORMAT;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
-use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4, transform::Isometry3, Rotor3};
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
@@ -145,9 +146,14 @@ impl ModelBuffers {
         })
     }
 
+    fn push(&mut self, model: &Model, instance: Mat4) {
+        self.inner[*model as usize].instances.push(instance);
+    }
+
     fn upload(&mut self, renderer: &renderer::Renderer) {
         for model_buffer in &mut self.inner {
             model_buffer.instances.upload(renderer);
+            model_buffer.instances.clear();
         }
     }
 
@@ -170,6 +176,7 @@ impl ModelBuffers {
     }
 }
 
+#[derive(Copy, Clone)]
 enum Model {
     Robot = 0,
     Mouse = 1,
@@ -202,7 +209,7 @@ async fn run() -> anyhow::Result<()> {
     let level =
         assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder, &level_filename)?;
 
-    let mut model_buffers = ModelBuffers::new(&renderer, &mut init_encoder)?;
+    let model_buffers = ModelBuffers::new(&renderer, &mut init_encoder)?;
 
     let monkey_gun = assets::Model::load_gltf(
         include_bytes!("../models/monkey_test_gun.glb"),
@@ -226,15 +233,26 @@ async fn run() -> anyhow::Result<()> {
 
     renderer.queue.submit(Some(init_encoder.finish()));
 
+    let mut world = legion::World::default();
+    let mut resources = legion::Resources::default();
+    let mut render_schedule = ecs::render_schedule();
+
     for (node_index, property) in level.properties.iter() {
         if let assets::Property::Spawn(character) = property {
             let model = match character {
                 assets::Character::Robot => Model::Robot,
                 assets::Character::Mouse => Model::Mouse,
             };
-            model_buffers.inner[model as usize]
-                .instances
-                .push(level.node_tree.transform_of(*node_index));
+
+            let entity = world.push((
+                model,
+                level.node_tree.transform_of(*node_index).into_isometry()
+            ));
+
+            if let Model::Robot = model {
+                let mut entry = world.entry(entity).unwrap();
+                entry.add_component(ecs::VisionCone(ncollide3d::shape::Cone::new(10.0, 10.0)))
+            }
         }
     }
 
@@ -262,9 +280,19 @@ async fn run() -> anyhow::Result<()> {
         wgpu::BufferUsage::VERTEX,
     );
 
+    let debug_vision_cones_buffer = renderer::DynamicBuffer::new(
+        &renderer.device,
+        40,
+        "debug vision cones buffer",
+        wgpu::BufferUsage::VERTEX,
+    );
+
+    resources.insert(model_buffers);
+    resources.insert(ecs::DebugVisionCones(debug_vision_cones_buffer));
+
     render_debug_mesh(
         &level.collision_mesh,
-        Vec3::zero(),
+        &Isometry3::identity(),
         &mut debug_collision_geometry_buffer,
         Vec4::new(1.0, 0.5, 0.25, 1.0),
     );
@@ -445,9 +473,16 @@ async fn run() -> anyhow::Result<()> {
                 collision_handling(&mut player, &level, &mut debug_contact_points_buffer);
             }
 
+            resources.insert(ecs::PlayerPosition(player.position + Player::HEAD_RELATIVE));
+
             renderer.window.request_redraw();
         }
         Event::RedrawRequested(_) => {
+            render_schedule.execute(&mut world, &mut resources);
+
+            let mut model_buffers = resources.get_mut::<ModelBuffers>().unwrap();
+            let mut debug_vision_cones = resources.get_mut::<ecs::DebugVisionCones>().unwrap();
+
             /*
             let static_view = fps_view_rh(
                 Player::HEAD_RELATIVE,
@@ -504,14 +539,14 @@ async fn run() -> anyhow::Result<()> {
 
             render_debug_mesh(
                 &player_body_debug_mesh,
-                player.position + Player::BODY_RELATIVE,
+                &Isometry3::new(player.position + Player::BODY_RELATIVE, Rotor3::identity()),
                 &mut debug_player_collider_buffer,
                 Vec4::new(1.0, 0.5, 0.25, 1.0),
             );
 
             render_debug_mesh(
                 &player_feet_debug_mesh,
-                player.position + Player::FEET_RELATIVE,
+                &Isometry3::new(player.position + Player::FEET_RELATIVE, Rotor3::identity()),
                 &mut debug_player_collider_buffer,
                 Vec4::new(1.0, 0.0, 0.25, 1.0),
             );
@@ -529,6 +564,8 @@ async fn run() -> anyhow::Result<()> {
             debug_player_collider_buffer.upload(&renderer);
 
             model_buffers.upload(&renderer);
+            debug_vision_cones.0.upload(&renderer);
+            debug_vision_cones.0.clear();
 
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
@@ -623,28 +660,18 @@ async fn run() -> anyhow::Result<()> {
                     // Render debug lines
 
                     if settings.draw_collision_geometry {
-                        if let Some((slice, len)) = debug_collision_geometry_buffer.get() {
-                            render_pass.set_pipeline(&debug_lines_less_pipeline);
-                            render_pass.set_vertex_buffer(0, slice);
-                            render_pass.draw(0..len, 0..1);
-                        }
+                        render_debug_lines(&debug_collision_geometry_buffer, &mut render_pass, &debug_lines_less_pipeline);
                     }
 
                     if settings.draw_contact_points {
-                        if let Some((slice, len)) = debug_contact_points_buffer.get() {
-                            render_pass.set_pipeline(&debug_lines_always_pipeline);
-                            render_pass.set_vertex_buffer(0, slice);
-                            render_pass.draw(0..len, 0..1);
-                        }
+                        render_debug_lines(&debug_contact_points_buffer, &mut render_pass, &debug_lines_always_pipeline);
                     }
 
                     if settings.draw_player_collider {
-                        if let Some((slice, len)) = debug_player_collider_buffer.get() {
-                            render_pass.set_pipeline(&debug_lines_always_pipeline);
-                            render_pass.set_vertex_buffer(0, slice);
-                            render_pass.draw(0..len, 0..1);
-                        }
+                        render_debug_lines(&debug_player_collider_buffer, &mut render_pass, &debug_lines_always_pipeline);
                     }
+
+                    render_debug_lines(&debug_vision_cones.0, &mut render_pass, &debug_lines_less_pipeline);
 
                     // Render overlay
 
@@ -730,15 +757,15 @@ fn fps_view_rh(eye: Vec3, pitch: f32, yaw: f32) -> Mat4 {
 
 fn render_debug_mesh(
     mesh: &ncollide3d::shape::TriMesh<f32>,
-    offset: Vec3,
+    isometry: &Isometry3,
     buffer: &mut renderer::DynamicBuffer<renderer::debug_lines::Vertex>,
     colour: Vec4,
 ) {
     for face in mesh.faces() {
         let points = mesh.points();
-        let a = vec3_from_arr(points[face.indices.x].coords.into()) + offset;
-        let b = vec3_from_arr(points[face.indices.y].coords.into()) + offset;
-        let c = vec3_from_arr(points[face.indices.z].coords.into()) + offset;
+        let a = isometry.transform_vec(vec3_from_arr(points[face.indices.x].coords.into()));
+        let b = isometry.transform_vec(vec3_from_arr(points[face.indices.y].coords.into()));
+        let c = isometry.transform_vec(vec3_from_arr(points[face.indices.z].coords.into()));
         renderer::debug_lines::draw_tri(a, b, c, colour, |vertex| {
             buffer.push(vertex);
         })
@@ -1065,4 +1092,16 @@ fn render_model_transparent<'a>(
         0,
         0..num_instances,
     )
+}
+
+fn render_debug_lines<'a>(
+    buffer: &'a renderer::DynamicBuffer<renderer::debug_lines::Vertex>,
+    render_pass: &mut wgpu::RenderPass<'a>,
+    pipeline: &'a wgpu::RenderPipeline,
+) {
+    if let Some((slice, len)) = buffer.get() {
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_vertex_buffer(0, slice);
+        render_pass.draw(0..len, 0..1);
+    }
 }

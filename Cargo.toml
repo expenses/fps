@@ -14,6 +14,7 @@ float-cmp = "0.8.0"
 futures = "0.3.8"
 gltf = { version = "0.15.2", default-features = false, features = ["utils", "names", "extras", "KHR_lights_punctual"] }
 image = { version = "0.23.12", default-features = false, features = ["png"] }
+legion = "0.3.1"
 log = "0.4.11"
 lyon_tessellation = "0.16.2"
 ncollide3d = "0.26.1"
