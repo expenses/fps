@@ -40,8 +40,11 @@ struct Player {
     position: Vec3,
     facing: PlayerFacing,
     on_ground: bool,
-    velocity: f32,
+    velocity: Vec3,
     gun_cooldown: f32,
+    jump_primed: bool,
+    body_shape: ncollide3d::shape::Capsule<f32>,
+    feet_shape: ncollide3d::shape::Cuboid<f32>,
 }
 
 #[derive(Debug)]
@@ -199,16 +202,6 @@ async fn run() -> anyhow::Result<()> {
     );
 
     let mut control_states = ControlStates::default();
-    let mut player = Player {
-        position: Vec3::new(0.0, 0.0, 0.0),
-        facing: PlayerFacing {
-            horizontal: 0.0,
-            vertical: 0.0,
-        },
-        on_ground: false,
-        velocity: 0.0,
-        gun_cooldown: 0.0,
-    };
 
     const PLAYER_RADIUS: f32 = 0.5;
     const BODY_BOTTOM_DISTANCE_FROM_GROUND: f32 = 0.1;
@@ -217,31 +210,43 @@ async fn run() -> anyhow::Result<()> {
         (PLAYER_BODY_BASE_DEPTH + PLAYER_RADIUS + BODY_BOTTOM_DISTANCE_FROM_GROUND) / 2.0;
     const PLAYER_FEET_HALF_WIDTH: f32 = 0.7 / 2.0;
 
-    let player_body = ncollide3d::shape::Capsule::new(PLAYER_BODY_BASE_DEPTH / 2.0, PLAYER_RADIUS);
-    let player_feet = ncollide3d::shape::Cuboid::new(
-        [
-            PLAYER_FEET_HALF_WIDTH,
-            PLAYER_FEET_HALF_DEPTH,
-            PLAYER_FEET_HALF_WIDTH,
-        ]
-        .into(),
-    );
-
-    let player_body_debug_mesh: ncollide3d::shape::TriMesh<f32> =
-        player_body.to_trimesh((8, 8)).into();
-    let player_feet_debug_mesh: ncollide3d::shape::TriMesh<f32> = player_feet.to_trimesh(()).into();
-
-    let player_feet_relative = Vec3::new(0.0, PLAYER_FEET_HALF_DEPTH, 0.0);
-    let player_body_relative = Vec3::new(
+    const PLAYER_FEET_RELATIVE: Vec3 = Vec3::new(0.0, PLAYER_FEET_HALF_DEPTH, 0.0);
+    const PLAYER_BODY_RELATIVE: Vec3 = Vec3::new(
         0.0,
         BODY_BOTTOM_DISTANCE_FROM_GROUND + PLAYER_BODY_BASE_DEPTH / 2.0 + PLAYER_RADIUS,
         0.0,
     );
-    let player_head_relative = Vec3::new(
+    const PLAYER_HEAD_RELATIVE: Vec3 = Vec3::new(
         0.0,
         BODY_BOTTOM_DISTANCE_FROM_GROUND + PLAYER_BODY_BASE_DEPTH + PLAYER_RADIUS,
         0.0,
     );
+
+    let mut player = Player {
+        position: Vec3::new(0.0, 0.0, 0.0),
+        facing: PlayerFacing {
+            horizontal: 0.0,
+            vertical: 0.0,
+        },
+        on_ground: false,
+        velocity: Vec3::zero(),
+        gun_cooldown: 0.0,
+        jump_primed: true,
+        body_shape: ncollide3d::shape::Capsule::new(PLAYER_BODY_BASE_DEPTH / 2.0, PLAYER_RADIUS),
+        feet_shape: ncollide3d::shape::Cuboid::new(
+            [
+                PLAYER_FEET_HALF_WIDTH,
+                PLAYER_FEET_HALF_DEPTH,
+                PLAYER_FEET_HALF_WIDTH,
+            ]
+            .into(),
+        ),
+    };
+
+    let player_body_debug_mesh: ncollide3d::shape::TriMesh<f32> =
+        player.body_shape.to_trimesh((8, 8)).into();
+    let player_feet_debug_mesh: ncollide3d::shape::TriMesh<f32> =
+        player.feet_shape.to_trimesh(()).into();
 
     let mut screen_center = renderer.screen_center();
 
@@ -325,297 +330,234 @@ async fn run() -> anyhow::Result<()> {
         Event::MainEventsCleared => {
             player.gun_cooldown -= 1.0 / 60.0;
 
-            let mut movement = Vec3::zero();
+            let moved = move_player(&mut player, &control_states, &settings);
 
-            if settings.noclip {
-                let speed = 0.5;
+            if control_states.mouse_held && player.gun_cooldown < 0.0 {
+                player.gun_cooldown = 0.05;
 
-                if control_states.forwards_pressed {
-                    movement.z -= speed * player.facing.vertical.cos();
-                    movement.y += speed * player.facing.vertical.sin();
-                }
+                let normal = player.facing.normal();
+                let origin: [f32; 3] = (player.position + PLAYER_HEAD_RELATIVE).into();
+                let normal_arr: [f32; 3] = normal.into();
+                let ray = ncollide3d::query::Ray::new(origin.into(), normal_arr.into());
 
-                if control_states.backwards_pressed {
-                    movement.z += speed * player.facing.vertical.cos();
-                    movement.y -= speed * player.facing.vertical.sin();
-                }
+                let intersection = level.collision_mesh.toi_and_normal_with_ray(
+                    &vec3_to_ncollide_iso(Vec3::zero()),
+                    &ray,
+                    1000.0,
+                    false,
+                );
 
-                if control_states.left_pressed {
-                    movement.x -= speed;
-                }
+                if let Some(intersection) = intersection {
+                    let hit_position =
+                        player.position + PLAYER_HEAD_RELATIVE + normal * intersection.toi;
+                    let normal = vec3_from_arr(intersection.normal.into());
 
-                if control_states.right_pressed {
-                    movement.x += speed;
-                }
-
-                player.position += Mat3::from_rotation_y(-player.facing.horizontal) * Vec3::new(movement.x, 0.0, movement.z);
-                player.position += Vec3::new(0.0, movement.y, 0.0);
-
-            } else {
-                let speed = 0.2;
-
-                if control_states.forwards_pressed {
-                    movement.z -= speed;
-                }
-
-                if control_states.backwards_pressed {
-                    movement.z += speed;
-                }
-
-                if control_states.left_pressed {
-                    movement.x -= speed;
-                }
-
-                if control_states.right_pressed {
-                    movement.x += speed;
-                }
-
-                player.position += Mat3::from_rotation_y(-player.facing.horizontal) * movement;
-
-                if player.on_ground {
-                    player.velocity = 0.0;
-
-                    if control_states.jump_pressed {
-                        // This can cause clipping problems if the head is directly under the ceiling.
-                        player.velocity += 0.6;
-                        player.on_ground = false;
-                    }
-                }
-
-                let gravity = -0.025;
-
-                if !player.on_ground {
-                    player.velocity += gravity;
-                    player.position.y += player.velocity;
-                }
-
-                if control_states.mouse_held && player.gun_cooldown < 0.0 {
-                    player.gun_cooldown = 0.05;
-
-                    let normal = player.facing.normal();
-                    let origin: [f32; 3] = (player.position + player_head_relative).into();
-                    let normal_arr: [f32; 3] = normal.into();
-                    let ray = ncollide3d::query::Ray::new(origin.into(), normal_arr.into());
-
-                    let intersection = level.collision_mesh.toi_and_normal_with_ray(
-                        &vec3_to_ncollide_iso(Vec3::zero()),
-                        &ray,
-                        1000.0,
-                        false,
+                    renderer::debug_lines::draw_line(
+                        hit_position,
+                        hit_position + normal,
+                        Vec4::new(1.0, 0.0, 0.0, 1.0),
+                        |vertex| debug_contact_points_buffer.push(vertex),
                     );
 
-                    if let Some(intersection) = intersection {
-                        let hit_position =
-                            player.position + player_head_relative + normal * intersection.toi;
-                        let normal = vec3_from_arr(intersection.normal.into());
-
-                        renderer::debug_lines::draw_line(
-                            hit_position,
-                            hit_position + normal,
-                            Vec4::new(1.0, 0.0, 0.0, 1.0),
-                            |vertex| debug_contact_points_buffer.push(vertex),
-                        );
-
-                        for vertex in renderer::decal_square(
-                            hit_position + normal * 0.01,
-                            normal,
-                            Vec2::broadcast(0.5),
-                            renderer::Decal::BulletImpact,
-                        )
-                        .iter()
-                        {
-                            decal_buffer.push(*vertex);
-                        }
+                    for vertex in renderer::decal_square(
+                        hit_position + normal * 0.01,
+                        normal,
+                        Vec2::broadcast(0.5),
+                        renderer::Decal::BulletImpact,
+                    )
+                    .iter()
+                    {
+                        decal_buffer.push(*vertex);
                     }
                 }
+            }
 
-                let collisions_need_updating = movement != Vec3::zero() || !player.on_ground;
+            let collisions_need_updating = (moved || !player.on_ground) && !settings.noclip;
 
-                if collisions_need_updating {
-                    // Falling/jumping clipping prevention
-                    if !player.on_ground {
-                        if player.velocity < -PLAYER_RADIUS {
-                            let body_contact = ncollide3d::query::contact(
-                                &vec3_to_ncollide_iso(player.position + player_body_relative),
-                                &player_body,
-                                &vec3_to_ncollide_iso(Vec3::zero()),
-                                &level.collision_mesh,
-                                0.0,
-                            );
-
-                            if let Some(contact) = body_contact {
-                                let contact_point = vec3_from_arr(contact.world2.coords.into());
-
-                                let relative = contact_point.y - player.position.y;
-
-                                if relative > PLAYER_RADIUS {
-                                    println!("Adjusting vertical position by {} to prevent clipping into the floor", contact.depth);
-                                    player.position.y += contact.depth;
-                                }
-                            }
-                        } else if player.velocity > PLAYER_RADIUS {
-                            let body_contact = ncollide3d::query::contact(
-                                &vec3_to_ncollide_iso(player.position + player_body_relative),
-                                &player_body,
-                                &vec3_to_ncollide_iso(Vec3::zero()),
-                                &level.collision_mesh,
-                                0.0,
-                            );
-
-                            if let Some(contact) = body_contact {
-                                let contact_point = vec3_from_arr(contact.world2.coords.into());
-
-                                let relative = player.position.y + player_head_relative.y - contact_point.y;
-
-                                if relative > 0.0 {
-                                    println!("Adjusting vertical position by {} to prevent clipping through the ceiling", -contact.depth);
-                                    player.position.y -= contact.depth;
-                                }
-                            }
-                        }
-                    }
-
-                    for _ in 0..10 {
+            if collisions_need_updating {
+                // Falling/jumping clipping prevention
+                if !player.on_ground {
+                    if player.velocity.y < -PLAYER_RADIUS {
                         let body_contact = ncollide3d::query::contact(
-                            &vec3_to_ncollide_iso(player.position + player_body_relative),
-                            &player_body,
+                            &vec3_to_ncollide_iso(player.position + PLAYER_BODY_RELATIVE),
+                            &player.body_shape,
                             &vec3_to_ncollide_iso(Vec3::zero()),
                             &level.collision_mesh,
                             0.0,
                         );
 
-                        match body_contact {
-                            Some(contact) => {
-                                let contact_point = vec3_from_arr(contact.world2.coords.into());
-                                let epsilon = 0.001;
+                        if let Some(contact) = body_contact {
+                            let contact_point = vec3_from_arr(contact.world2.coords.into());
 
-                                if contact_point.y
-                                    - player.position.y
-                                    - BODY_BOTTOM_DISTANCE_FROM_GROUND
-                                    < PLAYER_RADIUS
-                                {
-                                    let normal = vec3_from_arr(contact.normal.into_inner().into());
-                                    let slope = normal.dot(-Vec3::unit_y()).acos().to_degrees();
+                            let relative = contact_point.y - player.position.y;
 
-                                    if slope < 45.0 {
-                                        // If the deepest(?) contact point is the bottom hemisphere
-                                        // contacting the ground at an acceptable angle, we stop
-                                        // doing body contacts and 'break' to do the feet contacts.
-                                        break;
-                                    } else {
-                                        renderer::debug_lines::draw_line(
-                                            contact_point,
-                                            player.position + Vec3::new(0.0, PLAYER_RADIUS, 0.0),
-                                            Vec4::new(1.0, 0.0, 0.0, 1.0),
-                                            |vertex| debug_contact_points_buffer.push(vertex),
-                                        );
-
-                                        let mut vector_away_from_wall = player.position - contact_point;
-                                        vector_away_from_wall.y = 0.0;
-                                        let push_strength =
-                                        (PLAYER_RADIUS - vector_away_from_wall.mag()) + epsilon;
-                                        let push = vector_away_from_wall.normalized() * push_strength;
-
-                                        renderer::debug_lines::draw_line(
-                                            contact_point,
-                                            Vec3::new(player.position.x, contact_point.y, player.position.z),
-                                            Vec4::new(0.0, 1.0, 0.0, 1.0),
-                                            |vertex| debug_contact_points_buffer.push(vertex),
-                                        );
-                                        player.position += push;
-                                    }
-                                } else if contact_point.y - player.position.y > player_head_relative.y {
-                                    renderer::debug_lines::draw_line(
-                                        contact_point,
-                                        player.position + player_head_relative,
-                                        Vec4::one(),
-                                        |vertex| debug_contact_points_buffer.push(vertex),
-                                    );
-
-                                    // Handle hitting the top hemisphere on the ceiling.
-                                    let vector_away_from_ceiling =
-                                        (player.position + player_head_relative) - contact_point;
-
-                                    let push_strength =
-                                        (PLAYER_RADIUS - vector_away_from_ceiling.mag()) + epsilon;
-
-                                    player.position +=
-                                        vector_away_from_ceiling.normalized() * push_strength;
-
-                                    player.velocity = 0.0;
-                                    //continue;
-                                } else {
-                                    // Handle horizontal contacts.
-
-                                    /*
-                                    renderer::debug_lines::draw_line(
-                                        contact_point,
-                                        Vec3::new(
-                                            player.position.x,
-                                            contact_point.y,
-                                            player.position.z,
-                                        ),
-                                        Vec4::one(),
-                                        |vertex| debug_contact_points_buffer.push(vertex),
-                                    );
-
-                                    render_debug_mesh(
-                                        &player_body_debug_mesh,
-                                        player.position + player_body_relative,
-                                        &mut debug_contact_points_buffer,
-                                        Vec4::new(1.0, 0.0, 0.0, 1.0),
-                                    );*/
-
-                                    let mut vector_away_from_wall = player.position - contact_point;
-
-                                    vector_away_from_wall.y = 0.0;
-                                    let push_strength =
-                                        (PLAYER_RADIUS - vector_away_from_wall.mag()) + epsilon;
-                                    let push = vector_away_from_wall.normalized() * push_strength;
-
-                                    /*
-                                    println!(
-                                        "player: {:?}\nvector_away_from_wall: {:?}\npush: {:?}\ncp {:?} ps {}\nnew: {:?}\nxxx",
-                                        player.position, vector_away_from_wall, push, contact_point, push_strength, player.position + push
-                                    );
-
-                                    println!("{:?}", push.y);
-                                    */
-
-                                    player.position += push;
-                                }
+                            if relative > PLAYER_RADIUS {
+                                println!("Adjusting vertical position by {} to prevent clipping into the floor", contact.depth);
+                                player.position.y += contact.depth;
                             }
-                            None => break,
+                        }
+                    } else if player.velocity.y > PLAYER_RADIUS {
+                        let body_contact = ncollide3d::query::contact(
+                            &vec3_to_ncollide_iso(player.position + PLAYER_BODY_RELATIVE),
+                            &player.body_shape,
+                            &vec3_to_ncollide_iso(Vec3::zero()),
+                            &level.collision_mesh,
+                            0.0,
+                        );
+
+                        if let Some(contact) = body_contact {
+                            let contact_point = vec3_from_arr(contact.world2.coords.into());
+
+                            let relative = player.position.y + PLAYER_HEAD_RELATIVE.y - contact_point.y;
+
+                            if relative > 0.0 {
+                                println!("Adjusting vertical position by {} to prevent clipping through the ceiling", -contact.depth);
+                                player.position.y -= contact.depth;
+                            }
                         }
                     }
+                }
 
-                    let feet_contact = ncollide3d::query::contact(
-                        &vec3_to_ncollide_iso(player.position + player_feet_relative),
-                        &player_feet,
+                for _ in 0..10 {
+                    let body_contact = ncollide3d::query::contact(
+                        &vec3_to_ncollide_iso(player.position + PLAYER_BODY_RELATIVE),
+                        &player.body_shape,
                         &vec3_to_ncollide_iso(Vec3::zero()),
                         &level.collision_mesh,
                         0.0,
                     );
 
-                    match feet_contact {
+                    match body_contact {
                         Some(contact) => {
-                            player.position.y += contact.depth;
-                            player.on_ground = true;
-
-                            /*
-                            let normal = vec3_from_arr(contact.normal.into_inner().into());
                             let contact_point = vec3_from_arr(contact.world2.coords.into());
-                            renderer::debug_lines::draw_line(
-                                contact_point,
-                                contact_point + normal,
-                                Vec4::new(0.0, 0.0, 1.0, 1.0),
-                                |vertex| debug_contact_points_buffer.push(vertex),
-                            );
-                            */
+                            let epsilon = 0.001;
+
+                            if contact_point.y
+                                - player.position.y
+                                - BODY_BOTTOM_DISTANCE_FROM_GROUND
+                                < PLAYER_RADIUS
+                            {
+                                let normal = vec3_from_arr(contact.normal.into_inner().into());
+                                let slope = normal.dot(-Vec3::unit_y()).acos().to_degrees();
+
+                                if slope < 45.0 {
+                                    // If the deepest(?) contact point is the bottom hemisphere
+                                    // contacting the ground at an acceptable angle, we stop
+                                    // doing body contacts and 'break' to do the feet contacts.
+                                    break;
+                                } else {
+                                    renderer::debug_lines::draw_line(
+                                        contact_point,
+                                        player.position + Vec3::new(0.0, PLAYER_RADIUS, 0.0),
+                                        Vec4::new(1.0, 0.0, 0.0, 1.0),
+                                        |vertex| debug_contact_points_buffer.push(vertex),
+                                    );
+
+                                    let mut vector_away_from_wall = player.position - contact_point;
+                                    vector_away_from_wall.y = 0.0;
+                                    let push_strength =
+                                    (PLAYER_RADIUS - vector_away_from_wall.mag()) + epsilon;
+                                    let push = vector_away_from_wall.normalized() * push_strength;
+
+                                    renderer::debug_lines::draw_line(
+                                        contact_point,
+                                        Vec3::new(player.position.x, contact_point.y, player.position.z),
+                                        Vec4::new(0.0, 1.0, 0.0, 1.0),
+                                        |vertex| debug_contact_points_buffer.push(vertex),
+                                    );
+                                    player.position += push;
+                                }
+                            } else if contact_point.y - player.position.y > PLAYER_HEAD_RELATIVE.y {
+                                renderer::debug_lines::draw_line(
+                                    contact_point,
+                                    player.position + PLAYER_HEAD_RELATIVE,
+                                    Vec4::one(),
+                                    |vertex| debug_contact_points_buffer.push(vertex),
+                                );
+
+                                // Handle hitting the top hemisphere on the ceiling.
+                                let vector_away_from_ceiling =
+                                    (player.position + PLAYER_HEAD_RELATIVE) - contact_point;
+
+                                let push_strength =
+                                    (PLAYER_RADIUS - vector_away_from_ceiling.mag()) + epsilon;
+
+                                player.position +=
+                                    vector_away_from_ceiling.normalized() * push_strength;
+
+                                player.velocity.y = 0.0;
+                                //continue;
+                            } else {
+                                // Handle horizontal contacts.
+
+                                /*
+                                renderer::debug_lines::draw_line(
+                                    contact_point,
+                                    Vec3::new(
+                                        player.position.x,
+                                        contact_point.y,
+                                        player.position.z,
+                                    ),
+                                    Vec4::one(),
+                                    |vertex| debug_contact_points_buffer.push(vertex),
+                                );
+
+                                render_debug_mesh(
+                                    &player.body_shape_debug_mesh,
+                                    player.position + PLAYER_BODY_RELATIVE,
+                                    &mut debug_contact_points_buffer,
+                                    Vec4::new(1.0, 0.0, 0.0, 1.0),
+                                );*/
+
+                                let mut vector_away_from_wall = player.position - contact_point;
+
+                                vector_away_from_wall.y = 0.0;
+                                let push_strength =
+                                    (PLAYER_RADIUS - vector_away_from_wall.mag()) + epsilon;
+                                let push = vector_away_from_wall.normalized() * push_strength;
+
+                                /*
+                                println!(
+                                    "player: {:?}\nvector_away_from_wall: {:?}\npush: {:?}\ncp {:?} ps {}\nnew: {:?}\nxxx",
+                                    player.position, vector_away_from_wall, push, contact_point, push_strength, player.position + push
+                                );
+
+                                println!("{:?}", push.y);
+                                */
+
+                                player.position += push;
+                            }
                         }
-                        None => {
-                            player.on_ground = false;
-                        }
+                        None => break,
+                    }
+                }
+
+                let feet_contact = ncollide3d::query::contact(
+                    &vec3_to_ncollide_iso(player.position + PLAYER_FEET_RELATIVE),
+                    &player.feet_shape,
+                    &vec3_to_ncollide_iso(Vec3::zero()),
+                    &level.collision_mesh,
+                    0.0,
+                );
+
+                match feet_contact {
+                    Some(contact) => {
+                        player.position.y += contact.depth;
+                        player.on_ground = true;
+
+                        /*
+                        let normal = vec3_from_arr(contact.normal.into_inner().into());
+                        let contact_point = vec3_from_arr(contact.world2.coords.into());
+                        renderer::debug_lines::draw_line(
+                            contact_point,
+                            contact_point + normal,
+                            Vec4::new(0.0, 0.0, 1.0, 1.0),
+                            |vertex| debug_contact_points_buffer.push(vertex),
+                        );
+                        */
+                    }
+                    None => {
+                        player.on_ground = false;
                     }
                 }
             }
@@ -625,14 +567,14 @@ async fn run() -> anyhow::Result<()> {
         Event::RedrawRequested(_) => {
             /*
             let static_view = fps_view_rh(
-                player_head_relative,
+                PLAYER_HEAD_RELATIVE,
                 player.facing.vertical,
                 player.facing.horizontal,
             );
             */
 
             let camera_view = fps_view_rh(
-                player.position + player_head_relative,
+                player.position + PLAYER_HEAD_RELATIVE,
                 player.facing.vertical,
                 player.facing.horizontal,
             );
@@ -654,7 +596,7 @@ async fn run() -> anyhow::Result<()> {
             });
 
             renderer::debug_lines::draw_marker(
-                player.position + player_feet_relative,
+                player.position + PLAYER_FEET_RELATIVE,
                 0.5,
                 |vertex| {
                     debug_player_collider_buffer.push(vertex);
@@ -662,7 +604,7 @@ async fn run() -> anyhow::Result<()> {
             );
 
             renderer::debug_lines::draw_marker(
-                player.position + player_body_relative,
+                player.position + PLAYER_BODY_RELATIVE,
                 0.5,
                 |vertex| {
                     debug_player_collider_buffer.push(vertex);
@@ -670,7 +612,7 @@ async fn run() -> anyhow::Result<()> {
             );
 
             renderer::debug_lines::draw_marker(
-                player.position + player_head_relative,
+                player.position + PLAYER_HEAD_RELATIVE,
                 0.5,
                 |vertex| {
                     debug_player_collider_buffer.push(vertex);
@@ -679,14 +621,14 @@ async fn run() -> anyhow::Result<()> {
 
             render_debug_mesh(
                 &player_body_debug_mesh,
-                player.position + player_body_relative,
+                player.position + PLAYER_BODY_RELATIVE,
                 &mut debug_player_collider_buffer,
                 Vec4::new(1.0, 0.5, 0.25, 1.0),
             );
 
             render_debug_mesh(
                 &player_feet_debug_mesh,
-                player.position + player_feet_relative,
+                player.position + PLAYER_FEET_RELATIVE,
                 &mut debug_player_collider_buffer,
                 Vec4::new(1.0, 0.0, 0.25, 1.0)
             );
@@ -924,4 +866,82 @@ fn render_debug_mesh(
             buffer.push(vertex);
         })
     }
+}
+
+fn move_player(player: &mut Player, control_states: &ControlStates, settings: &Settings) -> bool {
+    const NOCLIP_SPEED: f32 = 0.5;
+    const SPEED: f32 = 0.2;
+    const JUMP_SPEED: f32 = 0.6;
+    const GRAVITY: f32 = -0.025;
+
+    if !control_states.jump_pressed {
+        player.jump_primed = true;
+    }
+
+    if settings.noclip {
+        player.velocity = Vec3::zero();
+
+        if control_states.forwards_pressed {
+            player.velocity.z -= NOCLIP_SPEED * player.facing.vertical.cos();
+            player.velocity.y += NOCLIP_SPEED * player.facing.vertical.sin();
+        }
+
+        if control_states.backwards_pressed {
+            player.velocity.z += NOCLIP_SPEED * player.facing.vertical.cos();
+            player.velocity.y -= NOCLIP_SPEED * player.facing.vertical.sin();
+        }
+
+        if control_states.left_pressed {
+            player.velocity.x -= NOCLIP_SPEED;
+        }
+
+        if control_states.right_pressed {
+            player.velocity.x += NOCLIP_SPEED;
+        }
+
+        player.position += Mat3::from_rotation_y(-player.facing.horizontal)
+            * Vec3::new(player.velocity.x, 0.0, player.velocity.z);
+        player.position += Vec3::new(0.0, player.velocity.y, 0.0);
+    } else {
+        player.velocity = Vec3::new(0.0, player.velocity.y, 0.0);
+
+        let mut acceleration = Vec3::zero();
+
+        if control_states.forwards_pressed {
+            acceleration.z -= 1.0;
+        }
+
+        if control_states.backwards_pressed {
+            acceleration.z += 1.0;
+        }
+
+        if control_states.left_pressed {
+            acceleration.x -= 1.0;
+        }
+
+        if control_states.right_pressed {
+            acceleration.x += 1.0;
+        }
+
+        if acceleration != Vec3::zero() {
+            player.velocity += acceleration.normalized() * SPEED;
+        }
+
+        if player.on_ground {
+            player.velocity.y = 0.0;
+
+            if control_states.jump_pressed && player.jump_primed {
+                player.velocity.y += JUMP_SPEED;
+                player.on_ground = false;
+                player.jump_primed = false;
+            }
+
+            player.position += Mat3::from_rotation_y(-player.facing.horizontal) * player.velocity;
+        } else {
+            player.velocity.y += GRAVITY;
+            player.position += Mat3::from_rotation_y(-player.facing.horizontal) * player.velocity;
+        }
+    }
+
+    player.velocity != Vec3::zero()
 }
