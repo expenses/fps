@@ -2,7 +2,7 @@
     "rdocCaptureSettings": 1,
     "settings": {
         "autoStart": false,
-        "commandLine": "test.glb",
+        "commandLine": "maps/warehouse.glb",
         "environment": [
         ],
         "executable": "/home/ashley/projects/games/fps/target/debug/fps",

@@ -74,12 +74,14 @@ impl Property {
 #[derive(Debug)]
 pub enum Character {
     Robot,
+    Mouse,
 }
 
 impl Character {
     fn parse(string: &str) -> anyhow::Result<Self> {
         match string {
             "robot" => Ok(Self::Robot),
+            "mouse" => Ok(Self::Mouse),
             _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
         }
     }
@@ -286,7 +288,8 @@ impl Level {
         );
 
         println!(
-            "Level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
+            "'{}' level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
+            name,
             opaque_geometry.vertices.len(),
             opaque_geometry.indices.len(),
             gltf.textures().count() as u32,
@@ -308,7 +311,8 @@ impl Level {
 }
 
 pub struct Model {
-    pub buffers: ModelBuffers,
+    pub opaque_geometry: ModelBuffers,
+    pub transparent_geometry: ModelBuffers,
     pub textures: wgpu::BindGroup,
 }
 
@@ -326,7 +330,8 @@ impl Model {
 
         let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder, name)?;
 
-        let mut staging_buffers = StagingModelBuffers::default();
+        let mut opaque_geometry = StagingModelBuffers::default();
+        let mut transparent_geometry = StagingModelBuffers::default();
 
         for (node, mesh) in gltf
             .nodes()
@@ -348,28 +353,44 @@ impl Model {
                     ));
                 }
 
-                add_primitive_geometry_to_buffers(
-                    &primitive,
-                    &node,
-                    transform,
-                    normal_matrix,
-                    buffer_blob,
-                    &HashMap::new(),
-                    &mut staging_buffers,
-                    None,
-                )?;
+                if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
+                    add_primitive_geometry_to_buffers(
+                        &primitive,
+                        &node,
+                        transform,
+                        normal_matrix,
+                        buffer_blob,
+                        &HashMap::new(),
+                        &mut transparent_geometry,
+                        None,
+                    )?;
+                } else {
+                    add_primitive_geometry_to_buffers(
+                        &primitive,
+                        &node,
+                        transform,
+                        normal_matrix,
+                        buffer_blob,
+                        &HashMap::new(),
+                        &mut opaque_geometry,
+                        None,
+                    )?;
+                }
             }
         }
 
         println!(
-            "Model loaded. Vertices: {}. Indices: {}. Textures: {}",
-            staging_buffers.vertices.len(),
-            staging_buffers.indices.len(),
+            "'{}' model loaded. Vertices: {}. Indices: {}. Textures: {}",
+            name,
+            opaque_geometry.vertices.len(),
+            opaque_geometry.indices.len(),
             gltf.textures().count() as u32,
         );
 
         Ok(Self {
-            buffers: staging_buffers.upload(&renderer.device, name),
+            opaque_geometry: opaque_geometry.upload(&renderer.device, &format!("{} opaque", name)),
+            transparent_geometry: transparent_geometry
+                .upload(&renderer.device, &format!("{} transparent", name)),
             textures,
         })
     }

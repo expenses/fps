@@ -7,7 +7,6 @@ use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
 use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
-use wgpu::util::DeviceExt;
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
@@ -98,6 +97,84 @@ fn vec3_from_arr(arr: [f32; 3]) -> Vec3 {
     arr.into()
 }
 
+struct ModelBuffer {
+    model: assets::Model,
+    instances: renderer::DynamicBuffer<Mat4>,
+}
+
+struct ModelBuffers {
+    inner: Vec<ModelBuffer>,
+}
+
+impl ModelBuffers {
+    fn new(
+        renderer: &renderer::Renderer,
+        mut init_encoder: &mut wgpu::CommandEncoder,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            inner: vec![
+                ModelBuffer {
+                    model: assets::Model::load_gltf(
+                        include_bytes!("../models/warehouse_robot.glb"),
+                        &renderer,
+                        &mut init_encoder,
+                        "warehouse robot",
+                    )?,
+                    instances: renderer::DynamicBuffer::new(
+                        &renderer.device,
+                        10,
+                        "robot instances",
+                        wgpu::BufferUsage::VERTEX,
+                    ),
+                },
+                ModelBuffer {
+                    model: assets::Model::load_gltf(
+                        include_bytes!("../models/mouse.glb"),
+                        &renderer,
+                        &mut init_encoder,
+                        "mouse",
+                    )?,
+                    instances: renderer::DynamicBuffer::new(
+                        &renderer.device,
+                        10,
+                        "mice instances",
+                        wgpu::BufferUsage::VERTEX,
+                    ),
+                },
+            ],
+        })
+    }
+
+    fn upload(&mut self, renderer: &renderer::Renderer) {
+        for model_buffer in &mut self.inner {
+            model_buffer.instances.upload(renderer);
+        }
+    }
+
+    fn render_opaque<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        for model_buffer in &self.inner {
+            if let Some((slice, num)) = model_buffer.instances.get() {
+                render_model_opaque(&model_buffer.model, render_pass, slice, num);
+            }
+        }
+    }
+
+    fn render_transparent<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+        for model_buffer in &self.inner {
+            if model_buffer.model.transparent_geometry.num_indices > 0 {
+                if let Some((slice, num)) = model_buffer.instances.get() {
+                    render_model_transparent(&model_buffer.model, render_pass, slice, num);
+                }
+            }
+        }
+    }
+}
+
+enum Model {
+    Robot = 0,
+    Mouse = 1,
+}
+
 async fn run() -> anyhow::Result<()> {
     let level_filename = std::env::args().nth(1).unwrap();
     let level_bytes = std::fs::read(&level_filename)?;
@@ -125,12 +202,7 @@ async fn run() -> anyhow::Result<()> {
     let level =
         assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder, &level_filename)?;
 
-    let robot = assets::Model::load_gltf(
-        include_bytes!("../models/warehouse_robot.glb"),
-        &renderer,
-        &mut init_encoder,
-        "warehouse robot",
-    )?;
+    let mut model_buffers = ModelBuffers::new(&renderer, &mut init_encoder)?;
 
     let monkey_gun = assets::Model::load_gltf(
         include_bytes!("../models/monkey_test_gun.glb"),
@@ -154,22 +226,17 @@ async fn run() -> anyhow::Result<()> {
 
     renderer.queue.submit(Some(init_encoder.finish()));
 
-    let mut robot_instances = Vec::new();
-
     for (node_index, property) in level.properties.iter() {
-        if let assets::Property::Spawn(assets::Character::Robot) = property {
-            robot_instances.push(level.node_tree.transform_of(*node_index));
+        if let assets::Property::Spawn(character) = property {
+            let model = match character {
+                assets::Character::Robot => Model::Robot,
+                assets::Character::Mouse => Model::Mouse,
+            };
+            model_buffers.inner[model as usize]
+                .instances
+                .push(level.node_tree.transform_of(*node_index));
         }
     }
-
-    let robot_instances_buffer =
-        renderer
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("robot instances"),
-                contents: bytemuck::cast_slice(&robot_instances),
-                usage: wgpu::BufferUsage::VERTEX,
-            });
 
     let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
@@ -461,6 +528,8 @@ async fn run() -> anyhow::Result<()> {
             debug_contact_points_buffer.upload(&renderer);
             debug_player_collider_buffer.upload(&renderer);
 
+            model_buffers.upload(&renderer);
+
             match renderer.swap_chain.get_current_frame() {
                 Ok(frame) => {
                     let mut encoder =
@@ -501,12 +570,12 @@ async fn run() -> anyhow::Result<()> {
                     // Render gun
 
                     if settings.draw_gun {
-                        render_pass.set_bind_group(1, &monkey_gun.textures, &[]);
-                        render_pass.set_vertex_buffer(0, monkey_gun.buffers.vertices.slice(..));
-                        render_pass.set_vertex_buffer(1, gun_instance.slice(..));
-                        render_pass
-                            .set_index_buffer(monkey_gun.buffers.indices.slice(..), INDEX_FORMAT);
-                        render_pass.draw_indexed(0..monkey_gun.buffers.num_indices, 0, 0..1);
+                        render_model_opaque(
+                            &monkey_gun,
+                            &mut render_pass,
+                            gun_instance.slice(..),
+                            1,
+                        );
                     }
 
                     // Render level
@@ -518,17 +587,7 @@ async fn run() -> anyhow::Result<()> {
                         .set_index_buffer(level.opaque_geometry.indices.slice(..), INDEX_FORMAT);
                     render_pass.draw_indexed(0..level.opaque_geometry.num_indices, 0, 0..1);
 
-                    if robot_instances.len() > 0 {
-                        render_pass.set_bind_group(1, &robot.textures, &[]);
-                        render_pass.set_vertex_buffer(0, robot.buffers.vertices.slice(..));
-                        render_pass.set_vertex_buffer(1, robot_instances_buffer.slice(..));
-                        render_pass.set_index_buffer(robot.buffers.indices.slice(..), INDEX_FORMAT);
-                        render_pass.draw_indexed(
-                            0..robot.buffers.num_indices,
-                            0,
-                            0..robot_instances.len() as u32,
-                        );
-                    }
+                    model_buffers.render_opaque(&mut render_pass);
 
                     // Render the skybox
 
@@ -558,6 +617,8 @@ async fn run() -> anyhow::Result<()> {
                             .set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
                         render_pass.draw(0..len, 0..1);
                     }
+
+                    model_buffers.render_transparent(&mut render_pass);
 
                     // Render debug lines
 
@@ -974,4 +1035,34 @@ fn collision_handling(
             player.on_ground = false;
         }
     }
+}
+
+fn render_model_opaque<'a>(
+    model: &'a assets::Model,
+    render_pass: &mut wgpu::RenderPass<'a>,
+    instances: wgpu::BufferSlice<'a>,
+    num_instances: u32,
+) {
+    render_pass.set_bind_group(1, &model.textures, &[]);
+    render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
+    render_pass.set_vertex_buffer(1, instances);
+    render_pass.set_index_buffer(model.opaque_geometry.indices.slice(..), INDEX_FORMAT);
+    render_pass.draw_indexed(0..model.opaque_geometry.num_indices, 0, 0..num_instances)
+}
+
+fn render_model_transparent<'a>(
+    model: &'a assets::Model,
+    render_pass: &mut wgpu::RenderPass<'a>,
+    instances: wgpu::BufferSlice<'a>,
+    num_instances: u32,
+) {
+    render_pass.set_bind_group(1, &model.textures, &[]);
+    render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
+    render_pass.set_vertex_buffer(1, instances);
+    render_pass.set_index_buffer(model.transparent_geometry.indices.slice(..), INDEX_FORMAT);
+    render_pass.draw_indexed(
+        0..model.transparent_geometry.num_indices,
+        0,
+        0..num_instances,
+    )
 }
