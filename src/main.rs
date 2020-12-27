@@ -857,9 +857,9 @@ fn collision_handling(
                     < Player::RADIUS
                 {
                     let normal = vec3_from_arr(contact.normal.into_inner().into());
-                    let slope = normal.dot(-Vec3::unit_y()).acos().to_degrees();
+                    let slope = normal.dot(-Vec3::unit_y()).acos();
 
-                    if slope < 45.0 {
+                    if slope < 45.0_f32.to_radians() {
                         // If the deepest(?) contact point is the bottom hemisphere
                         // contacting the ground at an acceptable angle, we stop
                         // doing body contacts and 'break' to do the feet contacts.
@@ -902,10 +902,14 @@ fn collision_handling(
 
                     player.position += vector_away_from_ceiling.normalized() * push_strength;
 
+                    let normal = vec3_from_arr(contact.normal.into_inner().into());
+                    let slope = normal.dot(Vec3::unit_y()).acos();
+
                     // Kill the velocity if jumping, but not if falling.
-                    // todo: only do this if the slope of the ceiling is shallow, not if it's a
-                    // wall.
-                    player.velocity.y = player.velocity.y.min(0.0);
+                    // Only do this if the slope of the ceiling is shallow, not if it's a wall.
+                    if slope < 45.0_f32.to_radians() {
+                        player.velocity.y = player.velocity.y.min(0.0);
+                    }
                 } else {
                     // Handle horizontal contacts.
 
