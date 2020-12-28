@@ -20,6 +20,6 @@ lyon_tessellation = "0.16.2"
 ncollide3d = "0.26.1"
 ordered-float = "2.0.1"
 serde_json = "1.0.60"
-ultraviolet = { version = "0.7.5", features = ["bytemuck"] }
+ultraviolet = { git = "https://github.com/expenses/ultraviolet", branch = "quaternion-convertion", features = ["bytemuck"] }
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 winit = "0.24.0"

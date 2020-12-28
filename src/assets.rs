@@ -1,4 +1,5 @@
 use crate::renderer::{Renderer, Vertex, TEXTURE_FORMAT};
+use crate::vec3_into;
 use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
@@ -111,6 +112,7 @@ pub struct Level {
     pub properties: HashMap<usize, Property>,
     pub node_tree: NodeTree,
     pub collision_mesh: ncollide3d::shape::TriMesh<f32>,
+    pub nav_mesh: (Vec<Vec3>, Vec<u32>),
 }
 
 impl Level {
@@ -274,10 +276,7 @@ impl Level {
             collision_geometry
                 .vertices
                 .iter()
-                .map(|&vertex| {
-                    let position: [f32; 3] = vertex.into();
-                    position.into()
-                })
+                .map(|&(position, _)| vec3_into(position))
                 .collect(),
             collision_geometry
                 .indices
@@ -287,13 +286,16 @@ impl Level {
             None,
         );
 
+        let nav_mesh = create_navmesh(&collision_geometry);
+
         println!(
-            "'{}' level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}",
+            "'{}' level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}. Nav mesh vertices: {}. Nav mesh indices: {}",
             name,
             opaque_geometry.vertices.len(),
             opaque_geometry.indices.len(),
             gltf.textures().count() as u32,
             lights.len(),
+            nav_mesh.vertices.len(), nav_mesh.indices.len(),
         );
 
         Ok(Self {
@@ -306,8 +308,43 @@ impl Level {
             properties,
             node_tree,
             collision_mesh,
+            nav_mesh: (nav_mesh.vertices, nav_mesh.indices),
         })
     }
+}
+
+fn create_navmesh(
+    collision_geometry: &StagingModelBuffers<(Vec3, Vec3)>,
+) -> StagingModelBuffers<Vec3> {
+    let mut nav_mesh_geometry = StagingModelBuffers::default();
+    let mut collision_indices_to_nav_mesh_indices =
+        vec![usize::max_value(); collision_geometry.vertices.len()];
+
+    for chunk in collision_geometry.indices.chunks(3) {
+        let shallow_enough = chunk.iter().all(|index| {
+            let normal = collision_geometry.vertices[*index as usize].1;
+            normal.dot(Vec3::unit_y()).acos() < 45.0_f32.to_radians()
+        });
+
+        if shallow_enough {
+            for index in chunk {
+                let new_index = collision_indices_to_nav_mesh_indices[*index as usize];
+
+                if new_index == usize::max_value() {
+                    let len = nav_mesh_geometry.vertices.len();
+                    nav_mesh_geometry
+                        .vertices
+                        .push(collision_geometry.vertices[*index as usize].0);
+                    nav_mesh_geometry.indices.push(len as u32);
+                    collision_indices_to_nav_mesh_indices[*index as usize] = len;
+                } else {
+                    nav_mesh_geometry.indices.push(new_index as u32);
+                }
+            }
+        }
+    }
+
+    nav_mesh_geometry
 }
 
 pub struct Model {
@@ -441,7 +478,7 @@ fn add_primitive_geometry_to_buffers(
     buffer_blob: &[u8],
     material_properties: &HashMap<Option<usize>, MaterialProperty>,
     staging_buffers: &mut StagingModelBuffers<Vertex>,
-    mut collision_buffers: Option<&mut StagingModelBuffers<Vec3>>,
+    mut collision_buffers: Option<&mut StagingModelBuffers<(Vec3, Vec3)>>,
 ) -> anyhow::Result<()> {
     let emission_strength = match material_properties.get(&primitive.material().index()) {
         Some(MaterialProperty::EmissionStrength(strength)) => *strength,
@@ -513,7 +550,7 @@ fn add_primitive_geometry_to_buffers(
             });
 
             if let Some(collision_buffers) = collision_buffers.as_mut() {
-                collision_buffers.vertices.push(position);
+                collision_buffers.vertices.push((position, normal));
             }
         });
 

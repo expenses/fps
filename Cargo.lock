@@ -2268,9 +2268,8 @@ checksum = "373c8a200f9e67a0c95e62a4f52fbf80c23b4381c05a17845531982fa99e6b33"
 
 [[package]]
 name = "ultraviolet"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6650a58414f856056ccc651abd3b9d80c384206250c3a621224497503a0f9f2"
+version = "0.8.0-alpha.0"
+source = "git+https://github.com/expenses/ultraviolet?branch=quaternion-convertion#a9fdf9d61bbc664ba73d12e2f5c2c92c8ab31201"
 dependencies = [
  "bytemuck",
  "wide",
@@ -2522,9 +2521,9 @@ dependencies = [
 
 [[package]]
 name = "wide"
-version = "0.5.5"
+version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80b27c76ecc22bd81fe681d9c9eac81e002d7b7048105ee4608f57c4e92e9211"
+checksum = "2c51f160ef6333906fad7d31a2010d449148dd1a26bc377e0a1ace2cc9e1e1ee"
 dependencies = [
  "bytemuck",
  "safe_arch",

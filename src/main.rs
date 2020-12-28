@@ -7,7 +7,7 @@ use crate::renderer::INDEX_FORMAT;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
-use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4, transform::Isometry3, Rotor3};
+use ultraviolet::{transform::Isometry3, Mat3, Mat4, Rotor3, Vec2, Vec3, Vec4};
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
@@ -18,6 +18,7 @@ pub struct Settings {
     draw_contact_points: bool,
     draw_player_collider: bool,
     noclip: bool,
+    fxaa_enabled: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -94,7 +95,13 @@ fn vec3_to_ncollide_iso(vec: Vec3) -> ncollide3d::math::Isometry<f32> {
     ncollide3d::math::Isometry::translation(vec.x, vec.y, vec.z)
 }
 
-fn vec3_from_arr(arr: [f32; 3]) -> Vec3 {
+fn vec3_from(t: impl Into<[f32; 3]>) -> Vec3 {
+    let arr = t.into();
+    arr.into()
+}
+
+fn vec3_into<T: From<[f32; 3]>>(vec3: Vec3) -> T {
+    let arr: [f32; 3] = vec3.into();
     arr.into()
 }
 
@@ -195,6 +202,7 @@ async fn run() -> anyhow::Result<()> {
         draw_contact_points: false,
         draw_player_collider: false,
         noclip: false,
+        fxaa_enabled: true,
     };
 
     let mut renderer = renderer::Renderer::new(&event_loop, &settings).await?;
@@ -246,12 +254,14 @@ async fn run() -> anyhow::Result<()> {
 
             let entity = world.push((
                 model,
-                level.node_tree.transform_of(*node_index).into_isometry()
+                level.node_tree.transform_of(*node_index).into_isometry(),
             ));
 
             if let Model::Robot = model {
                 let mut entry = world.entry(entity).unwrap();
-                entry.add_component(ecs::VisionCone(ncollide3d::shape::Cone::new(10.0, 10.0)))
+                entry.add_component(ecs::VisionCone::new(ncollide3d::shape::Cone::new(
+                    10.0, 10.0,
+                )))
             }
         }
     }
@@ -296,6 +306,18 @@ async fn run() -> anyhow::Result<()> {
         &mut debug_collision_geometry_buffer,
         Vec4::new(1.0, 0.5, 0.25, 1.0),
     );
+
+    /*
+    for chunk in level.nav_mesh.1.chunks(3) {
+        let a = level.nav_mesh.0[chunk[0] as usize];
+        let b = level.nav_mesh.0[chunk[1] as usize];
+        let c = level.nav_mesh.0[chunk[2] as usize];
+        let colour = Vec4::new(1.0, 0.0, 0.0, 1.0);
+        renderer::debug_lines::draw_tri(a, b, c, colour, |vertex| {
+            debug_collision_geometry_buffer.push(vertex);
+        })
+    }
+    */
 
     debug_collision_geometry_buffer.upload(&renderer);
 
@@ -391,6 +413,7 @@ async fn run() -> anyhow::Result<()> {
                         settings.draw_player_collider = !settings.draw_player_collider
                     }
                     VirtualKeyCode::V if pressed => settings.noclip = !settings.noclip,
+                    VirtualKeyCode::F if pressed => settings.fxaa_enabled = !settings.fxaa_enabled,
                     _ => {}
                 }
             }
@@ -431,9 +454,8 @@ async fn run() -> anyhow::Result<()> {
                 player.gun_cooldown = 0.05;
 
                 let normal = player.facing.normal();
-                let origin: [f32; 3] = (player.position + Player::HEAD_RELATIVE).into();
-                let normal_arr: [f32; 3] = normal.into();
-                let ray = ncollide3d::query::Ray::new(origin.into(), normal_arr.into());
+                let origin = vec3_into(player.position + Player::HEAD_RELATIVE);
+                let ray = ncollide3d::query::Ray::new(origin, vec3_into(normal));
 
                 let intersection = level.collision_mesh.toi_and_normal_with_ray(
                     &vec3_to_ncollide_iso(Vec3::zero()),
@@ -445,7 +467,7 @@ async fn run() -> anyhow::Result<()> {
                 if let Some(intersection) = intersection {
                     let hit_position =
                         player.position + Player::HEAD_RELATIVE + normal * intersection.toi;
-                    let normal = vec3_from_arr(intersection.normal.into());
+                    let normal = vec3_from(intersection.normal);
 
                     renderer::debug_lines::draw_line(
                         hit_position,
@@ -660,18 +682,34 @@ async fn run() -> anyhow::Result<()> {
                     // Render debug lines
 
                     if settings.draw_collision_geometry {
-                        render_debug_lines(&debug_collision_geometry_buffer, &mut render_pass, &debug_lines_less_pipeline);
+                        render_debug_lines(
+                            &debug_collision_geometry_buffer,
+                            &mut render_pass,
+                            &debug_lines_less_pipeline,
+                        );
                     }
 
                     if settings.draw_contact_points {
-                        render_debug_lines(&debug_contact_points_buffer, &mut render_pass, &debug_lines_always_pipeline);
+                        render_debug_lines(
+                            &debug_contact_points_buffer,
+                            &mut render_pass,
+                            &debug_lines_always_pipeline,
+                        );
                     }
 
                     if settings.draw_player_collider {
-                        render_debug_lines(&debug_player_collider_buffer, &mut render_pass, &debug_lines_always_pipeline);
+                        render_debug_lines(
+                            &debug_player_collider_buffer,
+                            &mut render_pass,
+                            &debug_lines_always_pipeline,
+                        );
                     }
 
-                    render_debug_lines(&debug_vision_cones.0, &mut render_pass, &debug_lines_less_pipeline);
+                    render_debug_lines(
+                        &debug_vision_cones.0,
+                        &mut render_pass,
+                        &debug_lines_less_pipeline,
+                    );
 
                     // Render overlay
 
@@ -688,7 +726,11 @@ async fn run() -> anyhow::Result<()> {
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("tonemap render pass"),
                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &renderer.pre_fxaa_framebuffer,
+                            attachment: if settings.fxaa_enabled {
+                                &renderer.pre_fxaa_framebuffer
+                            } else {
+                                &frame.output.view
+                            },
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -704,24 +746,27 @@ async fn run() -> anyhow::Result<()> {
 
                     drop(render_pass);
 
-                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("fxaa render pass"),
-                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &frame.output.view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: true,
-                            },
-                        }],
-                        depth_stencil_attachment: None,
-                    });
+                    if settings.fxaa_enabled {
+                        let mut render_pass =
+                            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("fxaa render pass"),
+                                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                                    attachment: &frame.output.view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                        store: true,
+                                    },
+                                }],
+                                depth_stencil_attachment: None,
+                            });
 
-                    render_pass.set_pipeline(&renderer.fxaa_pipeline);
-                    render_pass.set_bind_group(0, &renderer.fxaa_bind_group, &[]);
-                    render_pass.draw(0..3, 0..1);
+                        render_pass.set_pipeline(&renderer.fxaa_pipeline);
+                        render_pass.set_bind_group(0, &renderer.fxaa_bind_group, &[]);
+                        render_pass.draw(0..3, 0..1);
 
-                    drop(render_pass);
+                        drop(render_pass);
+                    }
 
                     renderer.queue.submit(Some(encoder.finish()));
                 }
@@ -763,9 +808,9 @@ fn render_debug_mesh(
 ) {
     for face in mesh.faces() {
         let points = mesh.points();
-        let a = isometry.transform_vec(vec3_from_arr(points[face.indices.x].coords.into()));
-        let b = isometry.transform_vec(vec3_from_arr(points[face.indices.y].coords.into()));
-        let c = isometry.transform_vec(vec3_from_arr(points[face.indices.z].coords.into()));
+        let a = isometry.transform_vec(vec3_from(points[face.indices.x].coords));
+        let b = isometry.transform_vec(vec3_from(points[face.indices.y].coords));
+        let c = isometry.transform_vec(vec3_from(points[face.indices.z].coords));
         renderer::debug_lines::draw_tri(a, b, c, colour, |vertex| {
             buffer.push(vertex);
         })
@@ -886,7 +931,7 @@ fn collision_handling(
             );
 
             if let Some(contact) = body_contact {
-                let contact_point = vec3_from_arr(contact.world2.coords.into());
+                let contact_point = vec3_from(contact.world2.coords);
 
                 let relative = contact_point.y - player.position.y;
 
@@ -908,7 +953,7 @@ fn collision_handling(
             );
 
             if let Some(contact) = body_contact {
-                let contact_point = vec3_from_arr(contact.world2.coords.into());
+                let contact_point = vec3_from(contact.world2.coords);
 
                 let relative = player.position.y + Player::HEAD_RELATIVE.y - contact_point.y;
 
@@ -938,13 +983,13 @@ fn collision_handling(
 
         match body_contact {
             Some(contact) => {
-                let contact_point = vec3_from_arr(contact.world2.coords.into());
+                let contact_point = vec3_from(contact.world2.coords);
                 let epsilon = 0.001;
 
                 if contact_point.y - player.position.y - Player::BODY_BOTTOM_DISTANCE_FROM_GROUND
                     < Player::RADIUS
                 {
-                    let normal = vec3_from_arr(contact.normal.into_inner().into());
+                    let normal = vec3_from(contact.normal.into_inner());
                     let slope = normal.dot(-Vec3::unit_y()).acos();
 
                     if slope < 45.0_f32.to_radians() {
@@ -990,7 +1035,7 @@ fn collision_handling(
 
                     player.position += vector_away_from_ceiling.normalized() * push_strength;
 
-                    let normal = vec3_from_arr(contact.normal.into_inner().into());
+                    let normal = vec3_from(contact.normal.into_inner());
                     let slope = normal.dot(Vec3::unit_y()).acos();
 
                     // Kill the velocity if jumping, but not if falling.
