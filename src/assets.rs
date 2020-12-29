@@ -6,7 +6,7 @@ use wgpu::util::DeviceExt;
 
 mod animated_model;
 
-pub use animated_model::AnimatedModel;
+pub use animated_model::{AnimatedModel, AnimationJoints};
 
 #[repr(C)]
 #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -451,6 +451,7 @@ fn normal_matrix(transform: Mat4) -> Mat3 {
     Mat3::new(array[0].xyz(), array[1].xyz(), array[2].xyz())
 }
 
+#[derive(Clone)]
 pub struct NodeTree {
     inner: Vec<(Mat4, usize)>,
 }

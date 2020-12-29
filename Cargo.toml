@@ -10,7 +10,6 @@ base64 = "0.13.0"
 bytemuck = { version = "1.4.1", features = ["derive"] }
 cgmath = "0.17.0"
 env_logger = "0.8.2"
-float-cmp = "0.8.0"
 futures = "0.3.8"
 gltf = { version = "0.15.2", default-features = false, features = ["utils", "names", "extras", "KHR_lights_punctual"] }
 image = { version = "0.23.12", default-features = false, features = ["png"] }

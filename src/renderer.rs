@@ -58,7 +58,9 @@ pub struct Renderer {
     pub mipmap_generation_pipeline: wgpu::RenderPipeline,
     pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
     screen_dimension_uniform_buffer: wgpu::Buffer,
+
     pub animated_model_bind_group_layout: wgpu::BindGroupLayout,
+    pub joint_transform_bind_group_layout: wgpu::BindGroupLayout,
 
     pub static_opaque_render_pipeline: wgpu::RenderPipeline,
     pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
@@ -292,6 +294,21 @@ impl Renderer {
                 ],
             });
 
+        let joint_transform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("joint transform bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
         let vs_static_model = wgpu::include_spirv!("../shaders/compiled/static_model.vert.spv");
         let vs_static_model_module = device.create_shader_module(&vs_static_model);
 
@@ -324,6 +341,7 @@ impl Renderer {
                     &main_bind_group_layout,
                     &animated_model_bind_group_layout,
                     &lights_bind_group_layout,
+                    &joint_transform_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -639,6 +657,7 @@ impl Renderer {
             animated_opaque_render_pipeline,
             animated_transparent_render_pipeline,
             animated_model_bind_group_layout,
+            joint_transform_bind_group_layout,
 
             post_processing_bind_group_layout,
             pre_fxaa_framebuffer,
@@ -828,7 +847,7 @@ fn create_render_pipeline(
         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
             format: DEPTH_FORMAT,
             depth_write_enabled,
-            depth_compare:  wgpu::CompareFunction::Less,
+            depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
         vertex_state: wgpu::VertexStateDescriptor {
@@ -932,7 +951,7 @@ pub struct DynamicBuffer<T: bytemuck::Pod> {
     buffer: wgpu::Buffer,
     capacity: usize,
     len: usize,
-    label: &'static str,
+    label: String,
     waiting: Vec<T>,
     usage: wgpu::BufferUsage,
     // the offset of `waiting` to upload.
@@ -943,7 +962,7 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
     pub fn new(
         device: &wgpu::Device,
         base_capacity: usize,
-        label: &'static str,
+        label: &str,
         usage: wgpu::BufferUsage,
     ) -> Self {
         Self {
@@ -955,11 +974,15 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
                 mapped_at_creation: false,
             }),
             len: 0,
-            label,
+            label: label.to_string(),
             waiting: Vec::with_capacity(base_capacity),
             usage,
             upload_offset: 0,
         }
+    }
+
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
     }
 
     pub fn push(&mut self, item: T) {
@@ -997,7 +1020,7 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
                 self.len
             );
             self.buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(self.label),
+                label: Some(&self.label),
                 size: self.capacity as u64 * size_of_t,
                 usage: self.usage | wgpu::BufferUsage::COPY_DST,
                 mapped_at_creation: true,

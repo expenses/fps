@@ -3,7 +3,8 @@ mod assets;
 mod ecs;
 mod renderer;
 
-use crate::renderer::{Renderer, INDEX_FORMAT};
+use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
+use crate::assets::AnimationJoints;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
@@ -105,15 +106,66 @@ fn vec3_into<T: From<[f32; 3]>>(vec3: Vec3) -> T {
     arr.into()
 }
 
+fn create_joint_transforms_bind_group(
+    buffer: &DynamicBuffer<Mat4>,
+    renderer: &Renderer,
+    name: &str,
+) -> wgpu::BindGroup {
+    renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{} joint transforms bind group", name)),
+            layout: &renderer.joint_transform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: buffer.buffer(),
+                    offset: 0,
+                    size: None,
+                },
+            }],
+        })
+}
+
 enum ModelBuffer {
     Static {
         model: assets::Model,
-        instances: renderer::DynamicBuffer<Mat4>,
+        instances: DynamicBuffer<Mat4>,
     },
     Animated {
         model: assets::AnimatedModel,
-        instances: renderer::DynamicBuffer<Mat4>,
+        instances: DynamicBuffer<Mat4>,
+        joint_transforms: DynamicBuffer<Mat4>,
+        joint_transforms_bind_group: wgpu::BindGroup,
+        name: String,
     },
+}
+
+impl ModelBuffer {
+    fn load_animated(model: assets::AnimatedModel, name: &str, renderer: &Renderer) -> Self {
+        let mut joint_transforms = DynamicBuffer::new(
+            &renderer.device,
+            model.num_joints,
+            &format!("{} joint transforms", name),
+            wgpu::BufferUsage::STORAGE,
+        );
+
+        let joint_transforms_bind_group =
+            create_joint_transforms_bind_group(&joint_transforms, renderer, name);
+
+        Self::Animated {
+            model,
+            instances: DynamicBuffer::new(
+                &renderer.device,
+                0,
+                &format!("{} instances", name),
+                wgpu::BufferUsage::VERTEX,
+            ),
+            joint_transforms,
+            joint_transforms_bind_group,
+            name: name.to_string(),
+        }
+    }
 }
 
 struct ModelBuffers {
@@ -127,55 +179,82 @@ impl ModelBuffers {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             inner: vec![
-                ModelBuffer::Animated {
-                    model: assets::AnimatedModel::load_gltf(
+                ModelBuffer::load_animated(
+                    assets::AnimatedModel::load_gltf(
                         include_bytes!("../models/warehouse_robot.glb"),
                         &renderer,
                         &mut init_encoder,
                         "warehouse robot",
                     )?,
-                    instances: renderer::DynamicBuffer::new(
-                        &renderer.device,
-                        10,
-                        "robot instances",
-                        wgpu::BufferUsage::VERTEX,
-                    ),
-                },
-                ModelBuffer::Animated {
-                    model: assets::AnimatedModel::load_gltf(
+                    "robot",
+                    renderer,
+                ),
+                ModelBuffer::load_animated(
+                    assets::AnimatedModel::load_gltf(
                         include_bytes!("../models/mouse.glb"),
                         &renderer,
                         &mut init_encoder,
                         "mouse",
                     )?,
-                    instances: renderer::DynamicBuffer::new(
-                        &renderer.device,
-                        10,
-                        "mice instances",
-                        wgpu::BufferUsage::VERTEX,
-                    ),
-                },
+                    "mouse",
+                    renderer,
+                ),
             ],
         })
     }
 
-    fn push(&mut self, model: &Model, instance: Mat4) {
-        let instances = match &mut self.inner[*model as usize] {
-            ModelBuffer::Static { instances, .. } => instances,
-            ModelBuffer::Animated { instances, .. } => instances,
-        };
+    fn get_buffer(
+        &mut self,
+        model: &Model,
+    ) -> (
+        &mut DynamicBuffer<Mat4>,
+        Option<(usize, &mut DynamicBuffer<Mat4>)>,
+    ) {
+        match &mut self.inner[*model as usize] {
+            ModelBuffer::Static { instances, .. } => (instances, None),
+            ModelBuffer::Animated {
+                instances,
+                joint_transforms,
+                model,
+                ..
+            } => (instances, Some((model.num_joints, joint_transforms))),
+        }
+    }
 
-        instances.push(instance);
+    fn clone_animation_joints(&self, model: &Model) -> Option<AnimationJoints> {
+        match &self.inner[*model as usize] {
+            ModelBuffer::Static { .. } => None,
+            ModelBuffer::Animated { model, .. } => Some(model.animation_joints.clone())
+        }
     }
 
     fn upload(&mut self, renderer: &Renderer) {
         for model_buffer in &mut self.inner {
-            let instances = match model_buffer {
-                ModelBuffer::Static { instances, .. } => instances,
-                ModelBuffer::Animated { instances, .. } => instances,
-            };
-            instances.upload(renderer);
-            instances.clear();
+            match model_buffer {
+                ModelBuffer::Static { instances, .. } => {
+                    instances.upload(renderer);
+                    instances.clear();
+                }
+                ModelBuffer::Animated {
+                    instances,
+                    joint_transforms,
+                    joint_transforms_bind_group,
+                    name,
+                    ..
+                } => {
+                    instances.upload(renderer);
+
+                    let resized = joint_transforms.upload(renderer);
+
+                    if resized {
+                        *joint_transforms_bind_group =
+                            create_joint_transforms_bind_group(&joint_transforms, renderer, &name);
+                    }
+
+                    instances.clear();
+                    joint_transforms.clear();
+                }
+            }
         }
     }
 
@@ -187,9 +266,21 @@ impl ModelBuffers {
                         render_model_opaque(&model, render_pass, renderer, slice, num);
                     }
                 }
-                ModelBuffer::Animated { instances, model } => {
+                ModelBuffer::Animated {
+                    instances,
+                    model,
+                    joint_transforms_bind_group,
+                    ..
+                } => {
                     if let Some((slice, num)) = instances.get() {
-                        render_animated_model_opaque(&model, render_pass, renderer, slice, num);
+                        render_animated_model_opaque(
+                            &model,
+                            render_pass,
+                            renderer,
+                            slice,
+                            num,
+                            joint_transforms_bind_group,
+                        );
                     }
                 }
             }
@@ -210,7 +301,12 @@ impl ModelBuffers {
                         }
                     }
                 }
-                ModelBuffer::Animated { instances, model } => {
+                ModelBuffer::Animated {
+                    instances,
+                    model,
+                    joint_transforms_bind_group,
+                    ..
+                } => {
                     if model.transparent_geometry.num_indices > 0 {
                         if let Some((slice, num)) = instances.get() {
                             render_animated_model_transparent(
@@ -219,6 +315,7 @@ impl ModelBuffers {
                                 renderer,
                                 slice,
                                 num,
+                                joint_transforms_bind_group,
                             );
                         }
                     }
@@ -302,11 +399,16 @@ async fn run() -> anyhow::Result<()> {
                 level.node_tree.transform_of(*node_index).into_isometry(),
             ));
 
+            let mut entry = world.entry(entity).unwrap();
+
             if let Model::Robot = model {
-                let mut entry = world.entry(entity).unwrap();
                 entry.add_component(ecs::VisionCone::new(ncollide3d::shape::Cone::new(
                     10.0, 10.0,
                 )))
+            }
+
+            if let Some(animation_joints) = model_buffers.clone_animation_joints(&model) {
+                entry.add_component(animation_joints);
             }
         }
     }
@@ -314,28 +416,28 @@ async fn run() -> anyhow::Result<()> {
     let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
-    let mut debug_contact_points_buffer = renderer::DynamicBuffer::new(
+    let mut debug_contact_points_buffer = DynamicBuffer::new(
         &renderer.device,
         40,
         "debug contact points buffer",
         wgpu::BufferUsage::VERTEX,
     );
 
-    let mut debug_collision_geometry_buffer = renderer::DynamicBuffer::new(
+    let mut debug_collision_geometry_buffer = DynamicBuffer::new(
         &renderer.device,
         40,
         "debug collsion geometry buffer",
         wgpu::BufferUsage::VERTEX,
     );
 
-    let mut debug_player_collider_buffer = renderer::DynamicBuffer::new(
+    let mut debug_player_collider_buffer = DynamicBuffer::new(
         &renderer.device,
         40,
         "debug player collider buffer",
         wgpu::BufferUsage::VERTEX,
     );
 
-    let debug_vision_cones_buffer = renderer::DynamicBuffer::new(
+    let debug_vision_cones_buffer = DynamicBuffer::new(
         &renderer.device,
         40,
         "debug vision cones buffer",
@@ -366,7 +468,7 @@ async fn run() -> anyhow::Result<()> {
 
     debug_collision_geometry_buffer.upload(&renderer);
 
-    let mut decal_buffer = renderer::DynamicBuffer::new(
+    let mut decal_buffer = DynamicBuffer::new(
         &renderer.device,
         10,
         "decal buffer",
@@ -849,7 +951,7 @@ fn fps_view_rh(eye: Vec3, pitch: f32, yaw: f32) -> Mat4 {
 fn render_debug_mesh(
     mesh: &ncollide3d::shape::TriMesh<f32>,
     isometry: &Isometry3,
-    buffer: &mut renderer::DynamicBuffer<renderer::debug_lines::Vertex>,
+    buffer: &mut DynamicBuffer<renderer::debug_lines::Vertex>,
     colour: Vec4,
 ) {
     for face in mesh.faces() {
@@ -960,7 +1062,7 @@ fn approach_zero(value: f32, change: f32) -> f32 {
 fn collision_handling(
     player: &mut Player,
     level: &assets::Level,
-    debug_contact_points_buffer: &mut renderer::DynamicBuffer<renderer::debug_lines::Vertex>,
+    debug_contact_points_buffer: &mut DynamicBuffer<renderer::debug_lines::Vertex>,
 ) {
     const HORIZONTAL_COLOUR: Vec4 = Vec4::new(0.75, 0.75, 0.0, 1.0);
     const HEAD_COLOUR: Vec4 = Vec4::new(0.25, 0.25, 0.5, 1.0);
@@ -1176,9 +1278,11 @@ fn render_animated_model_opaque<'a>(
     renderer: &'a Renderer,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
+    joint_transforms_bind_group: &'a wgpu::BindGroup,
 ) {
     render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
     render_pass.set_bind_group(1, &model.bind_group, &[]);
+    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
     render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(model.opaque_geometry.indices.slice(..), INDEX_FORMAT);
@@ -1210,9 +1314,11 @@ fn render_animated_model_transparent<'a>(
     renderer: &'a Renderer,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
+    joint_transforms_bind_group: &'a wgpu::BindGroup,
 ) {
     render_pass.set_pipeline(&renderer.animated_transparent_render_pipeline);
     render_pass.set_bind_group(1, &model.bind_group, &[]);
+    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
     render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(model.transparent_geometry.indices.slice(..), INDEX_FORMAT);
@@ -1224,7 +1330,7 @@ fn render_animated_model_transparent<'a>(
 }
 
 fn render_debug_lines<'a>(
-    buffer: &'a renderer::DynamicBuffer<renderer::debug_lines::Vertex>,
+    buffer: &'a DynamicBuffer<renderer::debug_lines::Vertex>,
     render_pass: &mut wgpu::RenderPass<'a>,
     pipeline: &'a wgpu::RenderPipeline,
 ) {

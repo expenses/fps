@@ -1,7 +1,8 @@
 use crate::{renderer, vec3_into, Model, ModelBuffers};
+use crate::assets::AnimationJoints;
 use ncollide3d::query::PointQuery;
 use ncollide3d::transformation::ToTriMesh;
-use ultraviolet::{Rotor3, Vec3, Vec4};
+use ultraviolet::{Mat4, Rotor3, Vec3, Vec4};
 
 pub use ultraviolet::transform::Isometry3;
 
@@ -27,8 +28,17 @@ fn render_models(
     #[resource] model_buffers: &mut ModelBuffers,
     model: &Model,
     isometry: &Isometry3,
+    animation_joints: Option<&AnimationJoints>,
 ) {
-    model_buffers.push(model, isometry.into_homogeneous_matrix())
+    let (instances, joint_transforms) = model_buffers.get_buffer(model);
+    instances.push(isometry.into_homogeneous_matrix());
+
+    if let Some((num_joints, joint_transforms)) = joint_transforms {
+        let aj = animation_joints.unwrap();
+        for transform in aj.iter() {
+            joint_transforms.push(transform);
+        }
+    }
 }
 
 #[legion::system(for_each)]
