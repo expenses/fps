@@ -168,8 +168,15 @@ impl ModelBuffer {
     }
 }
 
+#[derive(Default, Debug)]
+struct MouseAnimationInfo {
+    idle_animation: usize,
+    walk_animation: usize,
+}
+
 struct ModelBuffers {
     inner: Vec<ModelBuffer>,
+    mouse_animation_info: MouseAnimationInfo,
 }
 
 impl ModelBuffers {
@@ -177,29 +184,47 @@ impl ModelBuffers {
         renderer: &Renderer,
         mut init_encoder: &mut wgpu::CommandEncoder,
     ) -> anyhow::Result<Self> {
-        Ok(Self {
-            inner: vec![
-                ModelBuffer::load_animated(
-                    assets::AnimatedModel::load_gltf(
-                        include_bytes!("../models/warehouse_robot.glb"),
-                        &renderer,
-                        &mut init_encoder,
-                        "warehouse robot",
-                    )?,
-                    "robot",
-                    renderer,
-                ),
-                ModelBuffer::load_animated(
-                    assets::AnimatedModel::load_gltf(
-                        include_bytes!("../models/mouse.glb"),
-                        &renderer,
-                        &mut init_encoder,
-                        "mouse",
-                    )?,
+        let mut mouse_animation_info = MouseAnimationInfo::default();
+
+        let buffers = vec![
+            ModelBuffer::load_animated(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/warehouse_robot.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "warehouse robot",
+                    |_| {},
+                )?,
+                "robot",
+                renderer,
+            ),
+            ModelBuffer::load_animated(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/mouse.glb"),
+                    &renderer,
+                    &mut init_encoder,
                     "mouse",
-                    renderer,
-                ),
-            ],
+                    |mut animations| {
+                        mouse_animation_info.idle_animation = animations
+                            .find(|animation| animation.name() == Some("Idle"))
+                            .map(|animation| animation.index())
+                            .unwrap();
+                        mouse_animation_info.walk_animation = animations
+                            .find(|animation| animation.name() == Some("Walk"))
+                            .map(|animation| animation.index())
+                            .unwrap();
+                    },
+                )?,
+                "mouse",
+                renderer,
+            ),
+        ];
+
+        println!("{:?}", mouse_animation_info);
+
+        Ok(Self {
+            inner: buffers,
+            mouse_animation_info,
         })
     }
 
@@ -401,14 +426,26 @@ async fn run() -> anyhow::Result<()> {
 
             let mut entry = world.entry(entity).unwrap();
 
-            if let Model::Robot = model {
-                entry.add_component(ecs::VisionCone::new(ncollide3d::shape::Cone::new(
-                    10.0, 10.0,
-                )))
+            match model {
+                Model::Robot => {
+                    entry.add_component(ecs::VisionCone::new(ncollide3d::shape::Cone::new(
+                        10.0, 10.0,
+                    )));
+                }
+                Model::Mouse => {}
             }
 
-            if let Some(animation_joints) = model_buffers.clone_animation_joints(&model) {
-                entry.add_component(animation_joints);
+            if let Some(joints) = model_buffers.clone_animation_joints(&model) {
+                let animation = match model {
+                    Model::Robot => 0,
+                    Model::Mouse => model_buffers.mouse_animation_info.idle_animation,
+                };
+
+                entry.add_component(ecs::AnimationState {
+                    animation,
+                    time: 0.0,
+                    joints,
+                });
             }
         }
     }

@@ -27,6 +27,7 @@ impl AnimatedModel {
         renderer: &Renderer,
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
+        getter: impl FnOnce(gltf::iter::Animations),
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
@@ -44,8 +45,8 @@ impl AnimatedModel {
         {
             assert!(node.skin().is_some());
 
-            // Not sure if we can do transforms on animated models.
-            let transform = Mat4::identity(); //node_tree.transform_of(node.index());
+            // We can't apply transformations on animated models, but we also don't need to..
+            let transform = Mat4::identity();
             let normal_matrix = normal_matrix(transform);
 
             for primitive in mesh.primitives() {
@@ -97,6 +98,8 @@ impl AnimatedModel {
         assert_eq!(gltf.scenes().count(), 1);
         let scene = gltf.scenes().next().unwrap();
         assert_eq!(scene.nodes().count(), 1);
+
+        getter(gltf.animations());
 
         let mut animations = Vec::new();
 
@@ -415,7 +418,7 @@ impl<T: Interpolate> Channel<T> {
 
 #[derive(Debug)]
 pub struct Animation {
-    total_time: f32,
+    pub total_time: f32,
     translation_channels: Vec<Channel<Vec3>>,
     rotation_channels: Vec<Channel<Rotor3>>,
 }
