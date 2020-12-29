@@ -481,6 +481,24 @@ impl NodeTree {
 
         transform_sum
     }
+
+    // It turns out that we can just reverse the array to iter through nodes depth first! Useful for applying animations.
+    fn iter_depth_first(&self) -> impl Iterator<Item = (usize, Option<usize>)> + '_ {
+        self.inner
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, &(_, parent))| {
+                (
+                    index,
+                    if parent != usize::max_value() {
+                        Some(parent)
+                    } else {
+                        None
+                    },
+                )
+            })
+    }
 }
 
 fn add_primitive_geometry_to_buffers(

@@ -1,8 +1,8 @@
-use crate::{renderer, vec3_into, Model, ModelBuffers};
 use crate::assets::AnimationJoints;
+use crate::{renderer, vec3_into, Model, ModelBuffers};
 use ncollide3d::query::PointQuery;
 use ncollide3d::transformation::ToTriMesh;
-use ultraviolet::{Mat4, Rotor3, Vec3, Vec4};
+use ultraviolet::{Rotor3, Vec3, Vec4};
 
 pub use ultraviolet::transform::Isometry3;
 
@@ -33,9 +33,8 @@ fn render_models(
     let (instances, joint_transforms) = model_buffers.get_buffer(model);
     instances.push(isometry.into_homogeneous_matrix());
 
-    if let Some((num_joints, joint_transforms)) = joint_transforms {
-        let aj = animation_joints.unwrap();
-        for transform in aj.iter() {
+    if let Some((model, joint_transforms)) = joint_transforms {
+        for transform in animation_joints.unwrap().iter(model) {
             joint_transforms.push(transform);
         }
     }

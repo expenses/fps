@@ -3,8 +3,9 @@ use super::{
     StagingModelBuffers,
 };
 use crate::renderer::{AnimatedVertex, Renderer};
+use gltf::animation::Interpolation;
 use std::collections::HashMap;
-use ultraviolet::{Mat3, Mat4, Rotor3, Vec3, Vec4, Isometry3, Lerp, Slerp};
+use ultraviolet::{Isometry3, Lerp, Mat3, Mat4, Rotor3, Slerp, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 pub struct AnimatedModel {
@@ -14,6 +15,10 @@ pub struct AnimatedModel {
     pub animations: Vec<Animation>,
     pub num_joints: usize,
     pub animation_joints: AnimationJoints,
+
+    joint_node_indices: Vec<usize>,
+    inverse_bind_matrices: Vec<Mat4>,
+    depth_first_nodes: Vec<(usize, Option<usize>)>,
 }
 
 impl AnimatedModel {
@@ -87,22 +92,17 @@ impl AnimatedModel {
             .map(|mat| mat.into())
             .collect();
 
-        let joints: Vec<_> = skin.joints().map(|node| node.index()).collect();
-
-        println!("{:?}", joints);
+        let joint_node_indices: Vec<_> = skin.joints().map(|node| node.index()).collect();
 
         assert_eq!(gltf.scenes().count(), 1);
         let scene = gltf.scenes().next().unwrap();
         assert_eq!(scene.nodes().count(), 1);
 
-        /*
         let mut animations = Vec::new();
 
         for animation in gltf.animations() {
             let mut translation_channels = Vec::new();
             let mut rotation_channels = Vec::new();
-
-            println!("{:?} {}", animation.name(), animation.index());
 
             for channel in animation.channels() {
                 let reader = channel.reader(|buffer| {
@@ -171,7 +171,7 @@ impl AnimatedModel {
                 translation_channels,
                 rotation_channels,
             });
-        }*/
+        }
 
         let animated_model_uniform_buffer =
             renderer
@@ -212,44 +212,70 @@ impl AnimatedModel {
             animations.len(),
         );
 
-        let mut animation_joints = AnimationJoints {
-            /*local_transforms: node_tree.inner.iter().map(|(mat, _)| {
-                Isometry3::new(mat.extract_translation(), mat.extract_rotation())
-            }).collect(),
-            node_tree,
-            joint_node_indices: joints,
-            inverse_bind_matrices,
-            root_transform,*/
-        };
+        let global_transforms = gltf
+            .nodes()
+            .map(|node| node.transform().matrix().into())
+            .collect();
+        let local_transforms = gltf
+            .nodes()
+            .map(|node| {
+                let (translation, rotation, _) = node.transform().decomposed();
+                let translation = Vec3::from(translation);
+                let rotation = Rotor3::from_quaternion_array(rotation);
+                Isometry3::new(translation, rotation)
+            })
+            .collect();
 
-        //animations[0].animate(0.1, &mut animation_joints);
-
-        Ok(Self {
+        let mut model = Self {
             opaque_geometry: opaque_geometry.upload(&renderer.device, &format!("{} opaque", name)),
             transparent_geometry: transparent_geometry
                 .upload(&renderer.device, &format!("{} transparent", name)),
             bind_group,
             animations,
             num_joints,
-            animation_joints,
-        })
+
+            animation_joints: AnimationJoints {
+                global_transforms,
+                local_transforms,
+            },
+
+            joint_node_indices,
+            inverse_bind_matrices,
+            depth_first_nodes: node_tree.iter_depth_first().collect(),
+        };
+
+        model.animation_joints.update(&model.depth_first_nodes);
+
+        Ok(model)
     }
 }
 
 #[derive(Clone)]
 pub struct AnimationJoints {
-    /*node_tree: NodeTree,
-    joint_node_indices: Vec<usize>,
+    global_transforms: Vec<Mat4>,
     local_transforms: Vec<Isometry3>,
-    inverse_bind_matrices: Vec<Mat4>,
-    root_transform: Mat4,*/
 }
 
 impl AnimationJoints {
-    /*pub fn iter(&self) -> impl Iterator<Item = Mat4> + '_ {
-        self.joint_node_indices.iter()
-            .map(move |index| self.root_transform.inversed() * self.node_tree.transform_of(*index) * self.inverse_bind_matrices[*index])
-    }*/
+    pub fn iter<'a>(&'a self, model: &'a AnimatedModel) -> impl Iterator<Item = Mat4> + 'a {
+        model
+            .joint_node_indices
+            .iter()
+            .enumerate()
+            .map(move |(joint_index, &node_index)| {
+                self.global_transforms[node_index] * model.inverse_bind_matrices[joint_index]
+            })
+    }
+
+    fn update(&mut self, depth_first_nodes: &[(usize, Option<usize>)]) {
+        for &(index, parent) in depth_first_nodes.iter() {
+            if let Some(parent) = parent {
+                let parent_transform = self.global_transforms[parent];
+                self.global_transforms[index] =
+                    parent_transform * self.local_transforms[index].into_homogeneous_matrix();
+            }
+        }
+    }
 }
 
 fn add_animated_primitive_geometry_to_buffers(
@@ -328,7 +354,7 @@ fn add_animated_primitive_geometry_to_buffers(
     Ok(())
 }
 
-/*
+#[derive(Debug)]
 struct Channel<T> {
     interpolation: gltf::animation::Interpolation,
     inputs: Vec<f32>,
@@ -337,17 +363,57 @@ struct Channel<T> {
 }
 
 impl<T: Interpolate> Channel<T> {
-    fn sample(&self, t: f32) -> T {
-        let index = self.inputs.binary_search_by_key(&ordered_float::OrderedFloat(t), |t| ordered_float::OrderedFloat(*t));
-        let index = match index {
+    fn sample(&self, t: f32) -> (usize, T) {
+        let index = self
+            .inputs
+            .binary_search_by_key(&ordered_float::OrderedFloat(t), |t| {
+                ordered_float::OrderedFloat(*t)
+            });
+        let i = match index {
             Ok(exact) => exact,
-            Err(would_be_inserted_at) => would_be_inserted_at - 1
+            Err(would_be_inserted_at) => would_be_inserted_at - 1,
         };
 
-        self.outputs[0]
+        let previous_time = self.inputs[i];
+        let next_time = self.inputs[i + 1];
+        let delta = next_time - previous_time;
+        let from_start = t - previous_time;
+        let factor = from_start / delta;
+
+        let i = match self.interpolation {
+            Interpolation::Step => self.outputs[i],
+            Interpolation::Linear => {
+                let previous_value = self.outputs[i];
+                let next_value = self.outputs[i + 1];
+
+                previous_value.linear(next_value, factor)
+            }
+            Interpolation::CubicSpline => {
+                let previous_values = [
+                    self.outputs[i * 3],
+                    self.outputs[i * 3 + 1],
+                    self.outputs[i * 3 + 2],
+                ];
+                let next_values = [
+                    self.outputs[i * 3 + 3],
+                    self.outputs[i * 3 + 4],
+                    self.outputs[i * 3 + 5],
+                ];
+                Interpolate::cubic_spline(
+                    previous_values,
+                    previous_time,
+                    next_values,
+                    next_time,
+                    factor,
+                )
+            }
+        };
+
+        (self.node_index, i)
     }
 }
 
+#[derive(Debug)]
 pub struct Animation {
     total_time: f32,
     translation_channels: Vec<Channel<Vec3>>,
@@ -355,18 +421,27 @@ pub struct Animation {
 }
 
 impl Animation {
-    pub fn animate(&self, time: f32, animation_joints: &mut AnimationJoints) {
-        /*self.translation_channels.iter()
-            .map(move |channel| (channel.node_index, channel.sample(time)))
-            .for_each(|(node_index, translation)| animation_joints.local_transforms[node_index].translation = translation);*/
+    pub fn animate(
+        &self,
+        animation_joints: &mut AnimationJoints,
+        time: f32,
+        model: &AnimatedModel,
+    ) {
+        self.translation_channels
+            .iter()
+            .map(move |channel| channel.sample(time))
+            .for_each(|(node_index, translation)| {
+                animation_joints.local_transforms[node_index].translation = translation;
+            });
 
-            self.rotation_channels.iter()
-            .map(move |channel| (channel.node_index, channel.sample(time)))
-            .for_each(|(node_index, rotation)| animation_joints.local_transforms[node_index].rotation = rotation);
+        self.rotation_channels
+            .iter()
+            .map(move |channel| channel.sample(time))
+            .for_each(|(node_index, rotation)| {
+                animation_joints.local_transforms[node_index].rotation = rotation;
+            });
 
-        for (i, local_transform) in animation_joints.local_transforms.iter().enumerate() {
-            //animation_joints.node_tree.inner[i].0 = local_transform.into_homogeneous_matrix();
-        }
+        animation_joints.update(&model.depth_first_nodes);
     }
 }
 
@@ -403,7 +478,7 @@ impl Interpolate for Vec3 {
             + (t * t * t - 2.0 * t * t + t) * m0
             + (-2.0 * t * t * t + 3.0 * t * t) * p1
             + (t * t * t - t * t) * m1
-    } 
+    }
 }
 
 impl Interpolate for Rotor3 {
@@ -431,4 +506,3 @@ impl Interpolate for Rotor3 {
         result.normalized()
     }
 }
-*/

@@ -3,8 +3,8 @@ mod assets;
 mod ecs;
 mod renderer;
 
-use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
 use crate::assets::AnimationJoints;
+use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
@@ -143,7 +143,7 @@ enum ModelBuffer {
 
 impl ModelBuffer {
     fn load_animated(model: assets::AnimatedModel, name: &str, renderer: &Renderer) -> Self {
-        let mut joint_transforms = DynamicBuffer::new(
+        let joint_transforms = DynamicBuffer::new(
             &renderer.device,
             model.num_joints,
             &format!("{} joint transforms", name),
@@ -208,7 +208,7 @@ impl ModelBuffers {
         model: &Model,
     ) -> (
         &mut DynamicBuffer<Mat4>,
-        Option<(usize, &mut DynamicBuffer<Mat4>)>,
+        Option<(&assets::AnimatedModel, &mut DynamicBuffer<Mat4>)>,
     ) {
         match &mut self.inner[*model as usize] {
             ModelBuffer::Static { instances, .. } => (instances, None),
@@ -217,14 +217,14 @@ impl ModelBuffers {
                 joint_transforms,
                 model,
                 ..
-            } => (instances, Some((model.num_joints, joint_transforms))),
+            } => (instances, Some((model, joint_transforms))),
         }
     }
 
     fn clone_animation_joints(&self, model: &Model) -> Option<AnimationJoints> {
         match &self.inner[*model as usize] {
             ModelBuffer::Static { .. } => None,
-            ModelBuffer::Animated { model, .. } => Some(model.animation_joints.clone())
+            ModelBuffer::Animated { model, .. } => Some(model.animation_joints.clone()),
         }
     }
 
