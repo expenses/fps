@@ -4,6 +4,10 @@ use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
+mod animated_model;
+
+pub use animated_model::AnimatedModel;
+
 #[repr(C)]
 #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 struct Light {
@@ -27,7 +31,7 @@ impl<T> Default for StagingModelBuffers<T> {
     }
 }
 
-impl StagingModelBuffers<Vertex> {
+impl<T: bytemuck::Pod> StagingModelBuffers<T> {
     fn upload(&self, device: &wgpu::Device, name: &str) -> ModelBuffers {
         ModelBuffers {
             vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -166,13 +170,25 @@ impl Level {
         let mut transparent_geometry = StagingModelBuffers::default();
         let mut collision_geometry = StagingModelBuffers::default();
 
-        let texture_array_bind_group = load_texture_array(
+        let texture_array_view = load_texture_array(
             &gltf,
             buffer_blob,
             renderer,
             encoder,
             &format!("{} level", name),
         )?;
+
+        let texture_array_bind_group =
+            renderer
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("{} level texture bind group", name)),
+                    layout: &renderer.texture_array_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_array_view),
+                    }],
+                });
 
         let lights: Vec<_> = gltf
             .nodes()
@@ -246,29 +262,23 @@ impl Level {
                     None
                 };
 
-                if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
-                    add_primitive_geometry_to_buffers(
-                        &primitive,
-                        &node,
-                        transform,
-                        normal_matrix,
-                        buffer_blob,
-                        &material_properties,
-                        &mut transparent_geometry,
-                        collision_geometry,
-                    )?;
-                } else {
-                    add_primitive_geometry_to_buffers(
-                        &primitive,
-                        &node,
-                        transform,
-                        normal_matrix,
-                        buffer_blob,
-                        &material_properties,
-                        &mut opaque_geometry,
-                        collision_geometry,
-                    )?;
-                }
+                let staging_buffers =
+                    if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
+                        &mut transparent_geometry
+                    } else {
+                        &mut opaque_geometry
+                    };
+
+                add_primitive_geometry_to_buffers(
+                    &primitive,
+                    &node,
+                    transform,
+                    normal_matrix,
+                    buffer_blob,
+                    &material_properties,
+                    staging_buffers,
+                    collision_geometry,
+                )?;
             }
         }
 
@@ -367,19 +377,27 @@ impl Model {
 
         let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder, name)?;
 
+        let textures = renderer
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("{} texture bind group", name)),
+                layout: &renderer.texture_array_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&textures),
+                }],
+            });
+
         let mut opaque_geometry = StagingModelBuffers::default();
         let mut transparent_geometry = StagingModelBuffers::default();
+
+        assert_eq!(gltf.skins().count(), 0);
 
         for (node, mesh) in gltf
             .nodes()
             .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
         {
-            let transform = if node.skin().is_some() {
-                // We can't use node transforms for animated models.
-                Mat4::identity()
-            } else {
-                node_tree.transform_of(node.index())
-            };
+            let transform = node_tree.transform_of(node.index());
             let normal_matrix = normal_matrix(transform);
 
             for primitive in mesh.primitives() {
@@ -390,29 +408,23 @@ impl Model {
                     ));
                 }
 
-                if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
-                    add_primitive_geometry_to_buffers(
-                        &primitive,
-                        &node,
-                        transform,
-                        normal_matrix,
-                        buffer_blob,
-                        &HashMap::new(),
-                        &mut transparent_geometry,
-                        None,
-                    )?;
-                } else {
-                    add_primitive_geometry_to_buffers(
-                        &primitive,
-                        &node,
-                        transform,
-                        normal_matrix,
-                        buffer_blob,
-                        &HashMap::new(),
-                        &mut opaque_geometry,
-                        None,
-                    )?;
-                }
+                let staging_buffers =
+                    if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
+                        &mut transparent_geometry
+                    } else {
+                        &mut opaque_geometry
+                    };
+
+                add_primitive_geometry_to_buffers(
+                    &primitive,
+                    &node,
+                    transform,
+                    normal_matrix,
+                    buffer_blob,
+                    &HashMap::new(),
+                    staging_buffers,
+                    None,
+                )?;
             }
         }
 
@@ -504,10 +516,6 @@ fn add_primitive_geometry_to_buffers(
         Some(buffer_blob)
     });
 
-    let positions = reader.read_positions().unwrap();
-    let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
-    let normals = reader.read_normals().unwrap();
-
     let num_vertices = staging_buffers.vertices.len() as u32;
 
     staging_buffers.indices.extend(
@@ -529,6 +537,10 @@ fn add_primitive_geometry_to_buffers(
                 .map(|i| i + num_vertices_collision),
         );
     }
+
+    let positions = reader.read_positions().unwrap();
+    let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
+    let normals = reader.read_normals().unwrap();
 
     positions
         .zip(tex_coordinates)
@@ -640,7 +652,7 @@ fn load_texture_array(
     renderer: &Renderer,
     encoder: &mut wgpu::CommandEncoder,
     name: &str,
-) -> anyhow::Result<wgpu::BindGroup> {
+) -> anyhow::Result<wgpu::TextureView> {
     let num_textures = gltf.textures().count() as u32;
 
     if num_textures == 0 {
@@ -792,24 +804,11 @@ fn load_texture_array(
 
     let (texture_array, ..) = texture_array.unwrap();
 
-    let texture_view = texture_array.create_view(&wgpu::TextureViewDescriptor {
+    Ok(texture_array.create_view(&wgpu::TextureViewDescriptor {
         label: Some(&format!("{} texture view", name)),
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
-    });
-
-    let texture_array_bind_group = renderer
-        .device
-        .create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("{} texture bind group", name)),
-            layout: &renderer.texture_array_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            }],
-        });
-
-    Ok(texture_array_bind_group)
+    }))
 }
 
 pub fn load_single_texture(

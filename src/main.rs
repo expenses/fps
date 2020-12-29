@@ -3,7 +3,7 @@ mod assets;
 mod ecs;
 mod renderer;
 
-use crate::renderer::INDEX_FORMAT;
+use crate::renderer::{Renderer, INDEX_FORMAT};
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
@@ -105,9 +105,15 @@ fn vec3_into<T: From<[f32; 3]>>(vec3: Vec3) -> T {
     arr.into()
 }
 
-struct ModelBuffer {
-    model: assets::Model,
-    instances: renderer::DynamicBuffer<Mat4>,
+enum ModelBuffer {
+    Static {
+        model: assets::Model,
+        instances: renderer::DynamicBuffer<Mat4>,
+    },
+    Animated {
+        model: assets::AnimatedModel,
+        instances: renderer::DynamicBuffer<Mat4>,
+    },
 }
 
 struct ModelBuffers {
@@ -116,13 +122,13 @@ struct ModelBuffers {
 
 impl ModelBuffers {
     fn new(
-        renderer: &renderer::Renderer,
+        renderer: &Renderer,
         mut init_encoder: &mut wgpu::CommandEncoder,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             inner: vec![
-                ModelBuffer {
-                    model: assets::Model::load_gltf(
+                ModelBuffer::Animated {
+                    model: assets::AnimatedModel::load_gltf(
                         include_bytes!("../models/warehouse_robot.glb"),
                         &renderer,
                         &mut init_encoder,
@@ -135,8 +141,8 @@ impl ModelBuffers {
                         wgpu::BufferUsage::VERTEX,
                     ),
                 },
-                ModelBuffer {
-                    model: assets::Model::load_gltf(
+                ModelBuffer::Animated {
+                    model: assets::AnimatedModel::load_gltf(
                         include_bytes!("../models/mouse.glb"),
                         &renderer,
                         &mut init_encoder,
@@ -154,29 +160,68 @@ impl ModelBuffers {
     }
 
     fn push(&mut self, model: &Model, instance: Mat4) {
-        self.inner[*model as usize].instances.push(instance);
+        let instances = match &mut self.inner[*model as usize] {
+            ModelBuffer::Static { instances, .. } => instances,
+            ModelBuffer::Animated { instances, .. } => instances,
+        };
+
+        instances.push(instance);
     }
 
-    fn upload(&mut self, renderer: &renderer::Renderer) {
+    fn upload(&mut self, renderer: &Renderer) {
         for model_buffer in &mut self.inner {
-            model_buffer.instances.upload(renderer);
-            model_buffer.instances.clear();
+            let instances = match model_buffer {
+                ModelBuffer::Static { instances, .. } => instances,
+                ModelBuffer::Animated { instances, .. } => instances,
+            };
+            instances.upload(renderer);
+            instances.clear();
         }
     }
 
-    fn render_opaque<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    fn render_opaque<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, renderer: &'a Renderer) {
         for model_buffer in &self.inner {
-            if let Some((slice, num)) = model_buffer.instances.get() {
-                render_model_opaque(&model_buffer.model, render_pass, slice, num);
+            match model_buffer {
+                ModelBuffer::Static { instances, model } => {
+                    if let Some((slice, num)) = instances.get() {
+                        render_model_opaque(&model, render_pass, renderer, slice, num);
+                    }
+                }
+                ModelBuffer::Animated { instances, model } => {
+                    if let Some((slice, num)) = instances.get() {
+                        render_animated_model_opaque(&model, render_pass, renderer, slice, num);
+                    }
+                }
             }
         }
     }
 
-    fn render_transparent<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    fn render_transparent<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        renderer: &'a Renderer,
+    ) {
         for model_buffer in &self.inner {
-            if model_buffer.model.transparent_geometry.num_indices > 0 {
-                if let Some((slice, num)) = model_buffer.instances.get() {
-                    render_model_transparent(&model_buffer.model, render_pass, slice, num);
+            match model_buffer {
+                ModelBuffer::Static { instances, model } => {
+                    if model.transparent_geometry.num_indices > 0 {
+                        if let Some((slice, num)) = instances.get() {
+                            render_model_transparent(&model, render_pass, renderer, slice, num);
+                        }
+                    }
+                }
+                ModelBuffer::Animated { instances, model } => {
+                    if model.transparent_geometry.num_indices > 0 {
+                        if let Some((slice, num)) = instances.get() {
+                            render_animated_model_transparent(
+                                &model,
+                                render_pass,
+                                renderer,
+                                slice,
+                                num,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -205,7 +250,7 @@ async fn run() -> anyhow::Result<()> {
         fxaa_enabled: true,
     };
 
-    let mut renderer = renderer::Renderer::new(&event_loop, &settings).await?;
+    let mut renderer = Renderer::new(&event_loop, &settings).await?;
 
     let mut init_encoder =
         renderer
@@ -622,7 +667,7 @@ async fn run() -> anyhow::Result<()> {
 
                     // Render opaque things
 
-                    render_pass.set_pipeline(&renderer.opaque_render_pipeline);
+                    render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
@@ -632,6 +677,7 @@ async fn run() -> anyhow::Result<()> {
                         render_model_opaque(
                             &monkey_gun,
                             &mut render_pass,
+                            &renderer,
                             gun_instance.slice(..),
                             1,
                         );
@@ -646,7 +692,7 @@ async fn run() -> anyhow::Result<()> {
                         .set_index_buffer(level.opaque_geometry.indices.slice(..), INDEX_FORMAT);
                     render_pass.draw_indexed(0..level.opaque_geometry.num_indices, 0, 0..1);
 
-                    model_buffers.render_opaque(&mut render_pass);
+                    model_buffers.render_opaque(&mut render_pass, &renderer);
 
                     // Render the skybox
 
@@ -656,7 +702,7 @@ async fn run() -> anyhow::Result<()> {
 
                     // Render transparent things
 
-                    render_pass.set_pipeline(&renderer.transparent_render_pipeline);
+                    render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
 
                     render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, level.transparent_geometry.vertices.slice(..));
@@ -677,7 +723,7 @@ async fn run() -> anyhow::Result<()> {
                         render_pass.draw(0..len, 0..1);
                     }
 
-                    model_buffers.render_transparent(&mut render_pass);
+                    model_buffers.render_transparent(&mut render_pass, &renderer);
 
                     // Render debug lines
 
@@ -1112,10 +1158,27 @@ fn collision_handling(
 fn render_model_opaque<'a>(
     model: &'a assets::Model,
     render_pass: &mut wgpu::RenderPass<'a>,
+    renderer: &'a Renderer,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
 ) {
+    render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
     render_pass.set_bind_group(1, &model.textures, &[]);
+    render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
+    render_pass.set_vertex_buffer(1, instances);
+    render_pass.set_index_buffer(model.opaque_geometry.indices.slice(..), INDEX_FORMAT);
+    render_pass.draw_indexed(0..model.opaque_geometry.num_indices, 0, 0..num_instances)
+}
+
+fn render_animated_model_opaque<'a>(
+    model: &'a assets::AnimatedModel,
+    render_pass: &mut wgpu::RenderPass<'a>,
+    renderer: &'a Renderer,
+    instances: wgpu::BufferSlice<'a>,
+    num_instances: u32,
+) {
+    render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
+    render_pass.set_bind_group(1, &model.bind_group, &[]);
     render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(model.opaque_geometry.indices.slice(..), INDEX_FORMAT);
@@ -1125,10 +1188,31 @@ fn render_model_opaque<'a>(
 fn render_model_transparent<'a>(
     model: &'a assets::Model,
     render_pass: &mut wgpu::RenderPass<'a>,
+    renderer: &'a Renderer,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
 ) {
+    render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
     render_pass.set_bind_group(1, &model.textures, &[]);
+    render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
+    render_pass.set_vertex_buffer(1, instances);
+    render_pass.set_index_buffer(model.transparent_geometry.indices.slice(..), INDEX_FORMAT);
+    render_pass.draw_indexed(
+        0..model.transparent_geometry.num_indices,
+        0,
+        0..num_instances,
+    )
+}
+
+fn render_animated_model_transparent<'a>(
+    model: &'a assets::AnimatedModel,
+    render_pass: &mut wgpu::RenderPass<'a>,
+    renderer: &'a Renderer,
+    instances: wgpu::BufferSlice<'a>,
+    num_instances: u32,
+) {
+    render_pass.set_pipeline(&renderer.animated_transparent_render_pipeline);
+    render_pass.set_bind_group(1, &model.bind_group, &[]);
     render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(model.transparent_geometry.indices.slice(..), INDEX_FORMAT);

@@ -1,5 +1,5 @@
 use crate::Settings;
-use ultraviolet::{Mat4, Vec2, Vec3};
+use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 pub mod debug_lines;
@@ -23,6 +23,18 @@ pub struct Vertex {
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct AnimatedVertex {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub uv: Vec2,
+    pub texture_index: i32,
+    pub emission_strength: f32,
+    pub joints: [u16; 4],
+    pub joint_weights: Vec4,
+}
+
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 pub struct Instance {
     pub transform: Mat4,
 }
@@ -42,13 +54,17 @@ pub struct Renderer {
     perspective_buffer: wgpu::Buffer,
     pub main_bind_group: wgpu::BindGroup,
     pub identity_instance_buffer: wgpu::Buffer,
-    pub opaque_render_pipeline: wgpu::RenderPipeline,
-    pub transparent_render_pipeline: wgpu::RenderPipeline,
-    pub skybox_render_pipeline: wgpu::RenderPipeline,
     pub linear_sampler: wgpu::Sampler,
     pub mipmap_generation_pipeline: wgpu::RenderPipeline,
     pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
     screen_dimension_uniform_buffer: wgpu::Buffer,
+    pub animated_model_bind_group_layout: wgpu::BindGroupLayout,
+
+    pub static_opaque_render_pipeline: wgpu::RenderPipeline,
+    pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
+    pub static_transparent_render_pipeline: wgpu::RenderPipeline,
+    pub animated_transparent_render_pipeline: wgpu::RenderPipeline,
+    pub skybox_render_pipeline: wgpu::RenderPipeline,
 
     pub pre_fxaa_framebuffer: wgpu::TextureView,
     pub fxaa_bind_group: wgpu::BindGroup,
@@ -249,8 +265,39 @@ impl Renderer {
                 }],
             });
 
-        let vs_model = wgpu::include_spirv!("../shaders/compiled/model.vert.spv");
-        let vs_model_module = device.create_shader_module(&vs_model);
+        let animated_model_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("animated model bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let vs_static_model = wgpu::include_spirv!("../shaders/compiled/static_model.vert.spv");
+        let vs_static_model_module = device.create_shader_module(&vs_static_model);
+
+        let vs_animated_model = wgpu::include_spirv!("../shaders/compiled/animated_model.vert.spv");
+        let vs_animated_model_module = device.create_shader_module(&vs_animated_model);
+
         let fs_model = wgpu::include_spirv!("../shaders/compiled/model.frag.spv");
         let fs_model_module = device.create_shader_module(&fs_model);
 
@@ -259,12 +306,23 @@ impl Renderer {
         let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
         let fs_skybox_module = device.create_shader_module(&fs_skybox);
 
-        let model_render_pipeline_layout =
+        let static_model_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("render pipeline layout"),
+                label: Some("static model pipeline layout"),
                 bind_group_layouts: &[
                     &main_bind_group_layout,
                     &texture_array_bind_group_layout,
+                    &lights_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
+
+        let animated_model_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("static model pipeline layout"),
+                bind_group_layouts: &[
+                    &main_bind_group_layout,
+                    &animated_model_bind_group_layout,
                     &lights_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
@@ -277,39 +335,81 @@ impl Renderer {
                 push_constant_ranges: &[],
             });
 
-        let opaque_render_pipeline = create_render_pipeline(
+        let static_opaque_render_pipeline = create_render_pipeline(
             &device,
-            "opaque render pipeline",
-            &model_render_pipeline_layout,
-            &vs_model_module,
+            "static opaque render pipeline",
+            &static_model_pipeline_layout,
+            &vs_static_model_module,
             &fs_model_module,
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
-            wgpu::CompareFunction::Less,
+            false,
         );
 
-        let transparent_render_pipeline = create_render_pipeline(
+        let animated_opaque_render_pipeline = create_render_pipeline(
             &device,
-            "transparent render pipeline",
-            &model_render_pipeline_layout,
-            &vs_model_module,
+            "animated opaque render pipeline",
+            &animated_model_pipeline_layout,
+            &vs_animated_model_module,
+            &fs_model_module,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            true,
+            true,
+        );
+
+        let static_transparent_render_pipeline = create_render_pipeline(
+            &device,
+            "static transparent render pipeline",
+            &static_model_pipeline_layout,
+            &vs_static_model_module,
             &fs_model_module,
             alpha_blend_colour_descriptor(),
             // Can't remember if this is a good idea or not.
             false,
-            wgpu::CompareFunction::Less,
+            false,
         );
 
-        let skybox_render_pipeline = create_render_pipeline(
+        let animated_transparent_render_pipeline = create_render_pipeline(
             &device,
-            "skybox render pipeline",
-            &skybox_render_pipeline_layout,
-            &vs_skybox_module,
-            &fs_skybox_module,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            "animated transparent render pipeline",
+            &animated_model_pipeline_layout,
+            &vs_animated_model_module,
+            &fs_model_module,
+            alpha_blend_colour_descriptor(),
+            // Can't remember if this is a good idea or not.
+            false,
             true,
-            wgpu::CompareFunction::Equal,
         );
+
+        let skybox_render_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("skybox render pipeline"),
+                layout: Some(&skybox_render_pipeline_layout),
+                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &vs_skybox_module,
+                    entry_point: "main",
+                },
+                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                    module: &fs_skybox_module,
+                    entry_point: "main",
+                }),
+                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+                color_states: &[PRE_TONEMAP_FRAMEBUFFER_FORMAT.into()],
+                depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Equal,
+                    stencil: wgpu::StencilStateDescriptor::default(),
+                }),
+                vertex_state: wgpu::VertexStateDescriptor {
+                    index_format: None,
+                    vertex_buffers: &[],
+                },
+                sample_count: 1,
+                sample_mask: !0,
+                alpha_to_coverage_enabled: false,
+            });
 
         let identity_instance_buffer = single_instance_buffer(
             &device,
@@ -524,8 +624,8 @@ impl Renderer {
             surface,
             swap_chain,
             depth_texture,
-            opaque_render_pipeline,
-            transparent_render_pipeline,
+            static_opaque_render_pipeline,
+            static_transparent_render_pipeline,
             identity_instance_buffer,
             texture_array_bind_group_layout,
             skybox_texture_bind_group_layout,
@@ -536,6 +636,9 @@ impl Renderer {
             mipmap_generation_pipeline,
             linear_sampler,
             screen_dimension_uniform_buffer,
+            animated_opaque_render_pipeline,
+            animated_transparent_render_pipeline,
+            animated_model_bind_group_layout,
 
             post_processing_bind_group_layout,
             pre_fxaa_framebuffer,
@@ -686,6 +789,15 @@ pub fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
     }
 }
 
+const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
+    wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float];
+const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 4] =
+    wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4];
+
+const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float, 5 => Ushort4, 6 => Float4];
+const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 4] =
+    wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4];
+
 fn create_render_pipeline(
     device: &wgpu::Device,
     label: &str,
@@ -694,7 +806,7 @@ fn create_render_pipeline(
     fs_module: &wgpu::ShaderModule,
     colour_descriptor: wgpu::ColorStateDescriptor,
     depth_write_enabled: bool,
-    depth_compare: wgpu::CompareFunction,
+    animated: bool,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -716,21 +828,33 @@ fn create_render_pipeline(
         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
             format: DEPTH_FORMAT,
             depth_write_enabled,
-            depth_compare,
+            depth_compare:  wgpu::CompareFunction::Less,
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
         vertex_state: wgpu::VertexStateDescriptor {
             index_format: Some(INDEX_FORMAT),
             vertex_buffers: &[
                 wgpu::VertexBufferDescriptor {
-                    stride: std::mem::size_of::<Vertex>() as u64,
+                    stride: if animated {
+                        std::mem::size_of::<AnimatedVertex>()
+                    } else {
+                        std::mem::size_of::<Vertex>()
+                    } as u64,
                     step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float],
+                    attributes: &if animated {
+                        &ANIMATED_VERTEX_ATTR_ARRAY[..]
+                    } else {
+                        &STATIC_VERTEX_ATTR_ARRAY[..]
+                    },
                 },
                 wgpu::VertexBufferDescriptor {
                     stride: std::mem::size_of::<Instance>() as u64,
                     step_mode: wgpu::InputStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4],
+                    attributes: &if animated {
+                        ANIMATED_INSTANCE_ATTR_ARRAY
+                    } else {
+                        STATIC_INSTANCE_ATTR_ARRAY
+                    },
                 },
             ],
         },
