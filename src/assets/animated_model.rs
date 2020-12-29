@@ -27,7 +27,7 @@ impl AnimatedModel {
         renderer: &Renderer,
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
-        getter: impl FnOnce(gltf::iter::Animations),
+        getter: impl FnOnce(gltf::iter::Animations, gltf::skin::iter::Joints),
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
@@ -99,7 +99,7 @@ impl AnimatedModel {
         let scene = gltf.scenes().next().unwrap();
         assert_eq!(scene.nodes().count(), 1);
 
-        getter(gltf.animations());
+        getter(gltf.animations(), skin.joints());
 
         let mut animations = Vec::new();
 
@@ -278,6 +278,11 @@ impl AnimationJoints {
                     parent_transform * self.local_transforms[index].into_homogeneous_matrix();
             }
         }
+    }
+
+    pub fn get_global_transform(&self, joint_index: usize, model: &AnimatedModel) -> Mat4 {
+        let node_index = model.joint_node_indices[joint_index];
+        self.global_transforms[node_index]
     }
 }
 

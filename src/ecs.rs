@@ -61,14 +61,23 @@ fn render_animated_models(
 }
 
 #[legion::system(for_each)]
-pub fn debug_render_vision_cones(
+fn debug_render_vision_cones(
     #[resource] buffer: &mut DebugVisionCones,
     #[resource] player_position: &PlayerPosition,
+    #[resource] model_buffers: &ModelBuffers,
     isometry: &Isometry3,
     vision_cone: &VisionCone,
+    animation_state: &AnimationState,
+    model: &Model,
 ) {
+    let base = model_buffers.robot_animation_info.base;
+    let model = model_buffers.get_animated_model(model).unwrap();
+    let base_joint = animation_state.joints.get_global_transform(base, model);
+    let joint_rotation = base_joint.extract_rotation();
+
     let mut isometry = *isometry;
-    isometry.rotation = isometry.rotation * Rotor3::from_rotation_yz(-90_f32.to_radians());
+    isometry.rotation =
+        isometry.rotation * joint_rotation * Rotor3::from_rotation_yz(-90_f32.to_radians());
     isometry.prepend_translation(Vec3::new(0.0, -vision_cone.cone.half_height, 0.0));
 
     let na_isometry = isometry3_to_na_isometry(isometry);

@@ -170,13 +170,19 @@ impl ModelBuffer {
 
 #[derive(Default, Debug)]
 struct MouseAnimationInfo {
-    idle_animation: usize,
-    walk_animation: usize,
+    idle: usize,
+    walk: usize,
+}
+
+#[derive(Default, Debug)]
+struct RobotAnimationInfo {
+    base: usize,
 }
 
 struct ModelBuffers {
     inner: Vec<ModelBuffer>,
     mouse_animation_info: MouseAnimationInfo,
+    robot_animation_info: RobotAnimationInfo,
 }
 
 impl ModelBuffers {
@@ -185,6 +191,7 @@ impl ModelBuffers {
         mut init_encoder: &mut wgpu::CommandEncoder,
     ) -> anyhow::Result<Self> {
         let mut mouse_animation_info = MouseAnimationInfo::default();
+        let mut robot_animation_info = RobotAnimationInfo::default();
 
         let buffers = vec![
             ModelBuffer::load_animated(
@@ -193,7 +200,13 @@ impl ModelBuffers {
                     &renderer,
                     &mut init_encoder,
                     "warehouse robot",
-                    |_| {},
+                    |_, joints| {
+                        robot_animation_info.base = joints
+                            .enumerate()
+                            .find(|(_, node)| node.name() == Some("Base"))
+                            .map(|(i, _)| i)
+                            .unwrap();
+                    },
                 )?,
                 "robot",
                 renderer,
@@ -204,15 +217,18 @@ impl ModelBuffers {
                     &renderer,
                     &mut init_encoder,
                     "mouse",
-                    |mut animations| {
-                        mouse_animation_info.idle_animation = animations
-                            .find(|animation| animation.name() == Some("Idle"))
-                            .map(|animation| animation.index())
-                            .unwrap();
-                        mouse_animation_info.walk_animation = animations
-                            .find(|animation| animation.name() == Some("Walk"))
-                            .map(|animation| animation.index())
-                            .unwrap();
+                    |animations, _| {
+                        let mut animations: std::collections::HashMap<_, _> = animations
+                            .map(|animation| (animation.name().unwrap(), animation.index()))
+                            .collect();
+
+                        mouse_animation_info.idle = animations.remove("Idle").unwrap();
+                        mouse_animation_info.walk = animations.remove("Walk").unwrap();
+
+                        if !animations.is_empty() {
+                            log::debug!("Unhandled animations:");
+                            animations.keys().for_each(|name| log::debug!("{}", name));
+                        }
                     },
                 )?,
                 "mouse",
@@ -220,12 +236,21 @@ impl ModelBuffers {
             ),
         ];
 
-        println!("{:?}", mouse_animation_info);
+        log::info!("{:?}", mouse_animation_info);
+        log::info!("{:?}", robot_animation_info);
 
         Ok(Self {
             inner: buffers,
             mouse_animation_info,
+            robot_animation_info,
         })
+    }
+
+    fn get_animated_model(&self, model: &Model) -> Option<&assets::AnimatedModel> {
+        match &self.inner[*model as usize] {
+            ModelBuffer::Static { .. } => None,
+            ModelBuffer::Animated { model, .. } => Some(model),
+        }
     }
 
     fn get_buffer(
@@ -438,7 +463,7 @@ async fn run() -> anyhow::Result<()> {
             if let Some(joints) = model_buffers.clone_animation_joints(&model) {
                 let animation = match model {
                     Model::Robot => 0,
-                    Model::Mouse => model_buffers.mouse_animation_info.idle_animation,
+                    Model::Mouse => model_buffers.mouse_animation_info.idle,
                 };
 
                 entry.add_component(ecs::AnimationState {
