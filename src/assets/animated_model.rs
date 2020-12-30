@@ -215,11 +215,7 @@ impl AnimatedModel {
             animations.len(),
         );
 
-        let global_transforms = gltf
-            .nodes()
-            .map(|node| node.transform().matrix().into())
-            .collect();
-        let local_transforms = gltf
+        let joint_isometries: Vec<_> = gltf
             .nodes()
             .map(|node| {
                 let (translation, rotation, _) = node.transform().decomposed();
@@ -238,8 +234,8 @@ impl AnimatedModel {
             num_joints,
 
             animation_joints: AnimationJoints {
-                global_transforms,
-                local_transforms,
+                global_transforms: joint_isometries.clone(),
+                local_transforms: joint_isometries,
             },
 
             joint_node_indices,
@@ -255,7 +251,7 @@ impl AnimatedModel {
 
 #[derive(Clone)]
 pub struct AnimationJoints {
-    global_transforms: Vec<Mat4>,
+    global_transforms: Vec<Isometry3>,
     local_transforms: Vec<Isometry3>,
 }
 
@@ -266,7 +262,8 @@ impl AnimationJoints {
             .iter()
             .enumerate()
             .map(move |(joint_index, &node_index)| {
-                self.global_transforms[node_index] * model.inverse_bind_matrices[joint_index]
+                self.global_transforms[node_index].into_homogeneous_matrix()
+                    * model.inverse_bind_matrices[joint_index]
             })
     }
 
@@ -274,13 +271,12 @@ impl AnimationJoints {
         for &(index, parent) in depth_first_nodes.iter() {
             if let Some(parent) = parent {
                 let parent_transform = self.global_transforms[parent];
-                self.global_transforms[index] =
-                    parent_transform * self.local_transforms[index].into_homogeneous_matrix();
+                self.global_transforms[index] = parent_transform * self.local_transforms[index];
             }
         }
     }
 
-    pub fn get_global_transform(&self, joint_index: usize, model: &AnimatedModel) -> Mat4 {
+    pub fn get_global_transform(&self, joint_index: usize, model: &AnimatedModel) -> Isometry3 {
         let node_index = model.joint_node_indices[joint_index];
         self.global_transforms[node_index]
     }
