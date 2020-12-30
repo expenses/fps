@@ -19,12 +19,10 @@ layout(location = 2) out vec3 out_pos;
 layout(location = 3) out vec3 out_normal;
 layout(location = 4) out float out_emission;
 
-layout(set = 0, binding = 0) uniform Perspective {
-    mat4 perspective;
-};
-
-layout(set = 0, binding = 1) uniform View {
-    mat4 view;
+layout(set = 0, binding = 0) uniform ProjectionView {
+    mat4 projection_view;
+    // mat4 view;
+    // mat4 projection;
 };
 
 layout(set = 1, binding = 1) uniform AnimatedModelUniforms {
@@ -49,11 +47,13 @@ void main() {
 
     mat4 skinned_transform = transform * skin;
 
+    vec4 skinned_pos = skinned_transform * vec4(pos, 1.0);
+
     out_uv = uv;
     out_texture_index = texture_index;
-    out_pos = vec3(skinned_transform * vec4(pos, 1.0));
+    out_pos = vec3(skinned_pos);
     out_normal = mat3(transpose(inverse(skinned_transform))) * normal;
     out_emission = emission;
 
-    gl_Position = perspective * view * skinned_transform * vec4(pos, 1.0);
+    gl_Position = projection_view * skinned_pos;
 }

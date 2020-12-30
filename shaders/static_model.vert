@@ -21,23 +21,23 @@ layout(location = 2) out vec3 out_pos;
 layout(location = 3) out vec3 out_normal;
 layout(location = 4) out float out_emission;
 
-layout(set = 0, binding = 0) uniform Perspective {
-    mat4 perspective;
-};
-
-layout(set = 0, binding = 1) uniform View {
-    mat4 view;
+layout(set = 0, binding = 0) uniform ProjectionView {
+    mat4 projection_view;
+    // mat4 view;
+    // mat4 projection;
 };
 
 void main() {
     mat4 transform = mat4(transform_1, transform_2, transform_3, transform_4);
     mat3 normal_transform = mat3(normal_transform_1, normal_transform_2, normal_transform_3);
 
+    vec4 transformed_pos = transform * vec4(pos, 1.0);
+
     out_uv = uv;
     out_texture_index = texture_index;
-    out_pos = vec3(transform * vec4(pos, 1.0));
+    out_pos = vec3(transformed_pos);
     out_normal = normal_transform * normal;
     out_emission = emission;
 
-    gl_Position = perspective * view * transform * vec4(pos, 1.0);
+    gl_Position = projection_view * transformed_pos;
 }

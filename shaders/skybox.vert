@@ -2,12 +2,10 @@
 
 layout(location = 0) out vec3 out_uv;
 
-layout(set = 0, binding = 0) uniform Perspective {
-    mat4 perspective;
-};
-
-layout(set = 0, binding = 1) uniform View {
+layout(set = 0, binding = 0) uniform ProjectionView {
+    mat4 projection_view;
     mat4 view;
+    mat4 projection;
 };
 
 void main() {
@@ -22,7 +20,7 @@ void main() {
     }
 
     mat3 inv_view = transpose(mat3(view));
-    vec3 unprojected = (inverse(perspective) * pos).xyz;
+    vec3 unprojected = (inverse(projection) * pos).xyz;
     out_uv = inv_view * unprojected;
 
     // https://learnopengl.com/Advanced-OpenGL/Cubemaps 'An optimisation'

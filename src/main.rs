@@ -259,13 +259,6 @@ impl ModelBuffers {
         })
     }
 
-    fn get_animated_model(&self, model: &Model) -> Option<&assets::AnimatedModel> {
-        match &self.inner[*model as usize] {
-            ModelBuffer::Static { .. } => None,
-            ModelBuffer::Animated { model, .. } => Some(model),
-        }
-    }
-
     fn get_buffer(
         &mut self,
         model: &Model,

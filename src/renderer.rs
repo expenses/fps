@@ -69,6 +69,15 @@ impl AnimatedInstance {
     }
 }
 
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Default)]
+pub struct ProjectionViewUniforms {
+    projection_view: Mat4,
+    // Needed for skybox
+    view: Mat4,
+    projection: Mat4,
+}
+
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -80,8 +89,8 @@ pub struct Renderer {
     pub swap_chain: wgpu::SwapChain,
     pub depth_texture: wgpu::TextureView,
     surface: wgpu::Surface,
-    view_buffer: wgpu::Buffer,
-    perspective_buffer: wgpu::Buffer,
+    projection_view_buffer: wgpu::Buffer,
+    projection_matrix: Mat4,
     pub main_bind_group: wgpu::BindGroup,
     pub identity_instance_buffer: wgpu::Buffer,
     pub linear_sampler: wgpu::Sampler,
@@ -160,22 +169,18 @@ impl Renderer {
             ..Default::default()
         });
 
-        let view_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("view buffer"),
-            contents: bytemuck::bytes_of(&Mat4::identity()),
+        let projection_view_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("projection view buffer"),
+            contents: bytemuck::bytes_of(&ProjectionViewUniforms::default()),
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
 
         let window_size = window.inner_size();
 
-        let perspective_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("perspective buffer"),
-            contents: bytemuck::bytes_of(&perspective_matrix(
-                window_size.width,
-                window_size.height,
-            )),
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        });
+        let projection_matrix = perspective_matrix(
+            window_size.width,
+            window_size.height,
+        );
 
         let main_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -193,16 +198,6 @@ impl Renderer {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
                         visibility: wgpu::ShaderStage::FRAGMENT,
                         ty: wgpu::BindingType::Sampler {
                             comparison: false,
@@ -219,14 +214,10 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: perspective_buffer.as_entire_binding(),
+                    resource: projection_view_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: view_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
                     resource: wgpu::BindingResource::Sampler(&nearest_sampler),
                 },
             ],
@@ -664,8 +655,8 @@ impl Renderer {
             device,
             queue,
             window,
-            view_buffer,
-            perspective_buffer,
+            projection_view_buffer,
+            projection_matrix,
             main_bind_group,
             surface,
             swap_chain,
@@ -697,9 +688,13 @@ impl Renderer {
         })
     }
 
+    // Must be called after camera movement or window resizing.
     pub fn set_camera_view(&self, view: Mat4) {
         self.queue
-            .write_buffer(&self.view_buffer, 0, bytemuck::bytes_of(&view));
+            .write_buffer(&self.projection_view_buffer, 0, bytemuck::bytes_of(&ProjectionViewUniforms {
+                view, projection_view: self.projection_matrix * view,
+                projection: self.projection_matrix,
+            }));
     }
 
     pub fn resize(&mut self, width: u32, height: u32, _settings: &Settings) {
@@ -723,11 +718,7 @@ impl Renderer {
             wgpu::TextureUsage::RENDER_ATTACHMENT,
         );
 
-        self.queue.write_buffer(
-            &self.perspective_buffer,
-            0,
-            bytemuck::bytes_of(&perspective_matrix(width, height)),
-        );
+        self.projection_matrix = perspective_matrix(width, height);
 
         self.queue.write_buffer(
             &self.screen_dimension_uniform_buffer,

@@ -68,10 +68,8 @@ fn debug_render_vision_cones(
     isometry: &Isometry3,
     vision_cone: &VisionCone,
     animation_state: &AnimationState,
-    model: &Model,
 ) {
     let base_node = model_buffers.robot_animation_info.base_node;
-    let model = model_buffers.get_animated_model(model).unwrap();
     let base_joint = animation_state.joints.get_global_transform(base_node);
     let joint_rotation = base_joint.rotation;
 
