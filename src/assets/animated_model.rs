@@ -16,7 +16,7 @@ pub struct AnimatedModel {
     pub num_joints: usize,
     pub animation_joints: AnimationJoints,
 
-    joint_node_indices: Vec<usize>,
+    joint_indices_to_node_indices: Vec<usize>,
     inverse_bind_matrices: Vec<Mat4>,
     depth_first_nodes: Vec<(usize, Option<usize>)>,
 }
@@ -77,29 +77,12 @@ impl AnimatedModel {
         }
 
         assert_eq!(gltf.skins().count(), 1);
-
         let skin = gltf.skins().next().unwrap();
-        let num_joints = skin.joints().count();
-
         assert!(skin.skeleton().is_none());
-
-        let inverse_bind_matrices: Vec<Mat4> = skin
-            .reader(|buffer| {
-                assert_eq!(buffer.index(), 0);
-                Some(buffer_blob)
-            })
-            .read_inverse_bind_matrices()
-            .ok_or_else(|| anyhow::anyhow!("Missing inverse bind matrices"))?
-            .map(|mat| mat.into())
-            .collect();
-
-        let joint_node_indices: Vec<_> = skin.joints().map(|node| node.index()).collect();
 
         assert_eq!(gltf.scenes().count(), 1);
         let scene = gltf.scenes().next().unwrap();
         assert_eq!(scene.nodes().count(), 1);
-
-        getter(gltf.animations(), skin.joints());
 
         let mut animations = Vec::new();
 
@@ -176,6 +159,10 @@ impl AnimatedModel {
             });
         }
 
+        getter(gltf.animations(), skin.joints());
+
+        let num_joints = skin.joints().count();
+
         let animated_model_uniform_buffer =
             renderer
                 .device
@@ -238,8 +225,16 @@ impl AnimatedModel {
                 local_transforms: joint_isometries,
             },
 
-            joint_node_indices,
-            inverse_bind_matrices,
+            joint_indices_to_node_indices: skin.joints().map(|node| node.index()).collect(),
+            inverse_bind_matrices: skin
+                .reader(|buffer| {
+                    assert_eq!(buffer.index(), 0);
+                    Some(buffer_blob)
+                })
+                .read_inverse_bind_matrices()
+                .ok_or_else(|| anyhow::anyhow!("Missing inverse bind matrices"))?
+                .map(|mat| mat.into())
+                .collect(),
             depth_first_nodes: node_tree.iter_depth_first().collect(),
         };
 
@@ -257,14 +252,12 @@ pub struct AnimationJoints {
 
 impl AnimationJoints {
     pub fn iter<'a>(&'a self, model: &'a AnimatedModel) -> impl Iterator<Item = Mat4> + 'a {
-        model
-            .joint_node_indices
-            .iter()
-            .enumerate()
-            .map(move |(joint_index, &node_index)| {
+        model.joint_indices_to_node_indices.iter().enumerate().map(
+            move |(joint_index, &node_index)| {
                 self.global_transforms[node_index].into_homogeneous_matrix()
                     * model.inverse_bind_matrices[joint_index]
-            })
+            },
+        )
     }
 
     fn update(&mut self, depth_first_nodes: &[(usize, Option<usize>)]) {
@@ -277,7 +270,7 @@ impl AnimationJoints {
     }
 
     pub fn get_global_transform(&self, joint_index: usize, model: &AnimatedModel) -> Isometry3 {
-        let node_index = model.joint_node_indices[joint_index];
+        let node_index = model.joint_indices_to_node_indices[joint_index];
         self.global_transforms[node_index]
     }
 }
