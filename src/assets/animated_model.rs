@@ -97,13 +97,22 @@ impl AnimatedModel {
             let mut translation_channels = Vec::new();
             let mut rotation_channels = Vec::new();
 
-            for channel in animation.channels() {
+            for (channel_index, channel) in animation.channels().enumerate() {
                 let reader = channel.reader(|buffer| {
                     assert_eq!(buffer.index(), 0);
                     Some(buffer_blob)
                 });
 
                 let inputs = reader.read_inputs().unwrap().collect();
+
+                log::trace!(
+                    "[{}] animation {:?}, channel {} ({:?}) uses {:?} interpolation.",
+                    name,
+                    animation.name(),
+                    channel_index,
+                    channel.target().property(),
+                    channel.sampler().interpolation()
+                );
 
                 match channel.target().property() {
                     gltf::animation::Property::Translation => {
@@ -209,6 +218,8 @@ impl AnimatedModel {
             gltf.textures().count() as u32,
             animations.len(),
         );
+
+        log::info!("Joints: {}, Nodes: {}", num_joints, gltf.nodes().count());
 
         let joint_isometries: Vec<_> = gltf
             .nodes()
