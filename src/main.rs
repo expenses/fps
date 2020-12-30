@@ -168,17 +168,6 @@ impl ModelBuffer {
     }
 }
 
-#[derive(Default, Debug)]
-struct MouseAnimationInfo {
-    idle: usize,
-    walk: usize,
-}
-
-#[derive(Default, Debug)]
-struct RobotAnimationInfo {
-    base_node: usize,
-}
-
 enum InstancePusher<'a> {
     Static(&'a mut DynamicBuffer<Instance>),
     Animated(&'a mut DynamicBuffer<AnimatedInstance>),
@@ -193,10 +182,19 @@ impl<'a> InstancePusher<'a> {
     }
 }
 
+#[derive(Default, Debug)]
+struct AnimationInfo {
+    mouse_idle_animation: usize,
+    mouse_walk_animation: usize,
+
+    robot_base_node: usize,
+
+    tentacle_poke_animation: usize,
+}
+
 struct ModelBuffers {
     inner: Vec<ModelBuffer>,
-    mouse_animation_info: MouseAnimationInfo,
-    robot_animation_info: RobotAnimationInfo,
+    animation_info: AnimationInfo,
 }
 
 impl ModelBuffers {
@@ -204,8 +202,7 @@ impl ModelBuffers {
         renderer: &Renderer,
         mut init_encoder: &mut wgpu::CommandEncoder,
     ) -> anyhow::Result<Self> {
-        let mut mouse_animation_info = MouseAnimationInfo::default();
-        let mut robot_animation_info = RobotAnimationInfo::default();
+        let mut animation_info = AnimationInfo::default();
 
         let buffers = vec![
             ModelBuffer::load_animated(
@@ -215,7 +212,7 @@ impl ModelBuffers {
                     &mut init_encoder,
                     "warehouse robot",
                     |_, mut joints| {
-                        robot_animation_info.base_node = joints
+                        animation_info.robot_base_node = joints
                             .find(|node| node.name() == Some("Base"))
                             .map(|node| node.index())
                             .unwrap();
@@ -235,8 +232,8 @@ impl ModelBuffers {
                             .map(|animation| (animation.name().unwrap(), animation.index()))
                             .collect();
 
-                        mouse_animation_info.idle = animations.remove("Idle").unwrap();
-                        mouse_animation_info.walk = animations.remove("Walk").unwrap();
+                        animation_info.mouse_idle_animation = animations.remove("Idle").unwrap();
+                        animation_info.mouse_walk_animation = animations.remove("Walk").unwrap();
 
                         if !animations.is_empty() {
                             log::debug!("Unhandled animations:");
@@ -247,15 +244,31 @@ impl ModelBuffers {
                 "mouse",
                 renderer,
             ),
+            ModelBuffer::load_animated(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/tentacle.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "tentacle",
+                    |mut animations, _| {
+                        assert_eq!(animations.clone().count(), 2);
+
+                        animation_info.tentacle_poke_animation = animations
+                            .find(|animation| animation.name() == Some("poke_baked"))
+                            .map(|animation| animation.index())
+                            .unwrap();
+                    },
+                )?,
+                "tentacle",
+                renderer,
+            ),
         ];
 
-        log::info!("{:?}", mouse_animation_info);
-        log::info!("{:?}", robot_animation_info);
+        log::info!("{:?}", animation_info);
 
         Ok(Self {
             inner: buffers,
-            mouse_animation_info,
-            robot_animation_info,
+            animation_info,
         })
     }
 
@@ -388,6 +401,7 @@ impl ModelBuffers {
 enum Model {
     Robot = 0,
     Mouse = 1,
+    Tentacle = 2,
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -451,6 +465,7 @@ async fn run() -> anyhow::Result<()> {
             let model = match character {
                 assets::Character::Robot => Model::Robot,
                 assets::Character::Mouse => Model::Mouse,
+                assets::Character::Tentacle => Model::Tentacle,
             };
 
             let entity = world.push((
@@ -466,13 +481,14 @@ async fn run() -> anyhow::Result<()> {
                         10.0, 10.0,
                     )));
                 }
-                Model::Mouse => {}
+                Model::Mouse | Model::Tentacle => {}
             }
 
             if let Some(joints) = model_buffers.clone_animation_joints(&model) {
                 let animation = match model {
                     Model::Robot => 0,
-                    Model::Mouse => model_buffers.mouse_animation_info.idle,
+                    Model::Tentacle => model_buffers.animation_info.tentacle_poke_animation,
+                    Model::Mouse => model_buffers.animation_info.mouse_idle_animation,
                 };
 
                 entry.add_component(ecs::AnimationState {

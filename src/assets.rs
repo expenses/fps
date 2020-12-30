@@ -80,6 +80,7 @@ impl Property {
 pub enum Character {
     Robot,
     Mouse,
+    Tentacle,
 }
 
 impl Character {
@@ -87,6 +88,7 @@ impl Character {
         match string {
             "robot" => Ok(Self::Robot),
             "mouse" => Ok(Self::Mouse),
+            "tentacle" => Ok(Self::Tentacle),
             _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
         }
     }

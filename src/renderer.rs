@@ -177,10 +177,7 @@ impl Renderer {
 
         let window_size = window.inner_size();
 
-        let projection_matrix = perspective_matrix(
-            window_size.width,
-            window_size.height,
-        );
+        let projection_matrix = perspective_matrix(window_size.width, window_size.height);
 
         let main_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -690,11 +687,15 @@ impl Renderer {
 
     // Must be called after camera movement or window resizing.
     pub fn set_camera_view(&self, view: Mat4) {
-        self.queue
-            .write_buffer(&self.projection_view_buffer, 0, bytemuck::bytes_of(&ProjectionViewUniforms {
-                view, projection_view: self.projection_matrix * view,
+        self.queue.write_buffer(
+            &self.projection_view_buffer,
+            0,
+            bytemuck::bytes_of(&ProjectionViewUniforms {
+                view,
+                projection_view: self.projection_matrix * view,
                 projection: self.projection_matrix,
-            }));
+            }),
+        );
     }
 
     pub fn resize(&mut self, width: u32, height: u32, _settings: &Settings) {

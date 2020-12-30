@@ -82,7 +82,14 @@ impl AnimatedModel {
 
         assert_eq!(gltf.scenes().count(), 1);
         let scene = gltf.scenes().next().unwrap();
-        assert_eq!(scene.nodes().count(), 1);
+        let root_nodes = scene.nodes().count();
+
+        if root_nodes > 1 {
+            log::warn!("[{}] There are {} root nodes in the scene instead of the expected 1. Are you exporting lights/cameras?", name, root_nodes);
+            for (i, node) in scene.nodes().enumerate() {
+                log::warn!("root node {}: {:?}", i, node.name().unwrap());
+            }
+        }
 
         let mut animations = Vec::new();
 
@@ -131,10 +138,11 @@ impl AnimatedModel {
                         });
                     }
                     property => {
-                        return Err(anyhow::anyhow!(
-                            "Animation type {:?} is not supported",
+                        log::warn!(
+                            "[{}] Animation type {:?} is not supported, ignoring.",
+                            name,
                             property
-                        ))
+                        );
                     }
                 }
             }
@@ -359,7 +367,11 @@ struct Channel<T> {
 }
 
 impl<T: Interpolate> Channel<T> {
-    fn sample(&self, t: f32) -> (usize, T) {
+    fn sample(&self, t: f32) -> Option<(usize, T)> {
+        if t < self.inputs[0] || t > self.inputs[self.inputs.len() - 1] {
+            return None;
+        }
+
         let index = self
             .inputs
             .binary_search_by_key(&ordered_float::OrderedFloat(t), |t| {
@@ -405,7 +417,7 @@ impl<T: Interpolate> Channel<T> {
             }
         };
 
-        (self.node_index, i)
+        Some((self.node_index, i))
     }
 }
 
@@ -425,14 +437,14 @@ impl Animation {
     ) {
         self.translation_channels
             .iter()
-            .map(move |channel| channel.sample(time))
+            .filter_map(move |channel| channel.sample(time))
             .for_each(|(node_index, translation)| {
                 animation_joints.local_transforms[node_index].translation = translation;
             });
 
         self.rotation_channels
             .iter()
-            .map(move |channel| channel.sample(time))
+            .filter_map(move |channel| channel.sample(time))
             .for_each(|(node_index, rotation)| {
                 animation_joints.local_transforms[node_index].rotation = rotation;
             });

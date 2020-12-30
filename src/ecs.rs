@@ -69,7 +69,7 @@ fn debug_render_vision_cones(
     vision_cone: &VisionCone,
     animation_state: &AnimationState,
 ) {
-    let base_node = model_buffers.robot_animation_info.base_node;
+    let base_node = model_buffers.animation_info.robot_base_node;
     let base_joint = animation_state.joints.get_global_transform(base_node);
     let joint_rotation = base_joint.rotation;
 
