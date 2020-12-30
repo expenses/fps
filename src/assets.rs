@@ -1,4 +1,4 @@
-use crate::renderer::{Renderer, Vertex, TEXTURE_FORMAT};
+use crate::renderer::{normal_matrix, Renderer, Vertex, TEXTURE_FORMAT};
 use crate::vec3_into;
 use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
@@ -443,12 +443,6 @@ impl Model {
             textures,
         })
     }
-}
-
-fn normal_matrix(transform: Mat4) -> Mat3 {
-    let inverse_transpose = transform.inversed().transposed();
-    let array = inverse_transpose.as_component_array();
-    Mat3::new(array[0].xyz(), array[1].xyz(), array[2].xyz())
 }
 
 pub struct NodeTree {

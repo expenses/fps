@@ -36,7 +36,7 @@ fn render_models(
     model: &Model,
     isometry: &Isometry3,
 ) {
-    let (instances, _) = model_buffers.get_buffer(model);
+    let (mut instances, _) = model_buffers.get_buffer(model);
     instances.push(isometry.into_homogeneous_matrix());
 }
 
@@ -47,7 +47,7 @@ fn render_animated_models(
     isometry: &Isometry3,
     animation_state: &mut AnimationState,
 ) {
-    let (instances, animation_info) = model_buffers.get_buffer(model);
+    let (mut instances, animation_info) = model_buffers.get_buffer(model);
     let (model, joint_buffer) = animation_info.unwrap();
     instances.push(isometry.into_homogeneous_matrix());
 
@@ -70,9 +70,9 @@ fn debug_render_vision_cones(
     animation_state: &AnimationState,
     model: &Model,
 ) {
-    let base = model_buffers.robot_animation_info.base;
+    let base_node = model_buffers.robot_animation_info.base_node;
     let model = model_buffers.get_animated_model(model).unwrap();
-    let base_joint = animation_state.joints.get_global_transform(base, model);
+    let base_joint = animation_state.joints.get_global_transform(base_node);
     let joint_rotation = base_joint.rotation;
 
     let mut isometry = *isometry;

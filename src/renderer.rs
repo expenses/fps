@@ -1,5 +1,5 @@
 use crate::Settings;
-use ultraviolet::{Mat4, Vec2, Vec3, Vec4};
+use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 pub mod debug_lines;
@@ -33,10 +33,40 @@ pub struct AnimatedVertex {
     pub joint_weights: Vec4,
 }
 
+pub fn normal_matrix(transform: Mat4) -> Mat3 {
+    let inverse_transpose = transform.inversed().transposed();
+    let array = inverse_transpose.as_component_array();
+    Mat3::new(array[0].xyz(), array[1].xyz(), array[2].xyz())
+}
+
+// An instance with a cached normal transform
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 pub struct Instance {
-    pub transform: Mat4,
+    transform: Mat4,
+    normal_transform: Mat3,
+}
+
+impl Instance {
+    pub fn new(transform: Mat4) -> Self {
+        Self {
+            transform,
+            normal_transform: normal_matrix(transform),
+        }
+    }
+}
+
+// We can't cache normal transforms for animated instances.
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct AnimatedInstance {
+    transform: Mat4,
+}
+
+impl AnimatedInstance {
+    pub fn new(transform: Mat4) -> Self {
+        Self { transform }
+    }
 }
 
 pub struct Renderer {
@@ -431,9 +461,7 @@ impl Renderer {
 
         let identity_instance_buffer = single_instance_buffer(
             &device,
-            Instance {
-                transform: Mat4::identity(),
-            },
+            Instance::new(Mat4::identity()),
             "identity instance buffer",
         );
 
@@ -810,8 +838,7 @@ pub fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
 
 const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
     wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float];
-const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 4] =
-    wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4];
+const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
 
 const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float, 5 => Ushort4, 6 => Float4];
 const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 4] =
@@ -860,19 +887,23 @@ fn create_render_pipeline(
                         std::mem::size_of::<Vertex>()
                     } as u64,
                     step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &if animated {
+                    attributes: if animated {
                         &ANIMATED_VERTEX_ATTR_ARRAY[..]
                     } else {
                         &STATIC_VERTEX_ATTR_ARRAY[..]
                     },
                 },
                 wgpu::VertexBufferDescriptor {
-                    stride: std::mem::size_of::<Instance>() as u64,
-                    step_mode: wgpu::InputStepMode::Instance,
-                    attributes: &if animated {
-                        ANIMATED_INSTANCE_ATTR_ARRAY
+                    stride: if animated {
+                        std::mem::size_of::<AnimatedInstance>()
                     } else {
-                        STATIC_INSTANCE_ATTR_ARRAY
+                        std::mem::size_of::<Instance>()
+                    } as u64,
+                    step_mode: wgpu::InputStepMode::Instance,
+                    attributes: if animated {
+                        &ANIMATED_INSTANCE_ATTR_ARRAY[..]
+                    } else {
+                        &STATIC_INSTANCE_ATTR_ARRAY[..]
                     },
                 },
             ],

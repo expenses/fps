@@ -269,8 +269,7 @@ impl AnimationJoints {
         }
     }
 
-    pub fn get_global_transform(&self, joint_index: usize, model: &AnimatedModel) -> Isometry3 {
-        let node_index = model.joint_indices_to_node_indices[joint_index];
+    pub fn get_global_transform(&self, node_index: usize) -> Isometry3 {
         self.global_transforms[node_index]
     }
 }

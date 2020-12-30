@@ -4,7 +4,7 @@ mod ecs;
 mod renderer;
 
 use crate::assets::AnimationJoints;
-use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
+use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, INDEX_FORMAT};
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
@@ -130,11 +130,11 @@ fn create_joint_transforms_bind_group(
 enum ModelBuffer {
     Static {
         model: assets::Model,
-        instances: DynamicBuffer<Mat4>,
+        instances: DynamicBuffer<Instance>,
     },
     Animated {
         model: assets::AnimatedModel,
-        instances: DynamicBuffer<Mat4>,
+        instances: DynamicBuffer<AnimatedInstance>,
         joint_transforms: DynamicBuffer<Mat4>,
         joint_transforms_bind_group: wgpu::BindGroup,
         name: String,
@@ -176,7 +176,21 @@ struct MouseAnimationInfo {
 
 #[derive(Default, Debug)]
 struct RobotAnimationInfo {
-    base: usize,
+    base_node: usize,
+}
+
+enum InstancePusher<'a> {
+    Static(&'a mut DynamicBuffer<Instance>),
+    Animated(&'a mut DynamicBuffer<AnimatedInstance>),
+}
+
+impl<'a> InstancePusher<'a> {
+    fn push(&mut self, transform: Mat4) {
+        match self {
+            Self::Static(buffer) => buffer.push(Instance::new(transform)),
+            Self::Animated(buffer) => buffer.push(AnimatedInstance::new(transform)),
+        }
+    }
 }
 
 struct ModelBuffers {
@@ -200,11 +214,10 @@ impl ModelBuffers {
                     &renderer,
                     &mut init_encoder,
                     "warehouse robot",
-                    |_, joints| {
-                        robot_animation_info.base = joints
-                            .enumerate()
-                            .find(|(_, node)| node.name() == Some("Base"))
-                            .map(|(i, _)| i)
+                    |_, mut joints| {
+                        robot_animation_info.base_node = joints
+                            .find(|node| node.name() == Some("Base"))
+                            .map(|node| node.index())
                             .unwrap();
                     },
                 )?,
@@ -257,17 +270,20 @@ impl ModelBuffers {
         &mut self,
         model: &Model,
     ) -> (
-        &mut DynamicBuffer<Mat4>,
+        InstancePusher,
         Option<(&assets::AnimatedModel, &mut DynamicBuffer<Mat4>)>,
     ) {
         match &mut self.inner[*model as usize] {
-            ModelBuffer::Static { instances, .. } => (instances, None),
+            ModelBuffer::Static { instances, .. } => (InstancePusher::Static(instances), None),
             ModelBuffer::Animated {
                 instances,
                 joint_transforms,
                 model,
                 ..
-            } => (instances, Some((model, joint_transforms))),
+            } => (
+                InstancePusher::Animated(instances),
+                Some((model, joint_transforms)),
+            ),
         }
     }
 
@@ -784,9 +800,7 @@ async fn run() -> anyhow::Result<()> {
 
             let gun_instance = renderer::single_instance_buffer(
                 &renderer.device,
-                renderer::Instance {
-                    transform: camera_view.inversed(),
-                },
+                renderer::Instance::new(camera_view.inversed()),
                 "gun instance",
             );
 
