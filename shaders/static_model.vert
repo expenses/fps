@@ -21,10 +21,8 @@ layout(location = 2) out vec3 out_pos;
 layout(location = 3) out vec3 out_normal;
 layout(location = 4) out float out_emission;
 
-layout(set = 0, binding = 0) uniform ProjectionView {
+layout(push_constant) uniform ProjectionView {
     mat4 projection_view;
-    // mat4 view;
-    // mat4 projection;
 };
 
 void main() {

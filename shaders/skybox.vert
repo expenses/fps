@@ -2,10 +2,9 @@
 
 layout(location = 0) out vec3 out_uv;
 
-layout(set = 0, binding = 0) uniform ProjectionView {
-    mat4 projection_view;
-    mat4 view;
+layout(push_constant) uniform ProjectionAndView {
     mat4 projection;
+    mat4 view;
 };
 
 void main() {

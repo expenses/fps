@@ -6,14 +6,13 @@ use crate::renderer::{AnimatedVertex, Renderer};
 use gltf::animation::Interpolation;
 use std::collections::HashMap;
 use ultraviolet::{Isometry3, Lerp, Mat3, Mat4, Rotor3, Slerp, Vec3, Vec4};
-use wgpu::util::DeviceExt;
 
 pub struct AnimatedModel {
     pub opaque_geometry: ModelBuffers,
     pub transparent_geometry: ModelBuffers,
-    pub bind_group: wgpu::BindGroup,
+    pub textures: wgpu::BindGroup,
     pub animations: Vec<Animation>,
-    pub num_joints: usize,
+    pub num_joints: u32,
     pub animation_joints: AnimationJoints,
 
     joint_indices_to_node_indices: Vec<usize>,
@@ -178,38 +177,6 @@ impl AnimatedModel {
 
         getter(gltf.animations(), skin.joints());
 
-        let num_joints = skin.joints().count();
-
-        let animated_model_uniform_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} animated model uniform buffer", name)),
-                    contents: bytemuck::bytes_of(&(num_joints as u32)),
-                    usage: wgpu::BufferUsage::UNIFORM,
-                });
-
-        let bind_group = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("{} bind group", name)),
-                layout: &renderer.animated_model_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&textures),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Buffer {
-                            buffer: &animated_model_uniform_buffer,
-                            offset: 0,
-                            size: None,
-                        },
-                    },
-                ],
-            });
-
         println!(
             "'{}' animated model loaded. Vertices: {}. Indices: {}. Textures: {}. Animations: {}",
             name,
@@ -219,6 +186,7 @@ impl AnimatedModel {
             animations.len(),
         );
 
+        let num_joints = skin.joints().count() as u32;
         log::info!("Joints: {}, Nodes: {}", num_joints, gltf.nodes().count());
 
         let joint_isometries: Vec<_> = gltf
@@ -235,7 +203,7 @@ impl AnimatedModel {
             opaque_geometry: opaque_geometry.upload(&renderer.device, &format!("{} opaque", name)),
             transparent_geometry: transparent_geometry
                 .upload(&renderer.device, &format!("{} transparent", name)),
-            bind_group,
+            textures,
             animations,
             num_joints,
 

@@ -2,101 +2,58 @@ use super::{alpha_blend_colour_descriptor, DynamicBuffer, Renderer, DEPTH_FORMAT
 use crate::Settings;
 use ultraviolet::{Vec2, Vec4};
 
-pub struct OverlayPipeline {
-    pub bind_group: wgpu::BindGroup,
-    pub pipeline: wgpu::RenderPipeline,
-}
+pub fn overlay_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::RenderPipeline {
+    let pipeline_layout = renderer
+        .device
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("overlay pipeline layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[wgpu::PushConstantRange {
+                stages: wgpu::ShaderStage::VERTEX,
+                range: 0..std::mem::size_of::<Vec2>() as u32,
+            }],
+        });
 
-impl OverlayPipeline {
-    pub fn new(renderer: &Renderer, _settings: &Settings) -> Self {
-        let bind_group_layout =
-            renderer
-                .device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("overlay bind group layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
+    let vs = wgpu::include_spirv!("../../shaders/compiled/overlay.vert.spv");
+    let vs_module = renderer.device.create_shader_module(&vs);
+    let fs = wgpu::include_spirv!("../../shaders/compiled/overlay.frag.spv");
+    let fs_module = renderer.device.create_shader_module(&fs);
 
-        let bind_group = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("overlay bind group"),
-                layout: &bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &renderer.screen_dimension_uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    },
+    renderer
+        .device
+        .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("overlay pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &vs_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &fs_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[alpha_blend_colour_descriptor()],
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilStateDescriptor::default(),
+            }),
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: Some(INDEX_FORMAT),
+                vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                    stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float2, 1 => Float4],
                 }],
-            });
-
-        let pipeline_layout =
-            renderer
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("overlay pipeline layout"),
-                    bind_group_layouts: &[&bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-
-        let vs = wgpu::include_spirv!("../../shaders/compiled/overlay.vert.spv");
-        let vs_module = renderer.device.create_shader_module(&vs);
-        let fs = wgpu::include_spirv!("../../shaders/compiled/overlay.frag.spv");
-        let fs_module = renderer.device.create_shader_module(&fs);
-
-        let pipeline = renderer
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("overlay pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex_stage: wgpu::ProgrammableStageDescriptor {
-                    module: &vs_module,
-                    entry_point: "main",
-                },
-                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                    module: &fs_module,
-                    entry_point: "main",
-                }),
-                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[alpha_blend_colour_descriptor()],
-                depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: wgpu::StencilStateDescriptor::default(),
-                }),
-                vertex_state: wgpu::VertexStateDescriptor {
-                    index_format: Some(INDEX_FORMAT),
-                    vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                        stride: std::mem::size_of::<Vertex>() as u64,
-                        step_mode: wgpu::InputStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float2, 1 => Float4],
-                    }],
-                },
-                sample_count: 1,
-                sample_mask: !0,
-                alpha_to_coverage_enabled: false,
-            });
-
-        Self {
-            bind_group,
-            pipeline,
-        }
-    }
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        })
 }
-
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 struct Vertex {

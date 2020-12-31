@@ -8,7 +8,7 @@ layout(location = 4) in float emission;
 
 layout(location = 0) out vec4 colour;
 
-layout(set = 0, binding = 1) uniform sampler u_nearest_sampler;
+layout(set = 0, binding = 0) uniform sampler u_nearest_sampler;
 
 layout(set = 1, binding = 0) uniform texture2DArray u_texture;
 

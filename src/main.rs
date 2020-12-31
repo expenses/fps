@@ -145,7 +145,7 @@ impl ModelBuffer {
     fn load_animated(model: assets::AnimatedModel, name: &str, renderer: &Renderer) -> Self {
         let joint_transforms = DynamicBuffer::new(
             &renderer.device,
-            model.num_joints,
+            model.num_joints as usize,
             &format!("{} joint transforms", name),
             wgpu::BufferUsage::STORAGE,
         );
@@ -500,7 +500,7 @@ async fn run() -> anyhow::Result<()> {
         }
     }
 
-    let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
+    let overlay_pipeline = renderer::overlay::overlay_pipeline(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
     let mut debug_contact_points_buffer = DynamicBuffer::new(
@@ -855,7 +855,8 @@ async fn run() -> anyhow::Result<()> {
                     // Render opaque things
 
                     render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
-                    render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
+                    set_vertex_push_constant(&mut render_pass, renderer.projection_view_matrix);
+                    render_pass.set_bind_group(0, &renderer.sampler_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
                     // Render gun
@@ -884,13 +885,17 @@ async fn run() -> anyhow::Result<()> {
                     // Render the skybox
 
                     render_pass.set_pipeline(&renderer.skybox_render_pipeline);
+                    set_vertex_push_constant(
+                        &mut render_pass,
+                        [renderer.projection_matrix, renderer.view_matrix],
+                    );
                     render_pass.set_bind_group(1, &skybox_texture, &[]);
                     render_pass.draw(0..3, 0..1);
 
                     // Render transparent things
 
                     render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
-
+                    set_vertex_push_constant(&mut render_pass, renderer.projection_view_matrix);
                     render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, level.transparent_geometry.vertices.slice(..));
                     render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
@@ -919,6 +924,7 @@ async fn run() -> anyhow::Result<()> {
                             &debug_collision_geometry_buffer,
                             &mut render_pass,
                             &debug_lines_less_pipeline,
+                            &renderer,
                         );
                     }
 
@@ -927,6 +933,7 @@ async fn run() -> anyhow::Result<()> {
                             &debug_contact_points_buffer,
                             &mut render_pass,
                             &debug_lines_always_pipeline,
+                            &renderer,
                         );
                     }
 
@@ -935,6 +942,7 @@ async fn run() -> anyhow::Result<()> {
                             &debug_player_collider_buffer,
                             &mut render_pass,
                             &debug_lines_always_pipeline,
+                            &renderer,
                         );
                     }
 
@@ -942,13 +950,14 @@ async fn run() -> anyhow::Result<()> {
                         &debug_vision_cones.0,
                         &mut render_pass,
                         &debug_lines_less_pipeline,
+                        &renderer,
                     );
 
                     // Render overlay
 
                     if let Some((vertices, indices, num_indices)) = overlay_buffers.get() {
-                        render_pass.set_pipeline(&overlay_pipeline.pipeline);
-                        render_pass.set_bind_group(0, &overlay_pipeline.bind_group, &[]);
+                        render_pass.set_pipeline(&overlay_pipeline);
+                        set_vertex_push_constant(&mut render_pass, renderer.screen_dimensions_vec);
                         render_pass.set_vertex_buffer(0, vertices);
                         render_pass.set_index_buffer(indices, INDEX_FORMAT);
                         render_pass.draw_indexed(0..num_indices, 0, 0..1);
@@ -995,6 +1004,10 @@ async fn run() -> anyhow::Result<()> {
                             });
 
                         render_pass.set_pipeline(&renderer.fxaa_pipeline);
+                        set_fragment_push_constant(
+                            &mut render_pass,
+                            renderer.screen_dimensions_vec,
+                        );
                         render_pass.set_bind_group(0, &renderer.fxaa_bind_group, &[]);
                         render_pass.draw(0..3, 0..1);
 
@@ -1350,6 +1363,7 @@ fn render_model_opaque<'a>(
     num_instances: u32,
 ) {
     render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
+    set_vertex_push_constant(render_pass, renderer.projection_view_matrix);
     render_pass.set_bind_group(1, &model.textures, &[]);
     render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
@@ -1366,7 +1380,14 @@ fn render_animated_model_opaque<'a>(
     joint_transforms_bind_group: &'a wgpu::BindGroup,
 ) {
     render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
-    render_pass.set_bind_group(1, &model.bind_group, &[]);
+    set_vertex_push_constant(
+        render_pass,
+        renderer::AnimatedPushConstants {
+            projection_view: renderer.projection_view_matrix,
+            num_joints: model.num_joints,
+        },
+    );
+    render_pass.set_bind_group(1, &model.textures, &[]);
     render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
     render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
@@ -1382,6 +1403,7 @@ fn render_model_transparent<'a>(
     num_instances: u32,
 ) {
     render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
+    set_vertex_push_constant(render_pass, renderer.projection_view_matrix);
     render_pass.set_bind_group(1, &model.textures, &[]);
     render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
@@ -1402,7 +1424,14 @@ fn render_animated_model_transparent<'a>(
     joint_transforms_bind_group: &'a wgpu::BindGroup,
 ) {
     render_pass.set_pipeline(&renderer.animated_transparent_render_pipeline);
-    render_pass.set_bind_group(1, &model.bind_group, &[]);
+    set_vertex_push_constant(
+        render_pass,
+        renderer::AnimatedPushConstants {
+            projection_view: renderer.projection_view_matrix,
+            num_joints: model.num_joints,
+        },
+    );
+    render_pass.set_bind_group(1, &model.textures, &[]);
     render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
     render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
@@ -1418,10 +1447,20 @@ fn render_debug_lines<'a>(
     buffer: &'a DynamicBuffer<renderer::debug_lines::Vertex>,
     render_pass: &mut wgpu::RenderPass<'a>,
     pipeline: &'a wgpu::RenderPipeline,
+    renderer: &'a Renderer,
 ) {
     if let Some((slice, len)) = buffer.get() {
         render_pass.set_pipeline(pipeline);
+        set_vertex_push_constant(render_pass, renderer.projection_view_matrix);
         render_pass.set_vertex_buffer(0, slice);
         render_pass.draw(0..len, 0..1);
     }
+}
+
+fn set_vertex_push_constant<T: bytemuck::Pod>(render_pass: &mut wgpu::RenderPass, value: T) {
+    render_pass.set_push_constants(wgpu::ShaderStage::VERTEX, 0, bytemuck::bytes_of(&value));
+}
+
+fn set_fragment_push_constant<T: bytemuck::Pod>(render_pass: &mut wgpu::RenderPass, value: T) {
+    render_pass.set_push_constants(wgpu::ShaderStage::FRAGMENT, 0, bytemuck::bytes_of(&value));
 }

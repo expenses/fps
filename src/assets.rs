@@ -172,25 +172,13 @@ impl Level {
         let mut transparent_geometry = StagingModelBuffers::default();
         let mut collision_geometry = StagingModelBuffers::default();
 
-        let texture_array_view = load_texture_array(
+        let texture_array_bind_group = load_texture_array(
             &gltf,
             buffer_blob,
             renderer,
             encoder,
             &format!("{} level", name),
         )?;
-
-        let texture_array_bind_group =
-            renderer
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("{} level texture bind group", name)),
-                    layout: &renderer.texture_array_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture_array_view),
-                    }],
-                });
 
         let lights: Vec<_> = gltf
             .nodes()
@@ -378,17 +366,6 @@ impl Model {
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
         let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder, name)?;
-
-        let textures = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("{} texture bind group", name)),
-                layout: &renderer.texture_array_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&textures),
-                }],
-            });
 
         let mut opaque_geometry = StagingModelBuffers::default();
         let mut transparent_geometry = StagingModelBuffers::default();
@@ -666,7 +643,7 @@ fn load_texture_array(
     renderer: &Renderer,
     encoder: &mut wgpu::CommandEncoder,
     name: &str,
-) -> anyhow::Result<wgpu::TextureView> {
+) -> anyhow::Result<wgpu::BindGroup> {
     let num_textures = gltf.textures().count() as u32;
 
     if num_textures == 0 {
@@ -818,11 +795,22 @@ fn load_texture_array(
 
     let (texture_array, ..) = texture_array.unwrap();
 
-    Ok(texture_array.create_view(&wgpu::TextureViewDescriptor {
+    let texture_view = texture_array.create_view(&wgpu::TextureViewDescriptor {
         label: Some(&format!("{} texture view", name)),
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
-    }))
+    });
+
+    Ok(renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{} texture bind group", name)),
+            layout: &renderer.texture_array_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture_view),
+            }],
+        }))
 }
 
 pub fn load_single_texture(

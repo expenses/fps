@@ -70,18 +70,16 @@ impl AnimatedInstance {
 }
 
 #[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy, Default)]
-pub struct ProjectionViewUniforms {
-    projection_view: Mat4,
-    // Needed for skybox
-    view: Mat4,
-    projection: Mat4,
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct AnimatedPushConstants {
+    pub projection_view: Mat4,
+    pub num_joints: u32,
 }
 
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub main_bind_group_layout: wgpu::BindGroupLayout,
+    pub sampler_bind_group_layout: wgpu::BindGroupLayout,
     pub lights_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
     pub skybox_texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -89,16 +87,18 @@ pub struct Renderer {
     pub swap_chain: wgpu::SwapChain,
     pub depth_texture: wgpu::TextureView,
     surface: wgpu::Surface,
-    projection_view_buffer: wgpu::Buffer,
-    projection_matrix: Mat4,
-    pub main_bind_group: wgpu::BindGroup,
+
+    pub screen_dimensions_vec: Vec2,
+    pub projection_matrix: Mat4,
+    pub view_matrix: Mat4,
+    pub projection_view_matrix: Mat4,
+
+    pub sampler_bind_group: wgpu::BindGroup,
     pub identity_instance_buffer: wgpu::Buffer,
     pub linear_sampler: wgpu::Sampler,
     pub mipmap_generation_pipeline: wgpu::RenderPipeline,
     pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
-    screen_dimension_uniform_buffer: wgpu::Buffer,
 
-    pub animated_model_bind_group_layout: wgpu::BindGroupLayout,
     pub joint_transform_bind_group_layout: wgpu::BindGroupLayout,
 
     pub static_opaque_render_pipeline: wgpu::RenderPipeline,
@@ -145,8 +145,11 @@ impl Renderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("device"),
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                    features: wgpu::Features::PUSH_CONSTANTS,
+                    limits: wgpu::Limits {
+                        max_push_constant_size: std::mem::size_of::<[Mat4; 2]>() as u32,
+                        ..Default::default()
+                    },
                 },
                 None,
             )
@@ -169,55 +172,33 @@ impl Renderer {
             ..Default::default()
         });
 
-        let projection_view_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("projection view buffer"),
-            contents: bytemuck::bytes_of(&ProjectionViewUniforms::default()),
-            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        });
-
         let window_size = window.inner_size();
 
         let projection_matrix = perspective_matrix(window_size.width, window_size.height);
+        let view_matrix = Mat4::identity();
+        let projection_view_matrix = Mat4::identity();
 
-        let main_bind_group_layout =
+        let sampler_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("main bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                label: Some("sampler bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler {
+                        comparison: false,
+                        filtering: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler {
-                            comparison: false,
-                            filtering: false,
-                        },
-                        count: None,
-                    },
-                ],
+                    count: None,
+                }],
             });
 
-        let main_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("main bind group"),
-            layout: &main_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: projection_view_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&nearest_sampler),
-                },
-            ],
+        let sampler_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sampler bind group"),
+            layout: &sampler_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Sampler(&nearest_sampler),
+            }],
         });
 
         let swap_chain = device.create_swap_chain(
@@ -285,33 +266,6 @@ impl Renderer {
                 }],
             });
 
-        let animated_model_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("animated model bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-
         let joint_transform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("joint transform bind group layout"),
@@ -345,30 +299,39 @@ impl Renderer {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("static model pipeline layout"),
                 bind_group_layouts: &[
-                    &main_bind_group_layout,
+                    &sampler_bind_group_layout,
                     &texture_array_bind_group_layout,
                     &lights_bind_group_layout,
                 ],
-                push_constant_ranges: &[],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::VERTEX,
+                    range: 0..std::mem::size_of::<Mat4>() as u32,
+                }],
             });
 
         let animated_model_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("static model pipeline layout"),
+                label: Some("animated model pipeline layout"),
                 bind_group_layouts: &[
-                    &main_bind_group_layout,
-                    &animated_model_bind_group_layout,
+                    &sampler_bind_group_layout,
+                    &texture_array_bind_group_layout,
                     &lights_bind_group_layout,
                     &joint_transform_bind_group_layout,
                 ],
-                push_constant_ranges: &[],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::VERTEX,
+                    range: 0..std::mem::size_of::<AnimatedPushConstants>() as u32,
+                }],
             });
 
         let skybox_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("skybox pipeline layout"),
-                bind_group_layouts: &[&main_bind_group_layout, &skybox_texture_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[&sampler_bind_group_layout, &skybox_texture_bind_group_layout],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::VERTEX,
+                    range: 0..std::mem::size_of::<[Mat4; 2]>() as u32,
+                }],
             });
 
         let static_opaque_render_pipeline = create_render_pipeline(
@@ -518,15 +481,7 @@ impl Renderer {
                 alpha_to_coverage_enabled: false,
             });
 
-        let screen_dimension_uniform_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("screen_dimension_uniform_buffer"),
-                contents: bytemuck::bytes_of(&Vec2::new(
-                    window_size.width as f32,
-                    window_size.height as f32,
-                )),
-                usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-            });
+        let screen_dimensions_vec = Vec2::new(window_size.width as f32, window_size.height as f32);
 
         let post_processing_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -551,16 +506,6 @@ impl Renderer {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
                 ],
             });
 
@@ -572,7 +517,6 @@ impl Renderer {
                 "tonemap",
                 &post_processing_bind_group_layout,
                 &linear_sampler,
-                &screen_dimension_uniform_buffer,
                 DISPLAY_FORMAT,
             );
 
@@ -583,7 +527,6 @@ impl Renderer {
             "fxaa",
             &post_processing_bind_group_layout,
             &linear_sampler,
-            &screen_dimension_uniform_buffer,
             PRE_TONEMAP_FRAMEBUFFER_FORMAT,
         );
 
@@ -591,7 +534,10 @@ impl Renderer {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("post processing pipeline layout"),
                 bind_group_layouts: &[&post_processing_bind_group_layout],
-                push_constant_ranges: &[],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::FRAGMENT,
+                    range: 0..std::mem::size_of::<Vec2>() as u32,
+                }],
             });
 
         let fs_fxaa = wgpu::include_spirv!("../shaders/compiled/fxaa.frag.spv");
@@ -652,11 +598,15 @@ impl Renderer {
             device,
             queue,
             window,
-            projection_view_buffer,
-            projection_matrix,
-            main_bind_group,
+            sampler_bind_group,
             surface,
             swap_chain,
+
+            screen_dimensions_vec,
+            projection_matrix,
+            view_matrix,
+            projection_view_matrix,
+
             depth_texture,
             static_opaque_render_pipeline,
             static_transparent_render_pipeline,
@@ -665,14 +615,12 @@ impl Renderer {
             skybox_texture_bind_group_layout,
             lights_bind_group_layout,
             skybox_render_pipeline,
-            main_bind_group_layout,
+            sampler_bind_group_layout,
             mipmap_generation_bind_group_layout,
             mipmap_generation_pipeline,
             linear_sampler,
-            screen_dimension_uniform_buffer,
             animated_opaque_render_pipeline,
             animated_transparent_render_pipeline,
-            animated_model_bind_group_layout,
             joint_transform_bind_group_layout,
 
             post_processing_bind_group_layout,
@@ -686,16 +634,9 @@ impl Renderer {
     }
 
     // Must be called after camera movement or window resizing.
-    pub fn set_camera_view(&self, view: Mat4) {
-        self.queue.write_buffer(
-            &self.projection_view_buffer,
-            0,
-            bytemuck::bytes_of(&ProjectionViewUniforms {
-                view,
-                projection_view: self.projection_matrix * view,
-                projection: self.projection_matrix,
-            }),
-        );
+    pub fn set_camera_view(&mut self, view: Mat4) {
+        self.view_matrix = view;
+        self.projection_view_matrix = self.projection_matrix * self.view_matrix;
     }
 
     pub fn resize(&mut self, width: u32, height: u32, _settings: &Settings) {
@@ -721,11 +662,7 @@ impl Renderer {
 
         self.projection_matrix = perspective_matrix(width, height);
 
-        self.queue.write_buffer(
-            &self.screen_dimension_uniform_buffer,
-            0,
-            bytemuck::bytes_of(&Vec2::new(width as f32, height as f32)),
-        );
+        self.screen_dimensions_vec = Vec2::new(width as f32, height as f32);
 
         let (pre_fxaa_framebuffer, fxaa_bind_group) = post_processing_framebuffer_and_bind_group(
             &self.device,
@@ -734,7 +671,6 @@ impl Renderer {
             "fxaa",
             &self.post_processing_bind_group_layout,
             &self.linear_sampler,
-            &self.screen_dimension_uniform_buffer,
             DISPLAY_FORMAT,
         );
         self.pre_fxaa_framebuffer = pre_fxaa_framebuffer;
@@ -748,7 +684,6 @@ impl Renderer {
                 "tonemap",
                 &self.post_processing_bind_group_layout,
                 &self.linear_sampler,
-                &self.screen_dimension_uniform_buffer,
                 PRE_TONEMAP_FRAMEBUFFER_FORMAT,
             );
         self.pre_tonemap_framebuffer = pre_tonemap_framebuffer;
@@ -1094,7 +1029,6 @@ fn post_processing_framebuffer_and_bind_group(
     name: &str,
     bind_group_layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
-    screen_dimension_uniform_buffer: &wgpu::Buffer,
     texture_format: wgpu::TextureFormat,
 ) -> (wgpu::TextureView, wgpu::BindGroup) {
     let framebuffer = create_texture(
@@ -1117,14 +1051,6 @@ fn post_processing_framebuffer_and_bind_group(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::Sampler(sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: screen_dimension_uniform_buffer,
-                    offset: 0,
-                    size: None,
-                },
             },
         ],
     });
