@@ -1,0 +1,10 @@
+[build]
+target = "spirv-unknown-unknown"
+rustflags = [
+   "-Zcodegen-backend=/home/ashley/.cargo/librustc_codegen_spirv.so",
+   #"-Zsymbol-mangling-version=v0",
+   "-Ctarget-feature=+spirv1.0"
+]
+
+[unstable]
+build-std=["core"]

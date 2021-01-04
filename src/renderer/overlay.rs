@@ -14,10 +14,8 @@ pub fn overlay_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::Rend
             }],
         });
 
-    let vs = wgpu::include_spirv!("../../shaders/compiled/overlay.vert.spv");
-    let vs_module = renderer.device.create_shader_module(&vs);
-    let fs = wgpu::include_spirv!("../../shaders/compiled/overlay.frag.spv");
-    let fs_module = renderer.device.create_shader_module(&fs);
+    let shader = wgpu::include_spirv!("../../shaders/overlay/target/spirv-unknown-unknown/release/overlay_shader.spv");
+    let shader_module = renderer.device.create_shader_module(&shader);
 
     renderer
         .device
@@ -25,12 +23,12 @@ pub fn overlay_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::Rend
             label: Some("overlay pipeline"),
             layout: Some(&pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_module,
-                entry_point: "main",
+                module: &shader_module,
+                entry_point: "main_vs",
             },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
+                module: &shader_module,
+                entry_point: "main_fs",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,

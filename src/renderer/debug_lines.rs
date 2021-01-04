@@ -19,10 +19,8 @@ pub fn debug_lines_pipeline(
                 }],
             });
 
-    let vs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.vert.spv");
-    let vs_module = renderer.device.create_shader_module(&vs);
-    let fs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.frag.spv");
-    let fs_module = renderer.device.create_shader_module(&fs);
+    let shader = wgpu::include_spirv!("../../shaders/debug_lines/target/spirv-unknown-unknown/release/debug_lines_shader.spv");
+    let shader_module = renderer.device.create_shader_module(&shader);
 
     renderer
         .device
@@ -30,12 +28,12 @@ pub fn debug_lines_pipeline(
             label: Some("debug lines pipeline"),
             layout: Some(&debug_lines_pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_module,
-                entry_point: "main",
+                module: &shader_module,
+                entry_point: "main_vs",
             },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
+                module: &shader_module,
+                entry_point: "main_fs",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 cull_mode: wgpu::CullMode::Back,

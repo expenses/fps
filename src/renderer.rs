@@ -290,10 +290,11 @@ impl Renderer {
         let fs_model = wgpu::include_spirv!("../shaders/compiled/model.frag.spv");
         let fs_model_module = device.create_shader_module(&fs_model);
 
-        let vs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.vert.spv");
-        let vs_skybox_module = device.create_shader_module(&vs_skybox);
-        let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
-        let fs_skybox_module = device.create_shader_module(&fs_skybox);
+        let skybox = wgpu::include_spirv!("../shaders/skybox/target/spirv-unknown-unknown/release/skybox_shader.spv");
+        let skybox_module = device.create_shader_module(&skybox);
+
+        let model = wgpu::include_spirv!("../shaders/model/target/spirv-unknown-unknown/release/model_shader.spv");
+        let model_module = device.create_shader_module(&model);
 
         let static_model_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -338,8 +339,8 @@ impl Renderer {
             &device,
             "static opaque render pipeline",
             &static_model_pipeline_layout,
-            &vs_static_model_module,
-            &fs_model_module,
+            &model_module, "main_vs",
+            &model_module, "main_fs",
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
             false,
@@ -349,8 +350,8 @@ impl Renderer {
             &device,
             "animated opaque render pipeline",
             &animated_model_pipeline_layout,
-            &vs_animated_model_module,
-            &fs_model_module,
+            &vs_animated_model_module, "main",
+            &fs_model_module, "main",
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
             true,
@@ -360,8 +361,8 @@ impl Renderer {
             &device,
             "static transparent render pipeline",
             &static_model_pipeline_layout,
-            &vs_static_model_module,
-            &fs_model_module,
+            &model_module, "main_vs",
+            &model_module, "main_fs",
             alpha_blend_colour_descriptor(),
             // Can't remember if this is a good idea or not.
             false,
@@ -372,8 +373,8 @@ impl Renderer {
             &device,
             "animated transparent render pipeline",
             &animated_model_pipeline_layout,
-            &vs_animated_model_module,
-            &fs_model_module,
+            &vs_animated_model_module, "main",
+            &fs_model_module, "main",
             alpha_blend_colour_descriptor(),
             // Can't remember if this is a good idea or not.
             false,
@@ -385,12 +386,12 @@ impl Renderer {
                 label: Some("skybox render pipeline"),
                 layout: Some(&skybox_render_pipeline_layout),
                 vertex_stage: wgpu::ProgrammableStageDescriptor {
-                    module: &vs_skybox_module,
-                    entry_point: "main",
+                    module: &skybox_module,
+                    entry_point: "main_vs",
                 },
                 fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                    module: &fs_skybox_module,
-                    entry_point: "main",
+                    module: &skybox_module,
+                    entry_point: "main_fs",
                 }),
                 rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
                 primitive_topology: wgpu::PrimitiveTopology::TriangleList,
@@ -775,8 +776,8 @@ fn create_render_pipeline(
     device: &wgpu::Device,
     label: &str,
     layout: &wgpu::PipelineLayout,
-    vs_module: &wgpu::ShaderModule,
-    fs_module: &wgpu::ShaderModule,
+    vs_module: &wgpu::ShaderModule, vs_entry: &str,
+    fs_module: &wgpu::ShaderModule, fs_entry: &str,
     colour_descriptor: wgpu::ColorStateDescriptor,
     depth_write_enabled: bool,
     animated: bool,
@@ -786,11 +787,11 @@ fn create_render_pipeline(
         layout: Some(layout),
         vertex_stage: wgpu::ProgrammableStageDescriptor {
             module: vs_module,
-            entry_point: "main",
+            entry_point: vs_entry,
         },
         fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
             module: fs_module,
-            entry_point: "main",
+            entry_point: fs_entry,
         }),
         rasterization_state: Some(wgpu::RasterizationStateDescriptor {
             cull_mode: wgpu::CullMode::Back,

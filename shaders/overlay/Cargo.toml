@@ -1,0 +1,12 @@
+[package]
+name = "overlay-shader"
+version = "0.1.0"
+authors = ["Ashley Ruglys <ashley.ruglys@gmail.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+spirv-std = { path = "../../../../rust-gpu/crates/spirv-std" }
+spirv-std-macros = "0.1.0"
