@@ -176,8 +176,10 @@ impl Renderer {
         });
 
         let window_size = window.inner_size();
+        let width = window_size.width;
+        let height = window_size.height;
 
-        let projection_matrix = perspective_matrix(window_size.width, window_size.height);
+        let projection_matrix = perspective_matrix(width, height);
 
         let main_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -225,8 +227,8 @@ impl Renderer {
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                 format: DISPLAY_FORMAT,
-                width: window_size.width,
-                height: window_size.height,
+                width,
+                height,
                 present_mode: wgpu::PresentMode::Fifo,
             },
         );
@@ -234,8 +236,8 @@ impl Renderer {
         let depth_texture = create_texture(
             &device,
             "depth texture",
-            window_size.width,
-            window_size.height,
+            width,
+            height,
             DEPTH_FORMAT,
             wgpu::TextureUsage::RENDER_ATTACHMENT,
         );
@@ -522,8 +524,8 @@ impl Renderer {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("screen_dimension_uniform_buffer"),
                 contents: bytemuck::bytes_of(&Vec2::new(
-                    window_size.width as f32,
-                    window_size.height as f32,
+                    width as f32,
+                    height as f32,
                 )),
                 usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             });
@@ -567,8 +569,8 @@ impl Renderer {
         let (pre_tonemap_framebuffer, tonemap_bind_group) =
             post_processing_framebuffer_and_bind_group(
                 &device,
-                window_size.width,
-                window_size.height,
+                width,
+                height,
                 "tonemap",
                 &post_processing_bind_group_layout,
                 &linear_sampler,
@@ -578,8 +580,8 @@ impl Renderer {
 
         let (pre_fxaa_framebuffer, fxaa_bind_group) = post_processing_framebuffer_and_bind_group(
             &device,
-            window_size.width,
-            window_size.height,
+            width,
+            height,
             "fxaa",
             &post_processing_bind_group_layout,
             &linear_sampler,

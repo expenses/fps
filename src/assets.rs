@@ -59,6 +59,7 @@ pub struct ModelBuffers {
 pub enum Property {
     Spawn(Character),
     NoCollide,
+    RenderOrder(u8),
 }
 
 impl Property {
@@ -67,6 +68,10 @@ impl Property {
             let remainder = &string["spawn/".len()..];
             let character = Character::parse(remainder)?;
             Ok(Self::Spawn(character))
+        } else if string.starts_with("render_order/") {
+            let remainder = &string["render_order/".len()..];
+            let order = remainder.parse()?;
+            Ok(Self::RenderOrder(order))
         } else {
             match string {
                 "nocollide" => Ok(Self::NoCollide),
@@ -81,6 +86,7 @@ pub enum Character {
     Robot,
     Mouse,
     Tentacle,
+    MateBottle,
 }
 
 impl Character {
@@ -89,6 +95,7 @@ impl Character {
             "robot" => Ok(Self::Robot),
             "mouse" => Ok(Self::Mouse),
             "tentacle" => Ok(Self::Tentacle),
+            "mate_bottle" => Ok(Self::MateBottle),
             _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
         }
     }
@@ -108,6 +115,41 @@ impl MaterialProperty {
             _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
         }
     }
+}
+
+fn ordered_mesh_nodes<'a>(gltf: &'a gltf::Document, properties: &HashMap<usize, Property>) -> impl Iterator<Item = (gltf::Node<'a>, gltf::Mesh<'a>)> + 'a {
+    let mut nodes: Vec<_> = gltf.nodes()
+        .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
+        .map(|(node, mesh)| {
+            let order = match properties.get(&node.index()) {
+                Some(Property::RenderOrder(order)) => *order,
+                _ => 0
+            };
+
+            (node, mesh, order)
+        })
+        .collect();
+
+    nodes.sort_by_key(|&(.., order)| order);
+
+    nodes.into_iter().map(|(node, mesh, _)| (node, mesh))
+}
+
+fn load_properties(gltf: &gltf::Document) -> anyhow::Result<HashMap<usize, Property>> {
+    gltf
+        .nodes()
+        .filter_map(|node| {
+            node.extras()
+                .as_ref()
+                .map(|json_value| (node.index(), json_value))
+        })
+        .map(|(node_index, json_value)| {
+            let map: HashMap<String, f32> = serde_json::from_str(json_value.get())?;
+            assert_eq!(map.len(), 1);
+            let key = map.keys().next().unwrap();
+            Ok((node_index, (Property::parse(&key)?)))
+        })
+        .collect()
 }
 
 pub struct Level {
@@ -132,20 +174,7 @@ impl Level {
 
         let node_tree = NodeTree::new(&gltf);
 
-        let properties = gltf
-            .nodes()
-            .filter_map(|node| {
-                node.extras()
-                    .as_ref()
-                    .map(|json_value| (node.index(), json_value))
-            })
-            .map(|(node_index, json_value)| {
-                let map: HashMap<String, f32> = serde_json::from_str(json_value.get())?;
-                assert_eq!(map.len(), 1);
-                let key = map.keys().next().unwrap();
-                Ok((node_index, (Property::parse(&key)?)))
-            })
-            .collect::<anyhow::Result<HashMap<usize, Property>>>()?;
+        let properties = load_properties(&gltf)?;
 
         let material_properties = gltf
             .materials()
@@ -237,13 +266,11 @@ impl Level {
                 }],
             });
 
-        for (node, mesh) in gltf
-            .nodes()
-            .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
-        {
+        for (node, mesh) in ordered_mesh_nodes(&gltf, &properties) {
             let collide = match properties.get(&node.index()) {
                 Some(Property::NoCollide) => false,
-                Some(_) => continue,
+                Some(Property::Spawn(_)) => continue,
+                Some(Property::RenderOrder(_)) => true,
                 None => true,
             };
 
@@ -375,6 +402,8 @@ impl Model {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
 
+        let properties = load_properties(&gltf)?;
+
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
         let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder, name)?;
@@ -395,10 +424,7 @@ impl Model {
 
         assert_eq!(gltf.skins().count(), 0);
 
-        for (node, mesh) in gltf
-            .nodes()
-            .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
-        {
+        for (node, mesh) in ordered_mesh_nodes(&gltf, &properties) {
             let transform = node_tree.transform_of(node.index());
             let normal_matrix = normal_matrix(transform);
 

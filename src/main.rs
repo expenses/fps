@@ -142,6 +142,13 @@ enum ModelBuffer {
 }
 
 impl ModelBuffer {
+    fn load_static(model: assets::Model, name: &str, renderer: &Renderer) -> Self {
+        Self::Static {
+            model,
+            instances: DynamicBuffer::new(&renderer.device, 0, &format!("{} instances", name), wgpu::BufferUsage::VERTEX)
+        }
+    }
+
     fn load_animated(model: assets::AnimatedModel, name: &str, renderer: &Renderer) -> Self {
         let joint_transforms = DynamicBuffer::new(
             &renderer.device,
@@ -262,6 +269,12 @@ impl ModelBuffers {
                 "tentacle",
                 renderer,
             ),
+            ModelBuffer::load_static(assets::Model::load_gltf(
+                include_bytes!("../models/mate.glb"),
+                &renderer,
+                &mut init_encoder,
+                "mate bottle",
+            )?, "mate bottle", renderer),
         ];
 
         log::info!("{:?}", animation_info);
@@ -402,6 +415,7 @@ enum Model {
     Robot = 0,
     Mouse = 1,
     Tentacle = 2,
+    MateBottle = 3,
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -466,6 +480,7 @@ async fn run() -> anyhow::Result<()> {
                 assets::Character::Robot => Model::Robot,
                 assets::Character::Mouse => Model::Mouse,
                 assets::Character::Tentacle => Model::Tentacle,
+                assets::Character::MateBottle => Model::MateBottle,
             };
 
             let entity = world.push((
@@ -481,14 +496,14 @@ async fn run() -> anyhow::Result<()> {
                         10.0, 10.0,
                     )));
                 }
-                Model::Mouse | Model::Tentacle => {}
+                _ => {}
             }
 
             if let Some(joints) = model_buffers.clone_animation_joints(&model) {
                 let animation = match model {
-                    Model::Robot => 0,
                     Model::Tentacle => model_buffers.animation_info.tentacle_poke_animation,
                     Model::Mouse => model_buffers.animation_info.mouse_idle_animation,
+                    _ => 0,
                 };
 
                 entry.add_component(ecs::AnimationState {
