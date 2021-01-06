@@ -114,6 +114,82 @@ pub struct Renderer {
     post_processing_bind_group_layout: wgpu::BindGroupLayout,
     pub fxaa_pipeline: wgpu::RenderPipeline,
     pub tonemap_pipeline: wgpu::RenderPipeline,
+
+    pub transparency_accum_texture: wgpu::TextureView,
+    pub transparency_revealage_texture: wgpu::TextureView,
+    pub transparency_compositing_bind_group: wgpu::BindGroup,
+    pub static_transparent_render_pipeline_2: wgpu::RenderPipeline,
+    transparency_compositing_bind_group_layout: wgpu::BindGroupLayout,
+    pub transparency_compositing_pipeline: wgpu::RenderPipeline,
+}
+
+fn transparency_render_attachments_and_bind_group(
+    device: &wgpu::Device, bind_group_layout: &wgpu::BindGroupLayout, sampler: &wgpu::Sampler,
+    width: u32, height: u32,
+) -> (wgpu::TextureView, wgpu::TextureView, wgpu::BindGroup) {
+    let accum_texture = create_texture(
+        device, "transparency accum texture", width, height, wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
+    );
+
+    let revealage_texture = create_texture(
+        device, "transparency revealage texture", width, height, wgpu::TextureFormat::R8Unorm,
+        wgpu::TextureUsage::RENDER_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
+    );
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("transparency compositing bind group"),
+        layout: bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&accum_texture)
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&revealage_texture)
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler)
+            }
+        ]
+    });
+
+    (accum_texture, revealage_texture, bind_group)
+}
+
+fn transparency_colour_state_descriptors() -> [wgpu::ColorStateDescriptor; 3] {
+    // https://github.com/arose/three.js/blob/oit/examples/webgl_oit.html
+    // http://casual-effects.blogspot.com/2015/03/colored-blended-order-independent.html
+
+    let accum = wgpu::BlendDescriptor {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+
+    let revealage = wgpu::BlendDescriptor {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcColor,
+        operation: wgpu::BlendOperation::Add,
+    };
+
+    [
+        wgpu::ColorStateDescriptor {
+            format: wgpu::TextureFormat::Rgba16Float,
+            color_blend: accum.clone(),
+            alpha_blend: accum,
+            write_mask: wgpu::ColorWrite::ALL,
+        },
+        wgpu::ColorStateDescriptor {
+            format: wgpu::TextureFormat::R8Unorm,
+            color_blend: revealage.clone(),
+            alpha_blend: revealage.clone(),
+            write_mask: wgpu::ColorWrite::COLOR,
+        },
+        alpha_blend_colour_descriptor(),
+    ]
 }
 
 impl Renderer {
@@ -650,6 +726,139 @@ impl Renderer {
             alpha_to_coverage_enabled: false,
         });
 
+        let transparency_compositing_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("transparency compositing bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStage::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler {
+                        comparison: false,
+                        filtering: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let (transparency_accum_texture, transparency_revealage_texture, transparency_compositing_bind_group)
+            = transparency_render_attachments_and_bind_group(&device, &transparency_compositing_bind_group_layout, &linear_sampler, width, height);
+
+        let fs_transparent_model = wgpu::include_spirv!("../shaders/compiled/transparent_model.frag.spv");
+        let fs_transparent_model_module = device.create_shader_module(&fs_transparent_model);
+
+        let static_transparent_render_pipeline_2 = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("static transparent render pipeline 2"),
+            layout: Some(&static_model_pipeline_layout),
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &vs_static_model_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &fs_transparent_model_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+                cull_mode: wgpu::CullMode::Back,
+                ..Default::default()
+            }),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            // https://github.com/arose/three.js/blob/oit/examples/webgl_oit.html
+            // http://casual-effects.blogspot.com/2015/03/colored-blended-order-independent.html
+            color_states: &transparency_colour_state_descriptors()[..],
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilStateDescriptor::default(),
+            }),
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: Some(INDEX_FORMAT),
+                vertex_buffers: &[
+                    wgpu::VertexBufferDescriptor {
+                        stride: std::mem::size_of::<Vertex>() as u64,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &STATIC_VERTEX_ATTR_ARRAY[..],
+                    },
+                    wgpu::VertexBufferDescriptor {
+                        stride: std::mem::size_of::<Instance>() as u64,
+                        step_mode: wgpu::InputStepMode::Instance,
+                        attributes: &STATIC_INSTANCE_ATTR_ARRAY[..],
+                    },
+                ],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+
+        let transparency_compositing_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("transparency compositing pipeline layout"),
+                bind_group_layouts: &[&transparency_compositing_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let fs_transparency_compositing = wgpu::include_spirv!("../shaders/compiled/transparency_compositing.frag.spv");
+        let fs_transparency_compositing_module = device.create_shader_module(&fs_transparency_compositing);
+
+        let transparency_compositing_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("transparency compositing pipeline"),
+            layout: Some(&transparency_compositing_pipeline_layout),
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &vs_full_screen_tri_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &fs_transparency_compositing_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[wgpu::ColorStateDescriptor {
+                format: PRE_TONEMAP_FRAMEBUFFER_FORMAT,
+                color_blend: wgpu::BlendDescriptor {
+                    src_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha_blend: wgpu::BlendDescriptor {
+                    src_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                write_mask: wgpu::ColorWrite::ALL,
+            }],
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: Some(INDEX_FORMAT),
+                vertex_buffers: &[],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+
         Ok(Self {
             device,
             queue,
@@ -684,6 +893,13 @@ impl Renderer {
             pre_tonemap_framebuffer,
             tonemap_bind_group,
             tonemap_pipeline,
+
+            transparency_accum_texture,
+            transparency_revealage_texture,
+            transparency_compositing_bind_group,
+            static_transparent_render_pipeline_2,
+            transparency_compositing_bind_group_layout,
+            transparency_compositing_pipeline,
         })
     }
 
@@ -755,6 +971,13 @@ impl Renderer {
             );
         self.pre_tonemap_framebuffer = pre_tonemap_framebuffer;
         self.tonemap_bind_group = tonemap_bind_group;
+
+        let (transparency_accum_texture, transparency_revealage_texture, transparency_compositing_bind_group)
+            = transparency_render_attachments_and_bind_group(&self.device, &self.transparency_compositing_bind_group_layout, &self.linear_sampler, width, height);
+
+        self.transparency_accum_texture = transparency_accum_texture;
+        self.transparency_revealage_texture = transparency_revealage_texture;
+        self.transparency_compositing_bind_group = transparency_compositing_bind_group;
     }
 
     pub fn screen_center(&self) -> winit::dpi::LogicalPosition<f64> {

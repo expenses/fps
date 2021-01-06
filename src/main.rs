@@ -392,7 +392,7 @@ impl ModelBuffers {
                     joint_transforms_bind_group,
                     ..
                 } => {
-                    if model.transparent_geometry.num_indices > 0 {
+                    /*if model.transparent_geometry.num_indices > 0 {
                         if let Some((slice, num)) = instances.get() {
                             render_animated_model_transparent(
                                 &model,
@@ -403,7 +403,7 @@ impl ModelBuffers {
                                 joint_transforms_bind_group,
                             );
                         }
-                    }
+                    }*/
                 }
             }
         }
@@ -902,6 +902,7 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_bind_group(1, &skybox_texture, &[]);
                     render_pass.draw(0..3, 0..1);
 
+                    /*
                     // Render transparent things
 
                     render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
@@ -968,8 +969,89 @@ async fn run() -> anyhow::Result<()> {
                         render_pass.set_index_buffer(indices, INDEX_FORMAT);
                         render_pass.draw_indexed(0..num_indices, 0, 0..1);
                     }
+                    */
 
                     drop(render_pass);
+
+                    {
+                        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("transparency render pass"),
+                            color_attachments: &[
+                                wgpu::RenderPassColorAttachmentDescriptor {
+                                    attachment: &renderer.transparency_accum_texture,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                        store: true,
+                                    },
+                                },
+                                wgpu::RenderPassColorAttachmentDescriptor {
+                                    attachment: &renderer.transparency_revealage_texture,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                                        store: true,
+                                    },
+                                },
+                                wgpu::RenderPassColorAttachmentDescriptor {
+                                    attachment: &renderer.pre_tonemap_framebuffer,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: true,
+                                    },
+                                }
+                            ],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                                    attachment: &renderer.depth_texture,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: false,
+                                    }),
+                                    stencil_ops: None,
+                                },
+                            ),
+                        });
+
+                        render_pass.set_pipeline(&renderer.static_transparent_render_pipeline_2);
+
+                        render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
+                        render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
+                        render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
+
+                        render_pass.set_vertex_buffer(0, level.transparent_geometry.vertices.slice(..));
+                        render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
+                        render_pass.set_index_buffer(
+                            level.transparent_geometry.indices.slice(..),
+                            INDEX_FORMAT,
+                        );
+                        render_pass.draw_indexed(0..level.transparent_geometry.num_indices, 0, 0..1);
+
+                        model_buffers.render_transparent(&mut render_pass, &renderer);
+
+                        drop(render_pass);
+
+                        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("transparency compositing render pass"),
+                            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+                                attachment: &renderer.pre_tonemap_framebuffer,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: true,
+                                },
+                            }],
+                            depth_stencil_attachment: None,
+                        });
+
+                        render_pass.set_pipeline(&renderer.transparency_compositing_pipeline);
+                        render_pass.set_bind_group(0, &renderer.transparency_compositing_bind_group, &[]);
+                        render_pass.draw(0..3, 0..1);
+
+                        drop(render_pass);
+                    }
+
 
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("tonemap render pass"),
@@ -1396,7 +1478,7 @@ fn render_model_transparent<'a>(
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
 ) {
-    render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
+    render_pass.set_pipeline(&renderer.static_transparent_render_pipeline_2);
     render_pass.set_bind_group(1, &model.textures, &[]);
     render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
