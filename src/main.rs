@@ -145,7 +145,12 @@ impl ModelBuffer {
     fn load_static(model: assets::Model, name: &str, renderer: &Renderer) -> Self {
         Self::Static {
             model,
-            instances: DynamicBuffer::new(&renderer.device, 0, &format!("{} instances", name), wgpu::BufferUsage::VERTEX)
+            instances: DynamicBuffer::new(
+                &renderer.device,
+                0,
+                &format!("{} instances", name),
+                wgpu::BufferUsage::VERTEX,
+            ),
         }
     }
 
@@ -269,12 +274,16 @@ impl ModelBuffers {
                 "tentacle",
                 renderer,
             ),
-            ModelBuffer::load_static(assets::Model::load_gltf(
-                include_bytes!("../models/mate.glb"),
-                &renderer,
-                &mut init_encoder,
+            ModelBuffer::load_static(
+                assets::Model::load_gltf(
+                    include_bytes!("../models/mate.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "mate bottle",
+                )?,
                 "mate bottle",
-            )?, "mate bottle", renderer),
+                renderer,
+            ),
         ];
 
         log::info!("{:?}", animation_info);
@@ -348,7 +357,14 @@ impl ModelBuffers {
             match model_buffer {
                 ModelBuffer::Static { instances, model } => {
                     if let Some((slice, num)) = instances.get() {
-                        render_model_opaque(&model, render_pass, renderer, slice, num);
+                        render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
+                        render_indexed(
+                            render_pass,
+                            &model.opaque_geometry,
+                            &model.textures,
+                            slice,
+                            num,
+                        );
                     }
                 }
                 ModelBuffer::Animated {
@@ -358,14 +374,15 @@ impl ModelBuffers {
                     ..
                 } => {
                     if let Some((slice, num)) = instances.get() {
-                        render_animated_model_opaque(
-                            &model,
+                        render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
+                        render_animated_indexed(
                             render_pass,
-                            renderer,
+                            &model.opaque_geometry,
+                            &model.bind_group,
                             slice,
                             num,
                             joint_transforms_bind_group,
-                        );
+                        )
                     }
                 }
             }
@@ -382,7 +399,14 @@ impl ModelBuffers {
                 ModelBuffer::Static { instances, model } => {
                     if model.transparent_geometry.num_indices > 0 {
                         if let Some((slice, num)) = instances.get() {
-                            render_model_transparent(&model, render_pass, renderer, slice, num);
+                            render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
+                            render_indexed(
+                                render_pass,
+                                &model.transparent_geometry,
+                                &model.textures,
+                                slice,
+                                num,
+                            );
                         }
                     }
                 }
@@ -394,14 +418,16 @@ impl ModelBuffers {
                 } => {
                     if model.transparent_geometry.num_indices > 0 {
                         if let Some((slice, num)) = instances.get() {
-                            render_animated_model_transparent(
-                                &model,
+                            render_pass
+                                .set_pipeline(&renderer.animated_transparent_render_pipeline);
+                            render_animated_indexed(
                                 render_pass,
-                                renderer,
+                                &model.transparent_geometry,
+                                &model.bind_group,
                                 slice,
                                 num,
                                 joint_transforms_bind_group,
-                            );
+                            )
                         }
                     }
                 }
@@ -867,34 +893,50 @@ async fn run() -> anyhow::Result<()> {
                         ),
                     });
 
-                    // Render opaque things
-
-                    render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
-                    // Render gun
+                    // Render opaque things
+                    {
+                        render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
 
-                    if settings.draw_gun {
-                        render_model_opaque(
-                            &monkey_gun,
+                        // Render gun
+
+                        if settings.draw_gun {
+                            render_indexed(
+                                &mut render_pass,
+                                &monkey_gun.opaque_geometry,
+                                &monkey_gun.textures,
+                                gun_instance.slice(..),
+                                1,
+                            );
+                        }
+
+                        // Render level
+                        render_indexed(
                             &mut render_pass,
-                            &renderer,
-                            gun_instance.slice(..),
+                            &level.opaque_geometry,
+                            &level.texture_array_bind_group,
+                            renderer.identity_instance_buffer.slice(..),
+                            1,
+                        );
+
+                        model_buffers.render_opaque(&mut render_pass, &renderer);
+                    }
+
+                    // Render alpha clipped things
+                    {
+                        render_pass.set_pipeline(&renderer.static_alpha_clip_render_pipeline);
+
+                        // Render level
+                        render_indexed(
+                            &mut render_pass,
+                            &level.alpha_clip_geometry,
+                            &level.texture_array_bind_group,
+                            renderer.identity_instance_buffer.slice(..),
                             1,
                         );
                     }
-
-                    // Render level
-
-                    render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, level.opaque_geometry.vertices.slice(..));
-                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(level.opaque_geometry.indices.slice(..), INDEX_FORMAT);
-                    render_pass.draw_indexed(0..level.opaque_geometry.num_indices, 0, 0..1);
-
-                    model_buffers.render_opaque(&mut render_pass, &renderer);
 
                     // Render the skybox
 
@@ -906,14 +948,13 @@ async fn run() -> anyhow::Result<()> {
 
                     render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
 
-                    render_pass.set_bind_group(1, &level.texture_array_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, level.transparent_geometry.vertices.slice(..));
-                    render_pass.set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        level.transparent_geometry.indices.slice(..),
-                        INDEX_FORMAT,
+                    render_indexed(
+                        &mut render_pass,
+                        &level.alpha_blend_geometry,
+                        &level.texture_array_bind_group,
+                        renderer.identity_instance_buffer.slice(..),
+                        1,
                     );
-                    render_pass.draw_indexed(0..level.transparent_geometry.num_indices, 0, 0..1);
 
                     // Render decals
 
@@ -1357,78 +1398,6 @@ fn collision_handling(
     }
 }
 
-fn render_model_opaque<'a>(
-    model: &'a assets::Model,
-    render_pass: &mut wgpu::RenderPass<'a>,
-    renderer: &'a Renderer,
-    instances: wgpu::BufferSlice<'a>,
-    num_instances: u32,
-) {
-    render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
-    render_pass.set_bind_group(1, &model.textures, &[]);
-    render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
-    render_pass.set_vertex_buffer(1, instances);
-    render_pass.set_index_buffer(model.opaque_geometry.indices.slice(..), INDEX_FORMAT);
-    render_pass.draw_indexed(0..model.opaque_geometry.num_indices, 0, 0..num_instances)
-}
-
-fn render_animated_model_opaque<'a>(
-    model: &'a assets::AnimatedModel,
-    render_pass: &mut wgpu::RenderPass<'a>,
-    renderer: &'a Renderer,
-    instances: wgpu::BufferSlice<'a>,
-    num_instances: u32,
-    joint_transforms_bind_group: &'a wgpu::BindGroup,
-) {
-    render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
-    render_pass.set_bind_group(1, &model.bind_group, &[]);
-    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
-    render_pass.set_vertex_buffer(0, model.opaque_geometry.vertices.slice(..));
-    render_pass.set_vertex_buffer(1, instances);
-    render_pass.set_index_buffer(model.opaque_geometry.indices.slice(..), INDEX_FORMAT);
-    render_pass.draw_indexed(0..model.opaque_geometry.num_indices, 0, 0..num_instances)
-}
-
-fn render_model_transparent<'a>(
-    model: &'a assets::Model,
-    render_pass: &mut wgpu::RenderPass<'a>,
-    renderer: &'a Renderer,
-    instances: wgpu::BufferSlice<'a>,
-    num_instances: u32,
-) {
-    render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
-    render_pass.set_bind_group(1, &model.textures, &[]);
-    render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
-    render_pass.set_vertex_buffer(1, instances);
-    render_pass.set_index_buffer(model.transparent_geometry.indices.slice(..), INDEX_FORMAT);
-    render_pass.draw_indexed(
-        0..model.transparent_geometry.num_indices,
-        0,
-        0..num_instances,
-    )
-}
-
-fn render_animated_model_transparent<'a>(
-    model: &'a assets::AnimatedModel,
-    render_pass: &mut wgpu::RenderPass<'a>,
-    renderer: &'a Renderer,
-    instances: wgpu::BufferSlice<'a>,
-    num_instances: u32,
-    joint_transforms_bind_group: &'a wgpu::BindGroup,
-) {
-    render_pass.set_pipeline(&renderer.animated_transparent_render_pipeline);
-    render_pass.set_bind_group(1, &model.bind_group, &[]);
-    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
-    render_pass.set_vertex_buffer(0, model.transparent_geometry.vertices.slice(..));
-    render_pass.set_vertex_buffer(1, instances);
-    render_pass.set_index_buffer(model.transparent_geometry.indices.slice(..), INDEX_FORMAT);
-    render_pass.draw_indexed(
-        0..model.transparent_geometry.num_indices,
-        0,
-        0..num_instances,
-    )
-}
-
 fn render_debug_lines<'a>(
     buffer: &'a DynamicBuffer<renderer::debug_lines::Vertex>,
     render_pass: &mut wgpu::RenderPass<'a>,
@@ -1439,4 +1408,34 @@ fn render_debug_lines<'a>(
         render_pass.set_vertex_buffer(0, slice);
         render_pass.draw(0..len, 0..1);
     }
+}
+
+fn render_indexed<'a>(
+    render_pass: &mut wgpu::RenderPass<'a>,
+    buffers: &'a assets::ModelBuffers,
+    textures: &'a wgpu::BindGroup,
+    instances: wgpu::BufferSlice<'a>,
+    num_instances: u32,
+) {
+    render_pass.set_bind_group(1, textures, &[]);
+    render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
+    render_pass.set_vertex_buffer(1, instances);
+    render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
+    render_pass.draw_indexed(0..buffers.num_indices, 0, 0..num_instances);
+}
+
+fn render_animated_indexed<'a>(
+    render_pass: &mut wgpu::RenderPass<'a>,
+    buffers: &'a assets::ModelBuffers,
+    bind_group: &'a wgpu::BindGroup,
+    instances: wgpu::BufferSlice<'a>,
+    num_instances: u32,
+    joint_transforms_bind_group: &'a wgpu::BindGroup,
+) {
+    render_pass.set_bind_group(1, bind_group, &[]);
+    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
+    render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
+    render_pass.set_vertex_buffer(1, instances);
+    render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
+    render_pass.draw_indexed(0..buffers.num_indices, 0, 0..num_instances)
 }

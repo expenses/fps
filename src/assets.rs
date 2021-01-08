@@ -117,13 +117,17 @@ impl MaterialProperty {
     }
 }
 
-fn ordered_mesh_nodes<'a>(gltf: &'a gltf::Document, properties: &HashMap<usize, Property>) -> impl Iterator<Item = (gltf::Node<'a>, gltf::Mesh<'a>)> + 'a {
-    let mut nodes: Vec<_> = gltf.nodes()
+fn ordered_mesh_nodes<'a>(
+    gltf: &'a gltf::Document,
+    properties: &HashMap<usize, Property>,
+) -> impl Iterator<Item = (gltf::Node<'a>, gltf::Mesh<'a>)> + 'a {
+    let mut nodes: Vec<_> = gltf
+        .nodes()
         .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
         .map(|(node, mesh)| {
             let order = match properties.get(&node.index()) {
                 Some(Property::RenderOrder(order)) => *order,
-                _ => 0
+                _ => 0,
             };
 
             (node, mesh, order)
@@ -136,8 +140,7 @@ fn ordered_mesh_nodes<'a>(gltf: &'a gltf::Document, properties: &HashMap<usize, 
 }
 
 fn load_properties(gltf: &gltf::Document) -> anyhow::Result<HashMap<usize, Property>> {
-    gltf
-        .nodes()
+    gltf.nodes()
         .filter_map(|node| {
             node.extras()
                 .as_ref()
@@ -154,7 +157,8 @@ fn load_properties(gltf: &gltf::Document) -> anyhow::Result<HashMap<usize, Prope
 
 pub struct Level {
     pub opaque_geometry: ModelBuffers,
-    pub transparent_geometry: ModelBuffers,
+    pub alpha_clip_geometry: ModelBuffers,
+    pub alpha_blend_geometry: ModelBuffers,
     pub texture_array_bind_group: wgpu::BindGroup,
     pub lights_bind_group: wgpu::BindGroup,
     pub properties: HashMap<usize, Property>,
@@ -198,7 +202,8 @@ impl Level {
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
         let mut opaque_geometry = StagingModelBuffers::default();
-        let mut transparent_geometry = StagingModelBuffers::default();
+        let mut alpha_blend_geometry = StagingModelBuffers::default();
+        let mut alpha_clip_geometry = StagingModelBuffers::default();
         let mut collision_geometry = StagingModelBuffers::default();
 
         let texture_array_view = load_texture_array(
@@ -291,12 +296,11 @@ impl Level {
                     None
                 };
 
-                let staging_buffers =
-                    if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
-                        &mut transparent_geometry
-                    } else {
-                        &mut opaque_geometry
-                    };
+                let staging_buffers = match primitive.material().alpha_mode() {
+                    gltf::material::AlphaMode::Blend => &mut alpha_blend_geometry,
+                    gltf::material::AlphaMode::Opaque => &mut opaque_geometry,
+                    gltf::material::AlphaMode::Mask => &mut alpha_clip_geometry,
+                };
 
                 add_primitive_geometry_to_buffers(
                     &primitive,
@@ -340,8 +344,10 @@ impl Level {
         Ok(Self {
             opaque_geometry: opaque_geometry
                 .upload(&renderer.device, &format!("{} level opaque", name)),
-            transparent_geometry: transparent_geometry
-                .upload(&renderer.device, &format!("{} level transparent", name)),
+            alpha_blend_geometry: alpha_blend_geometry
+                .upload(&renderer.device, &format!("{} level alpha blend", name)),
+            alpha_clip_geometry: alpha_clip_geometry
+                .upload(&renderer.device, &format!("{} level alpha clip", name)),
             texture_array_bind_group,
             lights_bind_group,
             properties,

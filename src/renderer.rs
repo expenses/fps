@@ -114,6 +114,8 @@ pub struct Renderer {
     post_processing_bind_group_layout: wgpu::BindGroupLayout,
     pub fxaa_pipeline: wgpu::RenderPipeline,
     pub tonemap_pipeline: wgpu::RenderPipeline,
+
+    pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -338,6 +340,10 @@ impl Renderer {
         let fs_model = wgpu::include_spirv!("../shaders/compiled/model.frag.spv");
         let fs_model_module = device.create_shader_module(&fs_model);
 
+        let fs_alpha_clip_model =
+            wgpu::include_spirv!("../shaders/compiled/alpha_clip_model.frag.spv");
+        let fs_alpha_clip_model_module = device.create_shader_module(&fs_alpha_clip_model);
+
         let vs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.vert.spv");
         let vs_skybox_module = device.create_shader_module(&vs_skybox);
         let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
@@ -393,6 +399,17 @@ impl Renderer {
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
             true,
+        );
+
+        let static_alpha_clip_render_pipeline = create_render_pipeline(
+            &device,
+            "static alpha clip render pipeline",
+            &static_model_pipeline_layout,
+            &vs_static_model_module,
+            &fs_alpha_clip_model_module,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            true,
+            false,
         );
 
         let static_transparent_render_pipeline = create_render_pipeline(
@@ -523,10 +540,7 @@ impl Renderer {
         let screen_dimension_uniform_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("screen_dimension_uniform_buffer"),
-                contents: bytemuck::bytes_of(&Vec2::new(
-                    width as f32,
-                    height as f32,
-                )),
+                contents: bytemuck::bytes_of(&Vec2::new(width as f32, height as f32)),
                 usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             });
 
@@ -684,6 +698,8 @@ impl Renderer {
             pre_tonemap_framebuffer,
             tonemap_bind_group,
             tonemap_pipeline,
+
+            static_alpha_clip_render_pipeline,
         })
     }
 
