@@ -127,23 +127,14 @@ fn create_joint_transforms_bind_group(
         })
 }
 
-enum ModelBuffer {
-    Static {
-        model: assets::Model,
-        instances: DynamicBuffer<Instance>,
-    },
-    Animated {
-        model: assets::AnimatedModel,
-        instances: DynamicBuffer<AnimatedInstance>,
-        joint_transforms: DynamicBuffer<Mat4>,
-        joint_transforms_bind_group: wgpu::BindGroup,
-        name: String,
-    },
+struct StaticModelBuffer {
+    model: assets::Model,
+    instances: DynamicBuffer<Instance>,
 }
 
-impl ModelBuffer {
-    fn load_static(model: assets::Model, name: &str, renderer: &Renderer) -> Self {
-        Self::Static {
+impl StaticModelBuffer {
+    fn load(model: assets::Model, name: &str, renderer: &Renderer) -> Self {
+        Self {
             model,
             instances: DynamicBuffer::new(
                 &renderer.device,
@@ -153,8 +144,18 @@ impl ModelBuffer {
             ),
         }
     }
+}
 
-    fn load_animated(model: assets::AnimatedModel, name: &str, renderer: &Renderer) -> Self {
+struct AnimatedModelBuffer {
+    model: assets::AnimatedModel,
+    instances: DynamicBuffer<AnimatedInstance>,
+    joint_transforms: DynamicBuffer<Mat4>,
+    joint_transforms_bind_group: wgpu::BindGroup,
+    name: String,
+}
+
+impl AnimatedModelBuffer {
+    fn load(model: assets::AnimatedModel, name: &str, renderer: &Renderer) -> Self {
         let joint_transforms = DynamicBuffer::new(
             &renderer.device,
             model.num_joints,
@@ -165,7 +166,7 @@ impl ModelBuffer {
         let joint_transforms_bind_group =
             create_joint_transforms_bind_group(&joint_transforms, renderer, name);
 
-        Self::Animated {
+        Self {
             model,
             instances: DynamicBuffer::new(
                 &renderer.device,
@@ -205,7 +206,8 @@ struct AnimationInfo {
 }
 
 struct ModelBuffers {
-    inner: Vec<ModelBuffer>,
+    animated_models: Vec<AnimatedModelBuffer>,
+    static_models: Vec<StaticModelBuffer>,
     animation_info: AnimationInfo,
 }
 
@@ -216,8 +218,19 @@ impl ModelBuffers {
     ) -> anyhow::Result<Self> {
         let mut animation_info = AnimationInfo::default();
 
-        let buffers = vec![
-            ModelBuffer::load_animated(
+        let static_models = vec![StaticModelBuffer::load(
+            assets::Model::load_gltf(
+                include_bytes!("../models/mate.glb"),
+                &renderer,
+                &mut init_encoder,
+                "mate bottle",
+            )?,
+            "mate bottle",
+            renderer,
+        )];
+
+        let animated_models = vec![
+            AnimatedModelBuffer::load(
                 assets::AnimatedModel::load_gltf(
                     include_bytes!("../models/warehouse_robot.glb"),
                     &renderer,
@@ -233,7 +246,7 @@ impl ModelBuffers {
                 "robot",
                 renderer,
             ),
-            ModelBuffer::load_animated(
+            AnimatedModelBuffer::load(
                 assets::AnimatedModel::load_gltf(
                     include_bytes!("../models/mouse.glb"),
                     &renderer,
@@ -256,7 +269,7 @@ impl ModelBuffers {
                 "mouse",
                 renderer,
             ),
-            ModelBuffer::load_animated(
+            AnimatedModelBuffer::load(
                 assets::AnimatedModel::load_gltf(
                     include_bytes!("../models/tentacle.glb"),
                     &renderer,
@@ -274,22 +287,13 @@ impl ModelBuffers {
                 "tentacle",
                 renderer,
             ),
-            ModelBuffer::load_static(
-                assets::Model::load_gltf(
-                    include_bytes!("../models/mate.glb"),
-                    &renderer,
-                    &mut init_encoder,
-                    "mate bottle",
-                )?,
-                "mate bottle",
-                renderer,
-            ),
         ];
 
         log::info!("{:?}", animation_info);
 
         Ok(Self {
-            inner: buffers,
+            static_models,
+            animated_models,
             animation_info,
         })
     }
@@ -301,90 +305,99 @@ impl ModelBuffers {
         InstancePusher,
         Option<(&assets::AnimatedModel, &mut DynamicBuffer<Mat4>)>,
     ) {
-        match &mut self.inner[*model as usize] {
-            ModelBuffer::Static { instances, .. } => (InstancePusher::Static(instances), None),
-            ModelBuffer::Animated {
+        let mut index = *model as usize;
+
+        if index < self.animated_models.len() {
+            let AnimatedModelBuffer {
                 instances,
                 joint_transforms,
                 model,
                 ..
-            } => (
+            } = &mut self.animated_models[index];
+            (
                 InstancePusher::Animated(instances),
                 Some((model, joint_transforms)),
-            ),
+            )
+        } else {
+            index -= self.animated_models.len();
+            (
+                InstancePusher::Static(&mut self.static_models[index].instances),
+                None,
+            )
         }
     }
 
     fn clone_animation_joints(&self, model: &Model) -> Option<AnimationJoints> {
-        match &self.inner[*model as usize] {
-            ModelBuffer::Static { .. } => None,
-            ModelBuffer::Animated { model, .. } => Some(model.animation_joints.clone()),
+        let index = *model as usize;
+
+        if index < self.animated_models.len() {
+            Some(self.animated_models[index].model.animation_joints.clone())
+        } else {
+            None
         }
     }
 
     fn upload(&mut self, renderer: &Renderer) {
-        for model_buffer in &mut self.inner {
-            match model_buffer {
-                ModelBuffer::Static { instances, .. } => {
-                    instances.upload(renderer);
-                    instances.clear();
-                }
-                ModelBuffer::Animated {
-                    instances,
-                    joint_transforms,
-                    joint_transforms_bind_group,
-                    name,
-                    ..
-                } => {
-                    instances.upload(renderer);
+        for AnimatedModelBuffer {
+            instances,
+            joint_transforms,
+            joint_transforms_bind_group,
+            name,
+            ..
+        } in &mut self.animated_models
+        {
+            instances.upload(renderer);
 
-                    let resized = joint_transforms.upload(renderer);
+            let resized = joint_transforms.upload(renderer);
 
-                    if resized {
-                        *joint_transforms_bind_group =
-                            create_joint_transforms_bind_group(&joint_transforms, renderer, &name);
-                    }
-
-                    instances.clear();
-                    joint_transforms.clear();
-                }
+            if resized {
+                *joint_transforms_bind_group =
+                    create_joint_transforms_bind_group(&joint_transforms, renderer, &name);
             }
+
+            instances.clear();
+            joint_transforms.clear();
+        }
+
+        for model in &mut self.static_models {
+            model.instances.upload(renderer);
+            model.instances.clear();
         }
     }
 
     fn render_opaque<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, renderer: &'a Renderer) {
-        for model_buffer in &self.inner {
-            match model_buffer {
-                ModelBuffer::Static { instances, model } => {
-                    if let Some((slice, num)) = instances.get() {
-                        render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
-                        render_indexed(
-                            render_pass,
-                            &model.opaque_geometry,
-                            &model.textures,
-                            slice,
-                            num,
-                        );
-                    }
-                }
-                ModelBuffer::Animated {
-                    instances,
-                    model,
+        render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
+
+        for StaticModelBuffer { instances, model } in &self.static_models {
+            if let Some((slice, num)) = instances.get() {
+                render_indexed(
+                    render_pass,
+                    &model.opaque_geometry,
+                    &model.textures,
+                    slice,
+                    num,
+                );
+            }
+        }
+
+        render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
+
+        for AnimatedModelBuffer {
+            instances,
+            model,
+            joint_transforms_bind_group,
+            ..
+        } in &self.animated_models
+        {
+            if let Some((slice, num)) = instances.get() {
+                render_animated_indexed(
+                    render_pass,
+                    &model.opaque_geometry,
+                    &model.bind_group,
+                    slice,
+                    num,
                     joint_transforms_bind_group,
-                    ..
-                } => {
-                    if let Some((slice, num)) = instances.get() {
-                        render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
-                        render_animated_indexed(
-                            render_pass,
-                            &model.opaque_geometry,
-                            &model.bind_group,
-                            slice,
-                            num,
-                            joint_transforms_bind_group,
-                        )
-                    }
-                }
+                )
             }
         }
     }
@@ -394,43 +407,38 @@ impl ModelBuffers {
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
     ) {
-        for model_buffer in &self.inner {
-            match model_buffer {
-                ModelBuffer::Static { instances, model } => {
-                    if model.transparent_geometry.num_indices > 0 {
-                        if let Some((slice, num)) = instances.get() {
-                            render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
-                            render_indexed(
-                                render_pass,
-                                &model.transparent_geometry,
-                                &model.textures,
-                                slice,
-                                num,
-                            );
-                        }
-                    }
-                }
-                ModelBuffer::Animated {
-                    instances,
-                    model,
+        render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
+
+        for StaticModelBuffer { instances, model } in &self.static_models {
+            if let Some((slice, num)) = instances.get() {
+                render_indexed(
+                    render_pass,
+                    &model.transparent_geometry,
+                    &model.textures,
+                    slice,
+                    num,
+                );
+            }
+        }
+
+        render_pass.set_pipeline(&renderer.animated_transparent_render_pipeline);
+
+        for AnimatedModelBuffer {
+            instances,
+            model,
+            joint_transforms_bind_group,
+            ..
+        } in &self.animated_models
+        {
+            if let Some((slice, num)) = instances.get() {
+                render_animated_indexed(
+                    render_pass,
+                    &model.transparent_geometry,
+                    &model.bind_group,
+                    slice,
+                    num,
                     joint_transforms_bind_group,
-                    ..
-                } => {
-                    if model.transparent_geometry.num_indices > 0 {
-                        if let Some((slice, num)) = instances.get() {
-                            render_pass
-                                .set_pipeline(&renderer.animated_transparent_render_pipeline);
-                            render_animated_indexed(
-                                render_pass,
-                                &model.transparent_geometry,
-                                &model.bind_group,
-                                slice,
-                                num,
-                                joint_transforms_bind_group,
-                            )
-                        }
-                    }
-                }
+                )
             }
         }
     }
@@ -441,6 +449,7 @@ enum Model {
     Robot = 0,
     Mouse = 1,
     Tentacle = 2,
+    // Static Models
     MateBottle = 3,
 }
 
