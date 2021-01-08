@@ -9,8 +9,10 @@ use ultraviolet::{Isometry3, Lerp, Mat3, Mat4, Rotor3, Slerp, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 pub struct AnimatedModel {
-    pub opaque_geometry: ModelBuffers,
-    pub transparent_geometry: ModelBuffers,
+    pub opaque_geometry: Option<ModelBuffers>,
+    pub alpha_clip_geometry: Option<ModelBuffers>,
+    pub alpha_blend_geometry: Option<ModelBuffers>,
+
     pub bind_group: wgpu::BindGroup,
     pub animations: Vec<Animation>,
     pub num_joints: usize,
@@ -37,7 +39,8 @@ impl AnimatedModel {
         let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder, name)?;
 
         let mut opaque_geometry = StagingModelBuffers::default();
-        let mut transparent_geometry = StagingModelBuffers::default();
+        let mut alpha_blend_geometry = StagingModelBuffers::default();
+        let mut alpha_clip_geometry = StagingModelBuffers::default();
 
         for (node, mesh) in gltf
             .nodes()
@@ -57,12 +60,11 @@ impl AnimatedModel {
                     ));
                 }
 
-                let staging_buffers =
-                    if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
-                        &mut transparent_geometry
-                    } else {
-                        &mut opaque_geometry
-                    };
+                let staging_buffers = match primitive.material().alpha_mode() {
+                    gltf::material::AlphaMode::Blend => &mut alpha_blend_geometry,
+                    gltf::material::AlphaMode::Opaque => &mut opaque_geometry,
+                    gltf::material::AlphaMode::Mask => &mut alpha_clip_geometry,
+                };
 
                 add_animated_primitive_geometry_to_buffers(
                     &primitive,
@@ -232,9 +234,12 @@ impl AnimatedModel {
             .collect();
 
         let mut model = Self {
-            opaque_geometry: opaque_geometry.upload(&renderer.device, &format!("{} opaque", name)),
-            transparent_geometry: transparent_geometry
-                .upload(&renderer.device, &format!("{} transparent", name)),
+            opaque_geometry: opaque_geometry
+                .upload(&renderer.device, &format!("{} level opaque", name)),
+            alpha_blend_geometry: alpha_blend_geometry
+                .upload(&renderer.device, &format!("{} level alpha blend", name)),
+            alpha_clip_geometry: alpha_clip_geometry
+                .upload(&renderer.device, &format!("{} level alpha clip", name)),
             bind_group,
             animations,
             num_joints,

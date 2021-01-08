@@ -32,8 +32,12 @@ impl<T> Default for StagingModelBuffers<T> {
 }
 
 impl<T: bytemuck::Pod> StagingModelBuffers<T> {
-    fn upload(&self, device: &wgpu::Device, name: &str) -> ModelBuffers {
-        ModelBuffers {
+    fn upload(&self, device: &wgpu::Device, name: &str) -> Option<ModelBuffers> {
+        if self.indices.is_empty() {
+            return None;
+        }
+
+        Some(ModelBuffers {
             vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("{} geometry vertices", name)),
                 contents: bytemuck::cast_slice(&self.vertices),
@@ -45,7 +49,7 @@ impl<T: bytemuck::Pod> StagingModelBuffers<T> {
                 usage: wgpu::BufferUsage::INDEX,
             }),
             num_indices: self.indices.len() as u32,
-        }
+        })
     }
 }
 
@@ -156,9 +160,9 @@ fn load_properties(gltf: &gltf::Document) -> anyhow::Result<HashMap<usize, Prope
 }
 
 pub struct Level {
-    pub opaque_geometry: ModelBuffers,
-    pub alpha_clip_geometry: ModelBuffers,
-    pub alpha_blend_geometry: ModelBuffers,
+    pub opaque_geometry: Option<ModelBuffers>,
+    pub alpha_clip_geometry: Option<ModelBuffers>,
+    pub alpha_blend_geometry: Option<ModelBuffers>,
     pub texture_array_bind_group: wgpu::BindGroup,
     pub lights_bind_group: wgpu::BindGroup,
     pub properties: HashMap<usize, Property>,
@@ -393,8 +397,9 @@ fn create_navmesh(
 }
 
 pub struct Model {
-    pub opaque_geometry: ModelBuffers,
-    pub transparent_geometry: ModelBuffers,
+    pub opaque_geometry: Option<ModelBuffers>,
+    pub alpha_clip_geometry: Option<ModelBuffers>,
+    pub alpha_blend_geometry: Option<ModelBuffers>,
     pub textures: wgpu::BindGroup,
 }
 
@@ -426,7 +431,8 @@ impl Model {
             });
 
         let mut opaque_geometry = StagingModelBuffers::default();
-        let mut transparent_geometry = StagingModelBuffers::default();
+        let mut alpha_blend_geometry = StagingModelBuffers::default();
+        let mut alpha_clip_geometry = StagingModelBuffers::default();
 
         assert_eq!(gltf.skins().count(), 0);
 
@@ -442,12 +448,11 @@ impl Model {
                     ));
                 }
 
-                let staging_buffers =
-                    if primitive.material().alpha_mode() == gltf::material::AlphaMode::Blend {
-                        &mut transparent_geometry
-                    } else {
-                        &mut opaque_geometry
-                    };
+                let staging_buffers = match primitive.material().alpha_mode() {
+                    gltf::material::AlphaMode::Blend => &mut alpha_blend_geometry,
+                    gltf::material::AlphaMode::Opaque => &mut opaque_geometry,
+                    gltf::material::AlphaMode::Mask => &mut alpha_clip_geometry,
+                };
 
                 add_primitive_geometry_to_buffers(
                     &primitive,
@@ -471,9 +476,12 @@ impl Model {
         );
 
         Ok(Self {
-            opaque_geometry: opaque_geometry.upload(&renderer.device, &format!("{} opaque", name)),
-            transparent_geometry: transparent_geometry
-                .upload(&renderer.device, &format!("{} transparent", name)),
+            opaque_geometry: opaque_geometry
+                .upload(&renderer.device, &format!("{} level opaque", name)),
+            alpha_blend_geometry: alpha_blend_geometry
+                .upload(&renderer.device, &format!("{} level alpha blend", name)),
+            alpha_clip_geometry: alpha_clip_geometry
+                .upload(&renderer.device, &format!("{} level alpha clip", name)),
             textures,
         })
     }

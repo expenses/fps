@@ -218,16 +218,28 @@ impl ModelBuffers {
     ) -> anyhow::Result<Self> {
         let mut animation_info = AnimationInfo::default();
 
-        let static_models = vec![StaticModelBuffer::load(
-            assets::Model::load_gltf(
-                include_bytes!("../models/mate.glb"),
-                &renderer,
-                &mut init_encoder,
+        let static_models = vec![
+            StaticModelBuffer::load(
+                assets::Model::load_gltf(
+                    include_bytes!("../models/mate.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "mate bottle",
+                )?,
                 "mate bottle",
-            )?,
-            "mate bottle",
-            renderer,
-        )];
+                renderer,
+            ),
+            StaticModelBuffer::load(
+                assets::Model::load_gltf(
+                    include_bytes!("../models/bush.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "bush",
+                )?,
+                "bush",
+                renderer,
+            )
+        ];
 
         let animated_models = vec![
             AnimatedModelBuffer::load(
@@ -369,14 +381,16 @@ impl ModelBuffers {
         render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
 
         for StaticModelBuffer { instances, model } in &self.static_models {
-            if let Some((slice, num)) = instances.get() {
-                render_indexed(
-                    render_pass,
-                    &model.opaque_geometry,
-                    &model.textures,
-                    slice,
-                    num,
-                );
+            if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
+                if let Some((slice, num)) = instances.get() {
+                    render_indexed(
+                        render_pass,
+                        opaque_geometry,
+                        &model.textures,
+                        slice,
+                        num,
+                    );
+                }
             }
         }
 
@@ -390,14 +404,57 @@ impl ModelBuffers {
         } in &self.animated_models
         {
             if let Some((slice, num)) = instances.get() {
-                render_animated_indexed(
-                    render_pass,
-                    &model.opaque_geometry,
-                    &model.bind_group,
-                    slice,
-                    num,
-                    joint_transforms_bind_group,
-                )
+                if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
+                    render_animated_indexed(
+                        render_pass,
+                        opaque_geometry,
+                        &model.bind_group,
+                        slice,
+                        num,
+                        joint_transforms_bind_group,
+                    )
+                }
+            }
+        }
+    }
+
+    fn render_alpha_clip<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, renderer: &'a Renderer) {
+        render_pass.set_pipeline(&renderer.static_alpha_clip_render_pipeline);
+
+        for StaticModelBuffer { instances, model } in &self.static_models {
+            if let Some(alpha_clip_geometry) = model.alpha_clip_geometry.as_ref() {
+                if let Some((slice, num)) = instances.get() {
+                    render_indexed(
+                        render_pass,
+                        alpha_clip_geometry,
+                        &model.textures,
+                        slice,
+                        num,
+                    );
+                }
+            }
+        }
+
+        render_pass.set_pipeline(&renderer.animated_alpha_clip_render_pipeline);
+
+        for AnimatedModelBuffer {
+            instances,
+            model,
+            joint_transforms_bind_group,
+            ..
+        } in &self.animated_models
+        {
+            if let Some(alpha_clip_geometry) = model.alpha_clip_geometry.as_ref() {
+                if let Some((slice, num)) = instances.get() {
+                    render_animated_indexed(
+                        render_pass,
+                        alpha_clip_geometry,
+                        &model.bind_group,
+                        slice,
+                        num,
+                        joint_transforms_bind_group,
+                    )
+                }
             }
         }
     }
@@ -410,14 +467,16 @@ impl ModelBuffers {
         render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
 
         for StaticModelBuffer { instances, model } in &self.static_models {
-            if let Some((slice, num)) = instances.get() {
-                render_indexed(
-                    render_pass,
-                    &model.transparent_geometry,
-                    &model.textures,
-                    slice,
-                    num,
-                );
+            if let Some(alpha_blend_geometry) = model.alpha_blend_geometry.as_ref() {
+                if let Some((slice, num)) = instances.get() {
+                    render_indexed(
+                        render_pass,
+                        alpha_blend_geometry,
+                        &model.textures,
+                        slice,
+                        num,
+                    );
+                }
             }
         }
 
@@ -430,15 +489,17 @@ impl ModelBuffers {
             ..
         } in &self.animated_models
         {
-            if let Some((slice, num)) = instances.get() {
-                render_animated_indexed(
-                    render_pass,
-                    &model.transparent_geometry,
-                    &model.bind_group,
-                    slice,
-                    num,
-                    joint_transforms_bind_group,
-                )
+            if let Some(alpha_blend_geometry) = model.alpha_blend_geometry.as_ref() {
+                if let Some((slice, num)) = instances.get() {
+                    render_animated_indexed(
+                        render_pass,
+                        alpha_blend_geometry,
+                        &model.bind_group,
+                        slice,
+                        num,
+                        joint_transforms_bind_group,
+                    )
+                }
             }
         }
     }
@@ -451,6 +512,7 @@ enum Model {
     Tentacle = 2,
     // Static Models
     MateBottle = 3,
+    Bush = 4,
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -912,23 +974,27 @@ async fn run() -> anyhow::Result<()> {
                         // Render gun
 
                         if settings.draw_gun {
-                            render_indexed(
-                                &mut render_pass,
-                                &monkey_gun.opaque_geometry,
-                                &monkey_gun.textures,
-                                gun_instance.slice(..),
-                                1,
-                            );
+                            if let Some(opaque_geometry) = monkey_gun.opaque_geometry.as_ref() {
+                                render_indexed(
+                                    &mut render_pass,
+                                    opaque_geometry,
+                                    &monkey_gun.textures,
+                                    gun_instance.slice(..),
+                                    1,
+                                );
+                            }
                         }
 
                         // Render level
-                        render_indexed(
-                            &mut render_pass,
-                            &level.opaque_geometry,
-                            &level.texture_array_bind_group,
-                            renderer.identity_instance_buffer.slice(..),
-                            1,
-                        );
+                        if let Some(opaque_geometry) = level.opaque_geometry.as_ref() {
+                            render_indexed(
+                                &mut render_pass,
+                                opaque_geometry,
+                                &level.texture_array_bind_group,
+                                renderer.identity_instance_buffer.slice(..),
+                                1,
+                            );
+                        }
 
                         model_buffers.render_opaque(&mut render_pass, &renderer);
                     }
@@ -938,13 +1004,17 @@ async fn run() -> anyhow::Result<()> {
                         render_pass.set_pipeline(&renderer.static_alpha_clip_render_pipeline);
 
                         // Render level
-                        render_indexed(
-                            &mut render_pass,
-                            &level.alpha_clip_geometry,
-                            &level.texture_array_bind_group,
-                            renderer.identity_instance_buffer.slice(..),
-                            1,
-                        );
+                        if let Some(alpha_clip_geometry) = level.alpha_clip_geometry.as_ref() {
+                            render_indexed(
+                                &mut render_pass,
+                                alpha_clip_geometry,
+                                &level.texture_array_bind_group,
+                                renderer.identity_instance_buffer.slice(..),
+                                1,
+                            );
+                        }
+
+                        model_buffers.render_alpha_clip(&mut render_pass, &renderer);
                     }
 
                     // Render the skybox
@@ -957,13 +1027,15 @@ async fn run() -> anyhow::Result<()> {
 
                     render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
 
-                    render_indexed(
-                        &mut render_pass,
-                        &level.alpha_blend_geometry,
-                        &level.texture_array_bind_group,
-                        renderer.identity_instance_buffer.slice(..),
-                        1,
-                    );
+                    if let Some(alpha_blend_geometry) = level.alpha_blend_geometry.as_ref() {
+                        render_indexed(
+                            &mut render_pass,
+                            alpha_blend_geometry,
+                            &level.texture_array_bind_group,
+                            renderer.identity_instance_buffer.slice(..),
+                            1,
+                        );
+                    }
 
                     // Render decals
 

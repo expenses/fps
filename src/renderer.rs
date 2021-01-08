@@ -116,6 +116,7 @@ pub struct Renderer {
     pub tonemap_pipeline: wgpu::RenderPipeline,
 
     pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+    pub animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -412,6 +413,17 @@ impl Renderer {
             false,
         );
 
+        let animated_alpha_clip_render_pipeline = create_render_pipeline(
+            &device,
+            "animated alpha clip render pipeline",
+            &animated_model_pipeline_layout,
+            &vs_animated_model_module,
+            &fs_alpha_clip_model_module,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            true,
+            true,
+        );
+
         let static_transparent_render_pipeline = create_render_pipeline(
             &device,
             "static transparent render pipeline",
@@ -700,6 +712,7 @@ impl Renderer {
             tonemap_pipeline,
 
             static_alpha_clip_render_pipeline,
+            animated_alpha_clip_render_pipeline,
         })
     }
 
