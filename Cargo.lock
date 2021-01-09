@@ -41,6 +41,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "animation"
+version = "0.1.0"
+dependencies = [
+ "gltf",
+ "log",
+ "ordered-float",
+ "ultraviolet",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -587,6 +597,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 name = "fps"
 version = "0.0.0"
 dependencies = [
+ "animation",
  "anyhow",
  "base64",
  "bytemuck",
@@ -599,7 +610,6 @@ dependencies = [
  "log",
  "lyon_tessellation",
  "ncollide3d",
- "ordered-float",
  "serde_json",
  "ultraviolet",
  "wgpu",

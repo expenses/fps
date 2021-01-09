@@ -6,7 +6,8 @@ use wgpu::util::DeviceExt;
 
 mod animated_model;
 
-pub use animated_model::{AnimatedModel, AnimationJoints};
+pub use animated_model::AnimatedModel;
+pub use animation::AnimationJoints;
 
 #[repr(C)]
 #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]

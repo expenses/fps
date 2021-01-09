@@ -52,10 +52,13 @@ fn render_animated_models(
     instances.push(isometry.into_homogeneous_matrix());
 
     let animation = &model.animations[animation_state.animation];
-    animation_state.time = (animation_state.time + 1.0 / 60.0) % animation.total_time;
-    animation.animate(&mut animation_state.joints, animation_state.time, model);
+    animation_state.time = (animation_state.time + 1.0 / 60.0) % animation.total_time();
+    animation.animate(
+        &mut animation_state.joints, animation_state.time,
+        &model.depth_first_nodes,
+    );
 
-    for joint_transform in animation_state.joints.iter(model) {
+    for joint_transform in animation_state.joints.iter(&model.joint_indices_to_node_indices, &model.inverse_bind_matrices) {
         joint_buffer.push(joint_transform);
     }
 }
