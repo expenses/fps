@@ -1,5 +1,6 @@
 use crate::assets::AnimationJoints;
 use crate::{renderer, vec3_into, Model, ModelBuffers};
+use legion::{world::SubWorld, IntoQuery};
 use ncollide3d::query::PointQuery;
 use ncollide3d::transformation::ToTriMesh;
 use renderer::{AnimatedInstance, Instance};
@@ -41,33 +42,48 @@ fn render_models(
     instances.push(Instance::new(isometry.into_homogeneous_matrix()));
 }
 
-#[legion::system(for_each)]
+#[legion::system]
+#[read_component(Model)]
+#[read_component(Isometry3)]
+#[write_component(AnimationState)]
 fn render_animated_models(
     #[resource] model_buffers: &mut ModelBuffers,
-    model: &Model,
-    isometry: &Isometry3,
-    animation_state: &mut AnimationState,
+    //model: &Model,
+    //isometry: &Isometry3,
+    //animation_state: &mut AnimationState,
+    world: &mut SubWorld,
 ) {
-    let index = *model as u32;
-    let (instances, model, joint_buffer) = model_buffers.get_animated_buffer(model);
-    instances.push(AnimatedInstance::new(
-        isometry.into_homogeneous_matrix(),
-        index,
-    ));
+    let mut animated_models: Vec<_> = <(&Model, &Isometry3, &mut AnimationState)>::query()
+        .iter_mut(world)
+        .collect();
 
-    let animation = &model.animations[animation_state.animation];
-    animation_state.time = (animation_state.time + 1.0 / 60.0) % animation.total_time();
-    animation.animate(
-        &mut animation_state.joints,
-        animation_state.time,
-        &model.depth_first_nodes,
-    );
+    // Todo: we have a big joint buffer now, which means that we need to sort the models so that
+    // their joints get added in the right order. A better solution would be to have `Vec`s for each
+    // model type and push into the correct vec, then upload them all to a single gpu buffer.
+    animated_models.sort_unstable_by_key(|&(model, ..)| model);
 
-    for joint_transform in animation_state.joints.iter(
-        &model.joint_indices_to_node_indices,
-        &model.inverse_bind_matrices,
-    ) {
-        joint_buffer.push(joint_transform);
+    for (model, isometry, mut animation_state) in animated_models {
+        let index = *model as u32;
+        let (instances, model, joint_buffer) = model_buffers.get_animated_buffer(model);
+        instances.push(AnimatedInstance::new(
+            isometry.into_homogeneous_matrix(),
+            index,
+        ));
+
+        let animation = &model.animations[animation_state.animation];
+        animation_state.time = (animation_state.time + 1.0 / 60.0) % animation.total_time();
+        animation.animate(
+            &mut animation_state.joints,
+            animation_state.time,
+            &model.depth_first_nodes,
+        );
+
+        for joint_transform in animation_state.joints.iter(
+            &model.joint_indices_to_node_indices,
+            &model.inverse_bind_matrices,
+        ) {
+            joint_buffer.push(joint_transform);
+        }
     }
 }
 

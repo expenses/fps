@@ -104,7 +104,7 @@ pub struct Renderer {
     pub mipmap_generation_pipeline: wgpu::RenderPipeline,
     pub mipmap_generation_bind_group_layout: wgpu::BindGroupLayout,
 
-    pub joint_transform_bind_group_layout: wgpu::BindGroupLayout,
+    pub animated_models_bind_group_layout: wgpu::BindGroupLayout,
 
     vs_static_model: wgpu::ShaderModule,
     vs_animated_model: wgpu::ShaderModule,
@@ -269,9 +269,9 @@ impl Renderer {
                 }],
             });
 
-        let joint_transform_bind_group_layout =
+        let animated_models_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("joint transform bind group layout"),
+                label: Some("animated models bind group layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -285,6 +285,16 @@ impl Renderer {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
+                        visibility: wgpu::ShaderStage::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
                         visibility: wgpu::ShaderStage::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -334,7 +344,7 @@ impl Renderer {
             &fs_alpha_clip_model,
             &main_bind_group_layout,
             &lights_bind_group_layout,
-            &joint_transform_bind_group_layout,
+            &animated_models_bind_group_layout,
         );
 
         let skybox_render_pipeline_layout =
@@ -590,7 +600,7 @@ impl Renderer {
             static_alpha_clip_render_pipeline,
             animated_alpha_clip_render_pipeline,
 
-            joint_transform_bind_group_layout,
+            animated_models_bind_group_layout,
 
             post_processing_bind_group_layout,
             pre_fxaa_framebuffer,
@@ -692,7 +702,7 @@ impl Renderer {
             &self.fs_alpha_clip_model,
             &self.main_bind_group_layout,
             &self.lights_bind_group_layout,
-            &self.joint_transform_bind_group_layout,
+            &self.animated_models_bind_group_layout,
         );
 
         self.array_of_textures_bind_group_layout = array_of_textures_bind_group_layout;
@@ -1084,7 +1094,7 @@ fn render_pipelines_for_num_textures(
 
     main_bind_group_layout: &wgpu::BindGroupLayout,
     lights_bind_group_layout: &wgpu::BindGroupLayout,
-    joint_transform_bind_group_layout: &wgpu::BindGroupLayout,
+    animated_models_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> (wgpu::BindGroupLayout, RenderPipelines) {
     let array_of_textures_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1122,7 +1132,7 @@ fn render_pipelines_for_num_textures(
                 main_bind_group_layout,
                 &array_of_textures_bind_group_layout,
                 lights_bind_group_layout,
-                joint_transform_bind_group_layout,
+                animated_models_bind_group_layout,
             ],
             push_constant_ranges: &[wgpu::PushConstantRange {
                 stages: wgpu::ShaderStage::VERTEX,

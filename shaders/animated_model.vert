@@ -32,10 +32,14 @@ layout(set = 3, binding = 1) readonly buffer NumJoints {
 	uint num_joints[];
 };
 
+layout(set = 3, binding = 2) readonly buffer JointOffsets {
+    uint joint_offsets[];
+};
+
 void main() {
     mat4 transform = mat4(transform_1, transform_2, transform_3, transform_4);
 
-    uint joint_offset = gl_InstanceIndex * num_joints[model_index];
+    uint joint_offset = joint_offsets[model_index] + gl_InstanceIndex * num_joints[model_index];
 
     // Calculate skinned matrix from weights and joint indices of the current vertex
 	mat4 skin =

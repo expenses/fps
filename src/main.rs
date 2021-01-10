@@ -109,38 +109,6 @@ fn vec3_into<T: From<[f32; 3]>>(vec3: Vec3) -> T {
     arr.into()
 }
 
-fn create_joint_transforms_bind_group(
-    buffer: &DynamicBuffer<Mat4>,
-    renderer: &Renderer,
-    name: &str,
-    animated_models_num_joints_buffer: &wgpu::Buffer,
-) -> wgpu::BindGroup {
-    renderer
-        .device
-        .create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("{} joint transforms bind group", name)),
-            layout: &renderer.joint_transform_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: buffer.buffer(),
-                        offset: 0,
-                        size: None,
-                    },
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: animated_models_num_joints_buffer,
-                        offset: 0,
-                        size: None,
-                    },
-                },
-            ],
-        })
-}
-
 struct StaticModelBuffer {
     model: assets::Model,
     instances: DynamicBuffer<Instance>,
@@ -163,30 +131,10 @@ impl StaticModelBuffer {
 struct AnimatedModelBuffer {
     model: assets::AnimatedModel,
     instances: DynamicBuffer<AnimatedInstance>,
-    joint_transforms: DynamicBuffer<Mat4>,
-    joint_transforms_bind_group: wgpu::BindGroup,
 }
 
 impl AnimatedModelBuffer {
-    fn load(
-        model: assets::AnimatedModel,
-        renderer: &Renderer,
-        animated_models_num_joints_buffer: &wgpu::Buffer,
-    ) -> Self {
-        let joint_transforms = DynamicBuffer::new(
-            &renderer.device,
-            model.num_joints as usize,
-            &format!("{} joint transforms", &model.name),
-            wgpu::BufferUsage::STORAGE,
-        );
-
-        let joint_transforms_bind_group = create_joint_transforms_bind_group(
-            &joint_transforms,
-            renderer,
-            &model.name,
-            animated_models_num_joints_buffer,
-        );
-
+    fn load(model: assets::AnimatedModel, renderer: &Renderer) -> Self {
         Self {
             instances: DynamicBuffer::new(
                 &renderer.device,
@@ -194,8 +142,6 @@ impl AnimatedModelBuffer {
                 &format!("{} instances", &model.name),
                 wgpu::BufferUsage::VERTEX,
             ),
-            joint_transforms,
-            joint_transforms_bind_group,
             model,
         }
     }
@@ -211,12 +157,56 @@ struct AnimationInfo {
     tentacle_poke_animation: usize,
 }
 
+fn create_animated_models_bind_group(
+    animated_joints: &DynamicBuffer<Mat4>,
+    renderer: &Renderer,
+    num_joints_buffer: &wgpu::Buffer,
+    joint_offsets_buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("animated models bind group"),
+            layout: &renderer.animated_models_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: animated_joints.buffer(),
+                        offset: 0,
+                        size: None,
+                    },
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: num_joints_buffer,
+                        offset: 0,
+                        size: None,
+                    },
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: joint_offsets_buffer,
+                        offset: 0,
+                        size: None,
+                    },
+                },
+            ],
+        })
+}
+
 struct ModelBuffers {
     animated_models: Vec<AnimatedModelBuffer>,
     static_models: Vec<StaticModelBuffer>,
     animation_info: AnimationInfo,
     array_of_textures_bind_group: wgpu::BindGroup,
-    animated_models_num_joints_buffer: wgpu::Buffer,
+
+    num_joints_buffer: wgpu::Buffer,
+    joint_offsets_buffer: wgpu::Buffer,
+    animated_joints: DynamicBuffer<Mat4>,
+    animated_models_bind_group: wgpu::BindGroup,
 }
 
 impl ModelBuffers {
@@ -303,25 +293,46 @@ impl ModelBuffers {
             )?,
         ];
 
-        let animated_models_num_joints: Vec<u32> = animated_models
+        let num_joints: Vec<u32> = animated_models
             .iter()
             .map(|model| model.num_joints)
             .collect();
 
-        let animated_models_num_joints_buffer =
+        let num_joints_buffer =
             renderer
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("animated models num joints buffer"),
-                    contents: bytemuck::cast_slice(&animated_models_num_joints),
+                    label: Some("num joints buffer"),
+                    contents: bytemuck::cast_slice(&num_joints),
                     usage: wgpu::BufferUsage::STORAGE,
                 });
 
+        let joint_offsets_buffer =
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("joint offsets buffer"),
+                    contents: bytemuck::cast_slice(&num_joints),
+                    usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+                });
+
+        let animated_joints = DynamicBuffer::new(
+            &renderer.device,
+            0,
+            "animated joints buffer",
+            wgpu::BufferUsage::STORAGE,
+        );
+
+        let animated_models_bind_group = create_animated_models_bind_group(
+            &animated_joints,
+            renderer,
+            &num_joints_buffer,
+            &joint_offsets_buffer,
+        );
+
         let animated_models = animated_models
             .into_iter()
-            .map(|model| {
-                AnimatedModelBuffer::load(model, renderer, &animated_models_num_joints_buffer)
-            })
+            .map(|model| AnimatedModelBuffer::load(model, renderer))
             .collect();
 
         log::info!("{:?}", animation_info);
@@ -333,7 +344,11 @@ impl ModelBuffers {
             animated_models,
             animation_info,
             array_of_textures_bind_group,
-            animated_models_num_joints_buffer,
+
+            num_joints_buffer,
+            joint_offsets_buffer,
+            animated_joints,
+            animated_models_bind_group,
         })
     }
 
@@ -359,13 +374,10 @@ impl ModelBuffers {
         let index = *model as usize;
 
         let AnimatedModelBuffer {
-            instances,
-            joint_transforms,
-            model,
-            ..
+            instances, model, ..
         } = &mut self.animated_models[index];
 
-        (instances, model, joint_transforms)
+        (instances, model, &mut self.animated_joints)
     }
 
     fn clone_animation_joints(&self, model: &Model) -> Option<AnimationJoints> {
@@ -379,29 +391,38 @@ impl ModelBuffers {
     }
 
     fn upload(&mut self, renderer: &Renderer) {
-        for AnimatedModelBuffer {
-            instances,
-            joint_transforms,
-            joint_transforms_bind_group,
-            model,
-            ..
-        } in &mut self.animated_models
-        {
-            instances.upload(renderer);
+        let mut current_offset = 0;
+        let joint_offsets: Vec<_> = self
+            .animated_models
+            .iter()
+            .map(|model| {
+                let offset = current_offset;
+                current_offset += model.model.num_joints * model.instances.len_waiting() as u32;
+                offset
+            })
+            .collect();
 
-            let resized = joint_transforms.upload(renderer);
+        renderer.queue.write_buffer(
+            &self.joint_offsets_buffer,
+            0,
+            bytemuck::cast_slice(&joint_offsets),
+        );
 
-            if resized {
-                *joint_transforms_bind_group = create_joint_transforms_bind_group(
-                    &joint_transforms,
-                    renderer,
-                    &model.name,
-                    &self.animated_models_num_joints_buffer,
-                );
-            }
+        let resized = self.animated_joints.upload(renderer);
+        self.animated_joints.clear();
 
-            instances.clear();
-            joint_transforms.clear();
+        if resized {
+            self.animated_models_bind_group = create_animated_models_bind_group(
+                &self.animated_joints,
+                renderer,
+                &self.num_joints_buffer,
+                &self.joint_offsets_buffer,
+            );
+        }
+
+        for model in &mut self.animated_models {
+            model.instances.upload(renderer);
+            model.instances.clear();
         }
 
         for model in &mut self.static_models {
@@ -427,23 +448,15 @@ impl ModelBuffers {
             0,
             bytemuck::bytes_of(&renderer.projection_view),
         );
+        render_pass.set_bind_group(3, &self.animated_models_bind_group, &[]);
 
         for AnimatedModelBuffer {
-            instances,
-            model,
-            joint_transforms_bind_group,
-            ..
+            instances, model, ..
         } in &self.animated_models
         {
             if let Some((slice, num)) = instances.get() {
                 if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
-                    render_animated_indexed(
-                        render_pass,
-                        opaque_geometry,
-                        slice,
-                        num,
-                        joint_transforms_bind_group,
-                    )
+                    render_animated_indexed(render_pass, opaque_geometry, slice, num)
                 }
             }
         }
@@ -475,23 +488,15 @@ impl ModelBuffers {
             0,
             bytemuck::bytes_of(&renderer.projection_view),
         );
+        render_pass.set_bind_group(3, &self.animated_models_bind_group, &[]);
 
         for AnimatedModelBuffer {
-            instances,
-            model,
-            joint_transforms_bind_group,
-            ..
+            instances, model, ..
         } in &self.animated_models
         {
             if let Some(alpha_clip_geometry) = model.alpha_clip_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_animated_indexed(
-                        render_pass,
-                        alpha_clip_geometry,
-                        slice,
-                        num,
-                        joint_transforms_bind_group,
-                    )
+                    render_animated_indexed(render_pass, alpha_clip_geometry, slice, num)
                 }
             }
         }
@@ -523,30 +528,22 @@ impl ModelBuffers {
             0,
             bytemuck::bytes_of(&renderer.projection_view),
         );
+        render_pass.set_bind_group(3, &self.animated_models_bind_group, &[]);
 
         for AnimatedModelBuffer {
-            instances,
-            model,
-            joint_transforms_bind_group,
-            ..
+            instances, model, ..
         } in &self.animated_models
         {
             if let Some(alpha_blend_geometry) = model.alpha_blend_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_animated_indexed(
-                        render_pass,
-                        alpha_blend_geometry,
-                        slice,
-                        num,
-                        joint_transforms_bind_group,
-                    )
+                    render_animated_indexed(render_pass, alpha_blend_geometry, slice, num)
                 }
             }
         }
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialOrd, PartialEq, Eq, Ord)]
 enum Model {
     Robot = 0,
     Mouse = 1,
@@ -1596,9 +1593,7 @@ fn render_animated_indexed<'a>(
     buffers: &'a assets::ModelBuffers,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
-    joint_transforms_bind_group: &'a wgpu::BindGroup,
 ) {
-    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
     render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
