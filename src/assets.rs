@@ -602,7 +602,7 @@ fn add_primitive_geometry_to_buffers(
                 position,
                 normal,
                 uv: uv.into(),
-                texture_index: array_index as i32,
+                texture_index: array_index as u32,
                 emission_strength,
             });
 

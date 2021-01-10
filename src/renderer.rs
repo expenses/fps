@@ -17,7 +17,7 @@ pub struct Vertex {
     pub position: Vec3,
     pub normal: Vec3,
     pub uv: Vec2,
-    pub texture_index: i32,
+    pub texture_index: u32,
     pub emission_strength: f32,
 }
 
@@ -27,7 +27,7 @@ pub struct AnimatedVertex {
     pub position: Vec3,
     pub normal: Vec3,
     pub uv: Vec2,
-    pub texture_index: i32,
+    pub texture_index: u32,
     pub emission_strength: f32,
     pub joints: [u16; 4],
     pub joint_weights: Vec4,
@@ -61,20 +61,25 @@ impl Instance {
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 pub struct AnimatedInstance {
     transform: Mat4,
+    model_index: u32,
 }
 
 impl AnimatedInstance {
-    pub fn new(transform: Mat4) -> Self {
-        Self { transform }
+    pub fn new(transform: Mat4, model_index: u32) -> Self {
+        Self {
+            transform,
+            model_index,
+        }
     }
 }
 
-#[repr(C)]
-#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-pub struct AnimatedPushConstants {
-    pub projection_view: Mat4,
-    pub num_joints: u32,
-}
+const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
+    wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float];
+const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
+
+const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Ushort4, 6 => Float4];
+const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
+    wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4, 11 => Uint];
 
 pub struct Renderer {
     pub device: wgpu::Device,
@@ -267,16 +272,28 @@ impl Renderer {
         let joint_transform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("joint transform bind group layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let vs_static_model = wgpu::include_spirv!("../shaders/compiled/static_model.vert.spv");
@@ -753,14 +770,6 @@ pub fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
     }
 }
 
-const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
-    wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float];
-const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
-
-const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Int, 4 => Float, 5 => Ushort4, 6 => Float4];
-const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 4] =
-    wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4];
-
 fn create_render_pipeline(
     device: &wgpu::Device,
     label: &str,
@@ -887,7 +896,7 @@ pub fn decal_square(
         position: position + offsets[index],
         normal,
         uv: uvs[index],
-        texture_index: decals_texture_atlas_index as i32,
+        texture_index: decals_texture_atlas_index as u32,
         emission_strength: 0.0,
     };
 
@@ -1117,7 +1126,7 @@ fn render_pipelines_for_num_textures(
             ],
             push_constant_ranges: &[wgpu::PushConstantRange {
                 stages: wgpu::ShaderStage::VERTEX,
-                range: 0..std::mem::size_of::<AnimatedPushConstants>() as u32,
+                range: 0..std::mem::size_of::<Mat4>() as u32,
             }],
         });
 

@@ -20,6 +20,8 @@ pub struct AnimatedModel {
     pub joint_indices_to_node_indices: Vec<usize>,
     pub inverse_bind_matrices: Vec<Mat4>,
     pub depth_first_nodes: Vec<(usize, Option<usize>)>,
+
+    pub name: String,
 }
 
 impl AnimatedModel {
@@ -154,6 +156,7 @@ impl AnimatedModel {
                 .map(|mat| mat.into())
                 .collect(),
             depth_first_nodes,
+            name: name.to_string(),
         })
     }
 }
@@ -228,7 +231,7 @@ fn add_animated_primitive_geometry_to_buffers(
                 position,
                 normal,
                 uv: uv.into(),
-                texture_index: array_index as i32,
+                texture_index: array_index as u32,
                 emission_strength,
                 joints: j,
                 joint_weights: jw.into(),

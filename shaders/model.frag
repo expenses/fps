@@ -2,7 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier: enable
 
 layout(location = 0) in vec2 uv;
-layout(location = 1) flat in int texture_index;
+layout(location = 1) flat in uint texture_index;
 layout(location = 2) in vec3 pos;
 layout(location = 3) in vec3 normal;
 layout(location = 4) in float emission;

@@ -2,6 +2,7 @@ use crate::assets::AnimationJoints;
 use crate::{renderer, vec3_into, Model, ModelBuffers};
 use ncollide3d::query::PointQuery;
 use ncollide3d::transformation::ToTriMesh;
+use renderer::{AnimatedInstance, Instance};
 use ultraviolet::{Rotor3, Vec3, Vec4};
 
 pub use ultraviolet::transform::Isometry3;
@@ -36,8 +37,8 @@ fn render_models(
     model: &Model,
     isometry: &Isometry3,
 ) {
-    let (mut instances, _) = model_buffers.get_buffer(model);
-    instances.push(isometry.into_homogeneous_matrix());
+    let instances = model_buffers.get_static_buffer(model).unwrap();
+    instances.push(Instance::new(isometry.into_homogeneous_matrix()));
 }
 
 #[legion::system(for_each)]
@@ -47,9 +48,12 @@ fn render_animated_models(
     isometry: &Isometry3,
     animation_state: &mut AnimationState,
 ) {
-    let (mut instances, animation_info) = model_buffers.get_buffer(model);
-    let (model, joint_buffer) = animation_info.unwrap();
-    instances.push(isometry.into_homogeneous_matrix());
+    let index = *model as u32;
+    let (instances, model, joint_buffer) = model_buffers.get_animated_buffer(model);
+    instances.push(AnimatedInstance::new(
+        isometry.into_homogeneous_matrix(),
+        index,
+    ));
 
     let animation = &model.animations[animation_state.animation];
     animation_state.time = (animation_state.time + 1.0 / 60.0) % animation.total_time();
