@@ -10,7 +10,16 @@ layout(location = 0) out vec4 colour;
 
 layout(set = 0, binding = 1) uniform sampler u_nearest_sampler;
 
-layout(set = 1, binding = 0) uniform texture2DArray u_texture;
+layout(set = 1, binding = 0) uniform texture2D u_texture;
+
+struct TextureLocation {
+    vec2 offset;
+    vec2 size;
+};
+
+layout(set = 1, binding = 1) readonly buffer TextureLocations {
+    TextureLocation texture_locations[];
+};
 
 struct Light {
     vec3 colour_output;
@@ -22,9 +31,6 @@ layout(set = 2, binding = 0) readonly buffer Lights {
 	Light lights[];
 };
 
-/*
-Could be used for setting a bias with mipmaps if I wanted to.
-
 // https://community.khronos.org/t/mipmap-level-calculation-using-dfdx-dfdy/67480/2
 float mip_map_level(in vec2 unnormalised_texture_coordinates) {
     vec2  dx_vtc        = dFdx(unnormalised_texture_coordinates);
@@ -33,7 +39,6 @@ float mip_map_level(in vec2 unnormalised_texture_coordinates) {
 
     return 0.5 * log2(delta_max_sqr);
 }
-*/
 
 const vec3 AMBIENT = vec3(0.05);
 const float MIN_LIGHT_DISTANCE = 0.5;
@@ -61,7 +66,14 @@ void main() {
         total += (facing * attenuation) * light.colour_output;
     }
 
-    vec4 sampled = texture(sampler2DArray(u_texture, u_nearest_sampler), vec3(uv, texture_index));
+    TextureLocation location = texture_locations[texture_index];
+
+    float mip_map_level = mip_map_level(uv * location.size * textureSize(sampler2D(u_texture, u_nearest_sampler), 0));
+
+    vec2 new_uv = location.offset + location.size * fract(uv);
+
+    vec4 sampled = textureLod(sampler2D(u_texture, u_nearest_sampler), new_uv, mip_map_level);
 
     colour = vec4(sampled.rgb * (total + emission), sampled.a);
+    //colour = vec4(new_uv, 0.0, 1.0);
 }

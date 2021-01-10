@@ -611,6 +611,7 @@ dependencies = [
  "lyon_tessellation",
  "ncollide3d",
  "serde_json",
+ "texture_atlas",
  "ultraviolet",
  "wgpu",
  "winit",
@@ -984,6 +985,16 @@ version = "0.1.0"
 source = "git+https://github.com/zakarumych/gpu-descriptor?rev=df74fd8c7bea03149058a41aab0e4fe04077b266#df74fd8c7bea03149058a41aab0e4fe04077b266"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "guillotiere"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc7cccefbf418f663e11e9500326f46a44273dc598210bbedc8bbe95e696531f"
+dependencies = [
+ "euclid",
+ "svg_fmt",
 ]
 
 [[package]]
@@ -2165,6 +2176,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6446ced80d6c486436db5c078dde11a9f73d42b57fb273121e160b84f63d894c"
 
 [[package]]
+name = "svg_fmt"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fb1df15f412ee2e9dfc1c504260fa695c1c3f10fe9f4a6ee2d2184d7d6450e2"
+
+[[package]]
 name = "syn"
 version = "1.0.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2182,6 +2199,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dfed899f0eb03f32ee8c6a0aabdb8a7949659e3466561fc0adf54e26d88c5f4"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "texture_atlas"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "guillotiere",
+ "image",
+ "wgpu",
 ]
 
 [[package]]

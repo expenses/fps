@@ -1,5 +1,5 @@
 use super::{
-    load_texture_array, normal_matrix, MaterialProperty, ModelBuffers, NodeTree,
+    load_images_into_texture_atlas, normal_matrix, MaterialProperty, ModelBuffers, NodeTree,
     StagingModelBuffers,
 };
 use crate::renderer::{AnimatedVertex, Renderer};
@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use ultraviolet::{Isometry3, Mat3, Mat4, Rotor3, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 use animation::{AnimationJoints, Animation};
+use texture_atlas::TextureAtlas;
 
 pub struct AnimatedModel {
     pub opaque_geometry: Option<ModelBuffers>,
@@ -30,13 +31,14 @@ impl AnimatedModel {
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
         getter: impl FnOnce(gltf::iter::Animations, gltf::skin::iter::Joints),
+        texture_atlas: &mut TextureAtlas,
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
 
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
-        let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder, name)?;
+        let image_index_to_atlax_index = load_images_into_texture_atlas(&gltf, buffer_blob, renderer, encoder, texture_atlas)?;
 
         let mut opaque_geometry = StagingModelBuffers::default();
         let mut alpha_blend_geometry = StagingModelBuffers::default();
@@ -74,6 +76,7 @@ impl AnimatedModel {
                     buffer_blob,
                     &HashMap::new(),
                     staging_buffers,
+                    &image_index_to_atlax_index,
                 )?;
             }
         }
@@ -116,10 +119,6 @@ impl AnimatedModel {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&textures),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
                         resource: wgpu::BindingResource::Buffer {
                             buffer: &animated_model_uniform_buffer,
                             offset: 0,
@@ -189,13 +188,14 @@ fn add_animated_primitive_geometry_to_buffers(
     buffer_blob: &[u8],
     material_properties: &HashMap<Option<usize>, MaterialProperty>,
     staging_buffers: &mut StagingModelBuffers<AnimatedVertex>,
+    image_index_to_atlax_index: &[usize],
 ) -> anyhow::Result<()> {
     let emission_strength = match material_properties.get(&primitive.material().index()) {
         Some(MaterialProperty::EmissionStrength(strength)) => *strength,
         _ => 0.0,
     };
 
-    let texture_index = primitive
+    let image_index = primitive
         .material()
         .pbr_metallic_roughness()
         .base_color_texture()
@@ -207,7 +207,10 @@ fn add_animated_primitive_geometry_to_buffers(
             )
         })?
         .texture()
+        .source()
         .index();
+
+    let atlas_index = image_index_to_atlax_index[image_index];
 
     let reader = primitive.reader(|buffer| {
         assert_eq!(buffer.index(), 0);
@@ -247,7 +250,7 @@ fn add_animated_primitive_geometry_to_buffers(
                 position,
                 normal,
                 uv: uv.into(),
-                texture_index: texture_index as i32,
+                texture_index: atlas_index as i32,
                 emission_strength,
                 joints: j,
                 joint_weights: jw.into(),

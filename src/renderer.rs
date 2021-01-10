@@ -102,9 +102,12 @@ pub struct Renderer {
     pub joint_transform_bind_group_layout: wgpu::BindGroupLayout,
 
     pub static_opaque_render_pipeline: wgpu::RenderPipeline,
-    pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
+    //pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
     pub static_transparent_render_pipeline: wgpu::RenderPipeline,
-    pub animated_transparent_render_pipeline: wgpu::RenderPipeline,
+    //pub animated_transparent_render_pipeline: wgpu::RenderPipeline,
+    pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+    //pub animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+
     pub skybox_render_pipeline: wgpu::RenderPipeline,
 
     pub pre_fxaa_framebuffer: wgpu::TextureView,
@@ -115,8 +118,7 @@ pub struct Renderer {
     pub fxaa_pipeline: wgpu::RenderPipeline,
     pub tonemap_pipeline: wgpu::RenderPipeline,
 
-    pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
-    pub animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+    pub texture_atlas_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Renderer {
@@ -159,8 +161,8 @@ impl Renderer {
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
+            //address_mode_u: wgpu::AddressMode::Repeat,
+            //address_mode_v: wgpu::AddressMode::Repeat,
             label: Some("nearest sampler"),
             ..Default::default()
         });
@@ -253,11 +255,38 @@ impl Renderer {
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
                 }],
+            });
+
+        let texture_atlas_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture atlas bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }
+                ],
             });
 
         let lights_bind_group_layout =
@@ -296,16 +325,6 @@ impl Renderer {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
                         visibility: wgpu::ShaderStage::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -355,7 +374,7 @@ impl Renderer {
                 label: Some("static model pipeline layout"),
                 bind_group_layouts: &[
                     &main_bind_group_layout,
-                    &texture_array_bind_group_layout,
+                    &texture_atlas_bind_group_layout,
                     &lights_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
@@ -391,6 +410,7 @@ impl Renderer {
             false,
         );
 
+        /*
         let animated_opaque_render_pipeline = create_render_pipeline(
             &device,
             "animated opaque render pipeline",
@@ -401,6 +421,7 @@ impl Renderer {
             true,
             true,
         );
+        */
 
         let static_alpha_clip_render_pipeline = create_render_pipeline(
             &device,
@@ -413,6 +434,7 @@ impl Renderer {
             false,
         );
 
+        /*
         let animated_alpha_clip_render_pipeline = create_render_pipeline(
             &device,
             "animated alpha clip render pipeline",
@@ -423,6 +445,7 @@ impl Renderer {
             true,
             true,
         );
+        */
 
         let static_transparent_render_pipeline = create_render_pipeline(
             &device,
@@ -436,6 +459,7 @@ impl Renderer {
             false,
         );
 
+        /*
         let animated_transparent_render_pipeline = create_render_pipeline(
             &device,
             "animated transparent render pipeline",
@@ -447,6 +471,7 @@ impl Renderer {
             false,
             true,
         );
+        */
 
         let skybox_render_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -686,8 +711,6 @@ impl Renderer {
             surface,
             swap_chain,
             depth_texture,
-            static_opaque_render_pipeline,
-            static_transparent_render_pipeline,
             identity_instance_buffer,
             texture_array_bind_group_layout,
             skybox_texture_bind_group_layout,
@@ -698,8 +721,14 @@ impl Renderer {
             mipmap_generation_pipeline,
             linear_sampler,
             screen_dimension_uniform_buffer,
-            animated_opaque_render_pipeline,
-            animated_transparent_render_pipeline,
+
+            static_opaque_render_pipeline,
+            //animated_opaque_render_pipeline,
+            static_transparent_render_pipeline,
+            //animated_transparent_render_pipeline,
+            static_alpha_clip_render_pipeline,
+            //animated_alpha_clip_render_pipeline,
+
             animated_model_bind_group_layout,
             joint_transform_bind_group_layout,
 
@@ -711,8 +740,8 @@ impl Renderer {
             tonemap_bind_group,
             tonemap_pipeline,
 
-            static_alpha_clip_render_pipeline,
-            animated_alpha_clip_render_pipeline,
+
+            texture_atlas_bind_group_layout,
         })
     }
 
@@ -953,7 +982,7 @@ impl Decal {
     }
 }
 
-pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [Vertex; 6] {
+pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal, decals_texture_atlas_index: usize) -> [Vertex; 6] {
     let offset = size / 2.0;
 
     let rotation = if normal == Vec3::new(0.0, -1.0, 0.0) {
@@ -987,7 +1016,7 @@ pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [
         position: position + offsets[index],
         normal,
         uv: uvs[index],
-        texture_index: 0,
+        texture_index: decals_texture_atlas_index as i32,
         emission_strength: 0.0,
     };
 

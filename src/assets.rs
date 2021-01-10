@@ -3,6 +3,7 @@ use crate::vec3_into;
 use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
+use texture_atlas::TextureAtlas;
 
 mod animated_model;
 
@@ -164,7 +165,6 @@ pub struct Level {
     pub opaque_geometry: Option<ModelBuffers>,
     pub alpha_clip_geometry: Option<ModelBuffers>,
     pub alpha_blend_geometry: Option<ModelBuffers>,
-    pub texture_array_bind_group: wgpu::BindGroup,
     pub lights_bind_group: wgpu::BindGroup,
     pub properties: HashMap<usize, Property>,
     pub node_tree: NodeTree,
@@ -178,6 +178,7 @@ impl Level {
         renderer: &Renderer,
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
+        texture_atlas: &mut TextureAtlas,
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
@@ -211,25 +212,7 @@ impl Level {
         let mut alpha_clip_geometry = StagingModelBuffers::default();
         let mut collision_geometry = StagingModelBuffers::default();
 
-        let texture_array_view = load_texture_array(
-            &gltf,
-            buffer_blob,
-            renderer,
-            encoder,
-            &format!("{} level", name),
-        )?;
-
-        let texture_array_bind_group =
-            renderer
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("{} level texture bind group", name)),
-                    layout: &renderer.texture_array_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture_array_view),
-                    }],
-                });
+        let image_index_to_atlax_index = load_images_into_texture_atlas(&gltf, buffer_blob, renderer, encoder, texture_atlas)?;
 
         let lights: Vec<_> = gltf
             .nodes()
@@ -316,6 +299,7 @@ impl Level {
                     &material_properties,
                     staging_buffers,
                     collision_geometry,
+                    &image_index_to_atlax_index,
                 )?;
             }
         }
@@ -353,7 +337,6 @@ impl Level {
                 .upload(&renderer.device, &format!("{} level alpha blend", name)),
             alpha_clip_geometry: alpha_clip_geometry
                 .upload(&renderer.device, &format!("{} level alpha clip", name)),
-            texture_array_bind_group,
             lights_bind_group,
             properties,
             node_tree,
@@ -401,7 +384,6 @@ pub struct Model {
     pub opaque_geometry: Option<ModelBuffers>,
     pub alpha_clip_geometry: Option<ModelBuffers>,
     pub alpha_blend_geometry: Option<ModelBuffers>,
-    pub textures: wgpu::BindGroup,
 }
 
 impl Model {
@@ -410,6 +392,7 @@ impl Model {
         renderer: &Renderer,
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
+        texture_atlas: &mut TextureAtlas,
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
@@ -418,18 +401,7 @@ impl Model {
 
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
-        let textures = load_texture_array(&gltf, buffer_blob, renderer, encoder, name)?;
-
-        let textures = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("{} texture bind group", name)),
-                layout: &renderer.texture_array_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&textures),
-                }],
-            });
+        let image_index_to_atlax_index = load_images_into_texture_atlas(&gltf, buffer_blob, renderer, encoder, texture_atlas)?;
 
         let mut opaque_geometry = StagingModelBuffers::default();
         let mut alpha_blend_geometry = StagingModelBuffers::default();
@@ -464,6 +436,7 @@ impl Model {
                     &HashMap::new(),
                     staging_buffers,
                     None,
+                    &image_index_to_atlax_index,
                 )?;
             }
         }
@@ -483,7 +456,6 @@ impl Model {
                 .upload(&renderer.device, &format!("{} level alpha blend", name)),
             alpha_clip_geometry: alpha_clip_geometry
                 .upload(&renderer.device, &format!("{} level alpha clip", name)),
-            textures,
         })
     }
 }
@@ -546,13 +518,14 @@ fn add_primitive_geometry_to_buffers(
     material_properties: &HashMap<Option<usize>, MaterialProperty>,
     staging_buffers: &mut StagingModelBuffers<Vertex>,
     mut collision_buffers: Option<&mut StagingModelBuffers<(Vec3, Vec3)>>,
+    image_index_to_atlax_index: &[usize],
 ) -> anyhow::Result<()> {
     let emission_strength = match material_properties.get(&primitive.material().index()) {
         Some(MaterialProperty::EmissionStrength(strength)) => *strength,
         _ => 0.0,
     };
 
-    let texture_index = primitive
+    let image_index = primitive
         .material()
         .pbr_metallic_roughness()
         .base_color_texture()
@@ -564,7 +537,10 @@ fn add_primitive_geometry_to_buffers(
             )
         })?
         .texture()
+        .source()
         .index();
+
+    let atlas_index = image_index_to_atlax_index[image_index];
 
     let reader = primitive.reader(|buffer| {
         assert_eq!(buffer.index(), 0);
@@ -612,7 +588,7 @@ fn add_primitive_geometry_to_buffers(
                 position,
                 normal,
                 uv: uv.into(),
-                texture_index: texture_index as i32,
+                texture_index: atlas_index as i32,
                 emission_strength,
             });
 
@@ -699,25 +675,15 @@ pub fn load_skybox(
     Ok(skybox_bind_group)
 }
 
-const MIPMAP_LEVELS: u32 = 7;
-
-fn load_texture_array(
+fn load_images_into_texture_atlas(
     gltf: &gltf::Gltf,
     buffer_blob: &[u8],
     renderer: &Renderer,
     encoder: &mut wgpu::CommandEncoder,
-    name: &str,
-) -> anyhow::Result<wgpu::TextureView> {
-    let num_textures = gltf.textures().count() as u32;
-
-    if num_textures == 0 {
-        return Err(anyhow::anyhow!("No textures in gltf file."));
-    }
-
-    let mut texture_array: Option<(wgpu::Texture, u32, u32)> = None;
-
-    for (i, texture) in gltf.textures().enumerate() {
-        let view = match texture.source().source() {
+    texture_atlas: &mut TextureAtlas,
+) -> anyhow::Result<Vec<usize>> {
+    gltf.images().map(|image| {
+        let view = match image.source() {
             gltf::image::Source::View { view, mime_type } => {
                 assert_eq!(mime_type, "image/png");
                 view
@@ -735,182 +701,21 @@ fn load_texture_array(
         let image =
             image::load_from_memory_with_format(bytes, image::ImageFormat::Png)?.into_rgba8();
 
-        let (image_width, image_height) = image.dimensions();
+        let (index, _resized) = texture_atlas.allocate(&image, &renderer.device, encoder);
 
-        let (texture_array, texture_width, texture_height) =
-            texture_array.get_or_insert_with(|| {
-                assert_eq!(image_width % 64, 0);
-                assert_eq!(image_height % 64, 0);
-
-                let texture_array = renderer.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some(&format!("{} texture array", name)),
-                    size: wgpu::Extent3d {
-                        width: image_width,
-                        height: image_height,
-                        depth: num_textures,
-                    },
-                    mip_level_count: MIPMAP_LEVELS,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: TEXTURE_FORMAT,
-                    usage: wgpu::TextureUsage::SAMPLED
-                        | wgpu::TextureUsage::COPY_DST
-                        | wgpu::TextureUsage::RENDER_ATTACHMENT,
-                });
-
-                (texture_array, image_width, image_height)
-            });
-
-        assert_eq!(image_width, *texture_width);
-        assert_eq!(image_height, *texture_height);
-
-        let staging_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} texture staging buffer", name)),
-                    contents: &*image,
-                    usage: wgpu::BufferUsage::COPY_SRC,
-                });
-
-        encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &staging_buffer,
-                layout: wgpu::TextureDataLayout {
-                    offset: 0,
-                    bytes_per_row: 4 * *texture_width,
-                    rows_per_image: 0,
-                },
-            },
-            wgpu::TextureCopyView {
-                texture: &texture_array,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: i as u32,
-                },
-            },
-            wgpu::Extent3d {
-                width: *texture_width,
-                height: *texture_width,
-                depth: 1,
-            },
-        );
-
-        // Mipmap generation
-        let mipmap_views: Vec<_> = (0..MIPMAP_LEVELS)
-            .map(|level| {
-                texture_array.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some(&format!("{} texture mipmap view for lod {}", name, level)),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_mip_level: level,
-                    level_count: Some(std::num::NonZeroU32::new(1).unwrap()),
-                    base_array_layer: i as u32,
-                    array_layer_count: Some(std::num::NonZeroU32::new(1).unwrap()),
-                    ..Default::default()
-                })
-            })
-            .collect();
-
-        for level in 1..MIPMAP_LEVELS as usize {
-            let bind_group = renderer
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!(
-                        "{} texture mipmap generation bind group for lod {}",
-                        name, level
-                    )),
-                    layout: &renderer.mipmap_generation_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&mipmap_views[0]),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
-                        },
-                    ],
-                });
-
-            let label = format!(
-                "{} texture mipmap generation render pass for lod {}",
-                name, level
-            );
-
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(&label),
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &mipmap_views[level],
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
-            render_pass.set_pipeline(&renderer.mipmap_generation_pipeline);
-            render_pass.set_bind_group(0, &bind_group, &[]);
-            render_pass.draw(0..3, 0..1);
-        }
-    }
-
-    let (texture_array, ..) = texture_array.unwrap();
-
-    Ok(texture_array.create_view(&wgpu::TextureViewDescriptor {
-        label: Some(&format!("{} texture view", name)),
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    }))
+        Ok(index)
+    }).collect()
 }
 
 pub fn load_single_texture(
     png_bytes: &[u8],
     renderer: &Renderer,
     name: &str,
-) -> anyhow::Result<wgpu::BindGroup> {
+    encoder: &mut wgpu::CommandEncoder,
+    texture_atlas: &mut TextureAtlas,
+) -> anyhow::Result<usize> {
     let image =
         image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?.into_rgba8();
 
-    assert_eq!(image.width() % 64, 0);
-    assert_eq!(image.height() % 64, 0);
-
-    let texture = renderer.device.create_texture_with_data(
-        &renderer.queue,
-        &wgpu::TextureDescriptor {
-            label: Some(&format!("{} texture", name)),
-            size: wgpu::Extent3d {
-                width: image.width(),
-                height: image.height(),
-                depth: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: TEXTURE_FORMAT,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-        },
-        &*image,
-    );
-
-    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some(&format!("{} texture view", name)),
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    });
-
-    let bind_group = renderer
-        .device
-        .create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("{} texture bind group", name)),
-            layout: &renderer.texture_array_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&texture_view),
-            }],
-        });
-
-    Ok(bind_group)
+    Ok(texture_atlas.allocate(&image, &renderer.device, encoder).0)
 }

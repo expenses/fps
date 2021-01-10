@@ -1,0 +1,13 @@
+[package]
+name = "texture_atlas"
+version = "0.1.0"
+authors = ["Ashley Ruglys <ashley.ruglys@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytemuck = { version = "1.4.1", features = ["derive"] }
+guillotiere = "0.6.0"
+image = { version = "0.23.12", default-features = false }
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }

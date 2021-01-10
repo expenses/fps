@@ -23,9 +23,11 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 winit = "0.24.0"
 
 animation = { path = "animation" }
+texture_atlas = { path = "texture_atlas" }
 
 # Compile all dependencies in release mode
 [profile.dev.package."*"]
 opt-level = 3
 
 [workspace]
+members = [".", "animation", "texture_atlas"]

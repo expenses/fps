@@ -209,32 +209,37 @@ struct ModelBuffers {
     animated_models: Vec<AnimatedModelBuffer>,
     static_models: Vec<StaticModelBuffer>,
     animation_info: AnimationInfo,
+    texture_atlas: texture_atlas::TextureAtlas,
+    texture_atlas_bind_group: wgpu::BindGroup,
 }
 
 impl ModelBuffers {
     fn new(
         renderer: &Renderer,
         mut init_encoder: &mut wgpu::CommandEncoder,
+        mut texture_atlas: texture_atlas::TextureAtlas,
     ) -> anyhow::Result<Self> {
         let mut animation_info = AnimationInfo::default();
 
         let static_models = vec![
-            StaticModelBuffer::load(
+            /*StaticModelBuffer::load(
                 assets::Model::load_gltf(
                     include_bytes!("../models/mate.glb"),
                     &renderer,
                     &mut init_encoder,
                     "mate bottle",
+                    &mut texture_atlas,
                 )?,
                 "mate bottle",
                 renderer,
-            ),
+            ),*/
             StaticModelBuffer::load(
                 assets::Model::load_gltf(
                     include_bytes!("../models/bush.glb"),
                     &renderer,
                     &mut init_encoder,
                     "bush",
+                    &mut texture_atlas,
                 )?,
                 "bush",
                 renderer,
@@ -254,6 +259,7 @@ impl ModelBuffers {
                             .map(|node| node.index())
                             .unwrap();
                     },
+                    &mut texture_atlas,
                 )?,
                 "robot",
                 renderer,
@@ -277,6 +283,7 @@ impl ModelBuffers {
                             animations.keys().for_each(|name| log::debug!("{}", name));
                         }
                     },
+                    &mut texture_atlas,
                 )?,
                 "mouse",
                 renderer,
@@ -295,6 +302,7 @@ impl ModelBuffers {
                             .map(|animation| animation.index())
                             .unwrap();
                     },
+                    &mut texture_atlas,
                 )?,
                 "tentacle",
                 renderer,
@@ -303,10 +311,39 @@ impl ModelBuffers {
 
         log::info!("{:?}", animation_info);
 
+        texture_atlas.generate_mipmaps(&renderer.device, init_encoder, texture_atlas::MipmapGenerationParams {
+            bind_group_layout: &renderer.mipmap_generation_bind_group_layout,
+            render_pipeline: &renderer.mipmap_generation_pipeline,
+            sampler: &renderer.linear_sampler,
+        });
+
+        let texture_locations = texture_atlas.texture_locations_buffer(&renderer.device);
+
+        let texture_atlas_bind_group = renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("texture atlas bind group"),
+            layout: &renderer.texture_atlas_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(texture_atlas.texture_view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &texture_locations,
+                        offset: 0,
+                        size: None,
+                    },
+                }
+            ],
+        });
+
         Ok(Self {
             static_models,
             animated_models,
             animation_info,
+            texture_atlas,
+            texture_atlas_bind_group,
         })
     }
 
@@ -386,7 +423,6 @@ impl ModelBuffers {
                     render_indexed(
                         render_pass,
                         opaque_geometry,
-                        &model.textures,
                         slice,
                         num,
                     );
@@ -394,6 +430,7 @@ impl ModelBuffers {
             }
         }
 
+        /*
         render_pass.set_pipeline(&renderer.animated_opaque_render_pipeline);
 
         for AnimatedModelBuffer {
@@ -416,6 +453,7 @@ impl ModelBuffers {
                 }
             }
         }
+        */
     }
 
     fn render_alpha_clip<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, renderer: &'a Renderer) {
@@ -427,7 +465,6 @@ impl ModelBuffers {
                     render_indexed(
                         render_pass,
                         alpha_clip_geometry,
-                        &model.textures,
                         slice,
                         num,
                     );
@@ -435,6 +472,7 @@ impl ModelBuffers {
             }
         }
 
+        /*
         render_pass.set_pipeline(&renderer.animated_alpha_clip_render_pipeline);
 
         for AnimatedModelBuffer {
@@ -457,6 +495,7 @@ impl ModelBuffers {
                 }
             }
         }
+        */
     }
 
     fn render_transparent<'a>(
@@ -472,7 +511,6 @@ impl ModelBuffers {
                     render_indexed(
                         render_pass,
                         alpha_blend_geometry,
-                        &model.textures,
                         slice,
                         num,
                     );
@@ -480,6 +518,7 @@ impl ModelBuffers {
             }
         }
 
+        /*
         render_pass.set_pipeline(&renderer.animated_transparent_render_pipeline);
 
         for AnimatedModelBuffer {
@@ -502,6 +541,7 @@ impl ModelBuffers {
                 }
             }
         }
+        */
     }
 }
 
@@ -540,17 +580,19 @@ async fn run() -> anyhow::Result<()> {
                 label: Some("init encoder"),
             });
 
+    let mut texture_atlas = texture_atlas::TextureAtlas::new(66, 7, &renderer.device, renderer::TEXTURE_FORMAT);
+
     let level =
-        assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder, &level_filename)?;
+        assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder, &level_filename, &mut texture_atlas)?;
 
-    let model_buffers = ModelBuffers::new(&renderer, &mut init_encoder)?;
-
+    /*
     let monkey_gun = assets::Model::load_gltf(
         include_bytes!("../models/monkey_test_gun.glb"),
         &renderer,
         &mut init_encoder,
         "monkey gun",
     )?;
+    */
 
     let skybox_texture = assets::load_skybox(
         include_bytes!("../textures/skybox.png"),
@@ -559,11 +601,15 @@ async fn run() -> anyhow::Result<()> {
         "star skybox",
     )?;
 
-    let decals_texture = assets::load_single_texture(
+    let decals_texture_atlas_index = assets::load_single_texture(
         include_bytes!("../textures/decals.png"),
         &renderer,
         "decals",
+        &mut init_encoder,
+        &mut texture_atlas,
     )?;
+
+    let model_buffers = ModelBuffers::new(&renderer, &mut init_encoder, texture_atlas)?;
 
     renderer.queue.submit(Some(init_encoder.finish()));
 
@@ -827,6 +873,7 @@ async fn run() -> anyhow::Result<()> {
                         normal,
                         Vec2::broadcast(0.5),
                         renderer::Decal::BulletImpact,
+                        decals_texture_atlas_index,
                     )
                     .iter()
                     {
@@ -965,6 +1012,7 @@ async fn run() -> anyhow::Result<()> {
                     });
 
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
+                    render_pass.set_bind_group(1, &model_buffers.texture_atlas_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
                     // Render opaque things
@@ -974,7 +1022,8 @@ async fn run() -> anyhow::Result<()> {
                         // Render gun
 
                         if settings.draw_gun {
-                            if let Some(opaque_geometry) = monkey_gun.opaque_geometry.as_ref() {
+
+                            /*if let Some(opaque_geometry) = monkey_gun.opaque_geometry.as_ref() {
                                 render_indexed(
                                     &mut render_pass,
                                     opaque_geometry,
@@ -982,7 +1031,7 @@ async fn run() -> anyhow::Result<()> {
                                     gun_instance.slice(..),
                                     1,
                                 );
-                            }
+                            }*/
                         }
 
                         // Render level
@@ -990,7 +1039,6 @@ async fn run() -> anyhow::Result<()> {
                             render_indexed(
                                 &mut render_pass,
                                 opaque_geometry,
-                                &level.texture_array_bind_group,
                                 renderer.identity_instance_buffer.slice(..),
                                 1,
                             );
@@ -998,6 +1046,8 @@ async fn run() -> anyhow::Result<()> {
 
                         model_buffers.render_opaque(&mut render_pass, &renderer);
                     }
+
+                    /*
 
                     // Render alpha clipped things
                     {
@@ -1008,7 +1058,6 @@ async fn run() -> anyhow::Result<()> {
                             render_indexed(
                                 &mut render_pass,
                                 alpha_clip_geometry,
-                                &level.texture_array_bind_group,
                                 renderer.identity_instance_buffer.slice(..),
                                 1,
                             );
@@ -1031,7 +1080,6 @@ async fn run() -> anyhow::Result<()> {
                         render_indexed(
                             &mut render_pass,
                             alpha_blend_geometry,
-                            &level.texture_array_bind_group,
                             renderer.identity_instance_buffer.slice(..),
                             1,
                         );
@@ -1040,7 +1088,7 @@ async fn run() -> anyhow::Result<()> {
                     // Render decals
 
                     if let Some((slice, len)) = decal_buffer.get() {
-                        render_pass.set_bind_group(1, &decals_texture, &[]);
+                        //render_pass.set_bind_group(1, &decals_texture, &[]);
                         render_pass.set_vertex_buffer(0, slice);
                         render_pass
                             .set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
@@ -1048,6 +1096,8 @@ async fn run() -> anyhow::Result<()> {
                     }
 
                     model_buffers.render_transparent(&mut render_pass, &renderer);
+
+                    */
 
                     // Render debug lines
 
@@ -1494,11 +1544,10 @@ fn render_debug_lines<'a>(
 fn render_indexed<'a>(
     render_pass: &mut wgpu::RenderPass<'a>,
     buffers: &'a assets::ModelBuffers,
-    textures: &'a wgpu::BindGroup,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
 ) {
-    render_pass.set_bind_group(1, textures, &[]);
+    //render_pass.set_bind_group(1, textures, &[]);
     render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
