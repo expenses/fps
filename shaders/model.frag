@@ -9,7 +9,7 @@ layout(location = 4) in float emission;
 
 layout(location = 0) out vec4 colour;
 
-layout(set = 0, binding = 1) uniform sampler u_nearest_sampler;
+layout(set = 0, binding = 0) uniform sampler u_nearest_sampler;
 
 layout(set = 1, binding = 0) uniform texture2D u_texture[];
 
@@ -22,19 +22,6 @@ struct Light {
 layout(set = 2, binding = 0) readonly buffer Lights {
 	Light lights[];
 };
-
-/*
-Could be used for setting a bias with mipmaps if I wanted to.
-
-// https://community.khronos.org/t/mipmap-level-calculation-using-dfdx-dfdy/67480/2
-float mip_map_level(in vec2 unnormalised_texture_coordinates) {
-    vec2  dx_vtc        = dFdx(unnormalised_texture_coordinates);
-    vec2  dy_vtc        = dFdy(unnormalised_texture_coordinates);
-    float delta_max_sqr = max(dot(dx_vtc, dx_vtc), dot(dy_vtc, dy_vtc));
-
-    return 0.5 * log2(delta_max_sqr);
-}
-*/
 
 const vec3 AMBIENT = vec3(0.05);
 const float MIN_LIGHT_DISTANCE = 0.5;

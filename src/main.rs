@@ -160,7 +160,7 @@ impl AnimatedModelBuffer {
     fn load(model: assets::AnimatedModel, name: &str, renderer: &Renderer) -> Self {
         let joint_transforms = DynamicBuffer::new(
             &renderer.device,
-            model.num_joints,
+            model.num_joints as usize,
             &format!("{} joint transforms", name),
             wgpu::BufferUsage::STORAGE,
         );
@@ -395,7 +395,13 @@ impl ModelBuffers {
         for StaticModelBuffer { instances, model } in &self.static_models {
             if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_indexed(render_pass, opaque_geometry, slice, num);
+                    render_indexed(
+                        render_pass,
+                        opaque_geometry,
+                        slice,
+                        num,
+                        renderer.projection_view,
+                    );
                 }
             }
         }
@@ -414,7 +420,10 @@ impl ModelBuffers {
                     render_animated_indexed(
                         render_pass,
                         opaque_geometry,
-                        &model.bind_group,
+                        renderer::AnimatedPushConstants {
+                            projection_view: renderer.projection_view,
+                            num_joints: model.num_joints,
+                        },
                         slice,
                         num,
                         joint_transforms_bind_group,
@@ -434,7 +443,13 @@ impl ModelBuffers {
         for StaticModelBuffer { instances, model } in &self.static_models {
             if let Some(alpha_clip_geometry) = model.alpha_clip_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_indexed(render_pass, alpha_clip_geometry, slice, num);
+                    render_indexed(
+                        render_pass,
+                        alpha_clip_geometry,
+                        slice,
+                        num,
+                        renderer.projection_view,
+                    );
                 }
             }
         }
@@ -453,7 +468,10 @@ impl ModelBuffers {
                     render_animated_indexed(
                         render_pass,
                         alpha_clip_geometry,
-                        &model.bind_group,
+                        renderer::AnimatedPushConstants {
+                            projection_view: renderer.projection_view,
+                            num_joints: model.num_joints,
+                        },
                         slice,
                         num,
                         joint_transforms_bind_group,
@@ -473,7 +491,13 @@ impl ModelBuffers {
         for StaticModelBuffer { instances, model } in &self.static_models {
             if let Some(alpha_blend_geometry) = model.alpha_blend_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_indexed(render_pass, alpha_blend_geometry, slice, num);
+                    render_indexed(
+                        render_pass,
+                        alpha_blend_geometry,
+                        slice,
+                        num,
+                        renderer.projection_view,
+                    );
                 }
             }
         }
@@ -492,7 +516,10 @@ impl ModelBuffers {
                     render_animated_indexed(
                         render_pass,
                         alpha_blend_geometry,
-                        &model.bind_group,
+                        renderer::AnimatedPushConstants {
+                            projection_view: renderer.projection_view,
+                            num_joints: model.num_joints,
+                        },
                         slice,
                         num,
                         joint_transforms_bind_group,
@@ -620,7 +647,7 @@ async fn run() -> anyhow::Result<()> {
         }
     }
 
-    let overlay_pipeline = renderer::overlay::OverlayPipeline::new(&renderer, &settings);
+    let overlay_pipeline = renderer::overlay::overlay_pipeline(&renderer, &settings);
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
     let mut debug_contact_points_buffer = DynamicBuffer::new(
@@ -990,6 +1017,7 @@ async fn run() -> anyhow::Result<()> {
                                     opaque_geometry,
                                     gun_instance.slice(..),
                                     1,
+                                    renderer.projection_view,
                                 );
                             }
                         }
@@ -1001,6 +1029,7 @@ async fn run() -> anyhow::Result<()> {
                                 opaque_geometry,
                                 renderer.identity_instance_buffer.slice(..),
                                 1,
+                                renderer.projection_view,
                             );
                         }
 
@@ -1018,6 +1047,7 @@ async fn run() -> anyhow::Result<()> {
                                 alpha_clip_geometry,
                                 renderer.identity_instance_buffer.slice(..),
                                 1,
+                                renderer.projection_view,
                             );
                         }
 
@@ -1027,6 +1057,11 @@ async fn run() -> anyhow::Result<()> {
                     // Render the skybox
 
                     render_pass.set_pipeline(&renderer.skybox_render_pipeline);
+                    render_pass.set_push_constants(
+                        wgpu::ShaderStage::VERTEX,
+                        0,
+                        bytemuck::cast_slice(&[renderer.projection, renderer.view]),
+                    );
                     render_pass.set_bind_group(1, &skybox_texture, &[]);
                     render_pass.draw(0..3, 0..1);
 
@@ -1041,6 +1076,7 @@ async fn run() -> anyhow::Result<()> {
                             alpha_blend_geometry,
                             renderer.identity_instance_buffer.slice(..),
                             1,
+                            renderer.projection_view,
                         );
                     }
 
@@ -1062,6 +1098,7 @@ async fn run() -> anyhow::Result<()> {
                             &debug_collision_geometry_buffer,
                             &mut render_pass,
                             &debug_lines_less_pipeline,
+                            renderer.projection_view,
                         );
                     }
 
@@ -1070,6 +1107,7 @@ async fn run() -> anyhow::Result<()> {
                             &debug_contact_points_buffer,
                             &mut render_pass,
                             &debug_lines_always_pipeline,
+                            renderer.projection_view,
                         );
                     }
 
@@ -1078,6 +1116,7 @@ async fn run() -> anyhow::Result<()> {
                             &debug_player_collider_buffer,
                             &mut render_pass,
                             &debug_lines_always_pipeline,
+                            renderer.projection_view,
                         );
                     }
 
@@ -1085,13 +1124,18 @@ async fn run() -> anyhow::Result<()> {
                         &debug_vision_cones.0,
                         &mut render_pass,
                         &debug_lines_less_pipeline,
+                        renderer.projection_view,
                     );
 
                     // Render overlay
 
                     if let Some((vertices, indices, num_indices)) = overlay_buffers.get() {
-                        render_pass.set_pipeline(&overlay_pipeline.pipeline);
-                        render_pass.set_bind_group(0, &overlay_pipeline.bind_group, &[]);
+                        render_pass.set_pipeline(&overlay_pipeline);
+                        render_pass.set_push_constants(
+                            wgpu::ShaderStage::VERTEX,
+                            0,
+                            bytemuck::bytes_of(&renderer.screen_dimensions),
+                        );
                         render_pass.set_vertex_buffer(0, vertices);
                         render_pass.set_index_buffer(indices, INDEX_FORMAT);
                         render_pass.draw_indexed(0..num_indices, 0, 0..1);
@@ -1138,6 +1182,11 @@ async fn run() -> anyhow::Result<()> {
                             });
 
                         render_pass.set_pipeline(&renderer.fxaa_pipeline);
+                        render_pass.set_push_constants(
+                            wgpu::ShaderStage::FRAGMENT,
+                            0,
+                            bytemuck::bytes_of(&renderer.screen_dimensions),
+                        );
                         render_pass.set_bind_group(0, &renderer.fxaa_bind_group, &[]);
                         render_pass.draw(0..3, 0..1);
 
@@ -1489,9 +1538,15 @@ fn render_debug_lines<'a>(
     buffer: &'a DynamicBuffer<renderer::debug_lines::Vertex>,
     render_pass: &mut wgpu::RenderPass<'a>,
     pipeline: &'a wgpu::RenderPipeline,
+    projection_view: Mat4,
 ) {
     if let Some((slice, len)) = buffer.get() {
         render_pass.set_pipeline(pipeline);
+        render_pass.set_push_constants(
+            wgpu::ShaderStage::VERTEX,
+            0,
+            bytemuck::bytes_of(&projection_view),
+        );
         render_pass.set_vertex_buffer(0, slice);
         render_pass.draw(0..len, 0..1);
     }
@@ -1502,7 +1557,13 @@ fn render_indexed<'a>(
     buffers: &'a assets::ModelBuffers,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
+    projection_view: Mat4,
 ) {
+    render_pass.set_push_constants(
+        wgpu::ShaderStage::VERTEX,
+        0,
+        bytemuck::bytes_of(&projection_view),
+    );
     render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
@@ -1512,13 +1573,17 @@ fn render_indexed<'a>(
 fn render_animated_indexed<'a>(
     render_pass: &mut wgpu::RenderPass<'a>,
     buffers: &'a assets::ModelBuffers,
-    bind_group: &'a wgpu::BindGroup,
+    push_constants: renderer::AnimatedPushConstants,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
     joint_transforms_bind_group: &'a wgpu::BindGroup,
 ) {
-    render_pass.set_bind_group(3, bind_group, &[]);
-    render_pass.set_bind_group(4, joint_transforms_bind_group, &[]);
+    render_pass.set_push_constants(
+        wgpu::ShaderStage::VERTEX,
+        0,
+        bytemuck::bytes_of(&push_constants),
+    );
+    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
     render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);

@@ -19,15 +19,12 @@ layout(location = 2) out vec3 out_pos;
 layout(location = 3) out vec3 out_normal;
 layout(location = 4) out float out_emission;
 
-layout(set = 0, binding = 0) uniform ProjectionView {
+layout(push_constant) uniform AnimatedPushConstants {
     mat4 projection_view;
-};
-
-layout(set = 3, binding = 0) uniform AnimatedModelUniforms {
     uint num_joints;
 };
 
-layout(set = 4, binding = 0) readonly buffer JointTransforms {
+layout(set = 3, binding = 0) readonly buffer JointTransforms {
 	mat4 joint_transforms[];
 };
 

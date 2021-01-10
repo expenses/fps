@@ -5,10 +5,8 @@ layout(location = 1) in vec4 colour;
 
 layout(location = 0) out vec4 out_colour;
 
-layout(set = 0, binding = 0) uniform ProjectionView {
+layout(push_constant) uniform ProjectionView {
     mat4 projection_view;
-    // mat4 view;
-    // mat4 projection;
 };
 
 void main() {

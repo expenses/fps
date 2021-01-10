@@ -1,6 +1,6 @@
 use super::{alpha_blend_colour_descriptor, Renderer, DEPTH_FORMAT, INDEX_FORMAT};
 use crate::Settings;
-use ultraviolet::{Vec3, Vec4};
+use ultraviolet::{Mat4, Vec3, Vec4};
 
 pub fn debug_lines_pipeline(
     renderer: &Renderer,
@@ -12,8 +12,11 @@ pub fn debug_lines_pipeline(
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("debug lines pipeline layout"),
-                bind_group_layouts: &[&renderer.main_bind_group_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::VERTEX,
+                    range: 0..std::mem::size_of::<Mat4>() as u32,
+                }],
             });
 
     let vs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.vert.spv");

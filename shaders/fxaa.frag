@@ -4,15 +4,16 @@ layout(location = 0) in vec2 pos;
 
 layout(location = 0) out vec4 colour;
 
-layout(set = 0, binding = 0) uniform texture2D u_texture;
-layout(set = 0, binding = 1) uniform sampler u_sampler;
-layout(set = 0, binding = 2) uniform Uniforms {
+layout(push_constant) uniform ScreenDimensions {
     vec2 screen_dimensions;
 };
 
+layout(set = 0, binding = 0) uniform texture2D u_texture;
+layout(set = 0, binding = 1) uniform sampler u_sampler;
+
 #define FXAA_PC 1
 #define FXAA_GLSL_130 1
-// This is same as the file linked below, except I have commented where 'FxaaTex' is used and 
+// This is same as the file linked below, except I have commented where 'FxaaTex' is used and
 // replaced it with 'sampler2D(u_texture, u_sampler)' instead.
 // https://gist.github.com/kosua20/0c506b81b3812ac900048059d2383126
 #include "fxaa3_11.h"

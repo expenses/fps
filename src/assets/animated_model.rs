@@ -7,16 +7,14 @@ use crate::renderer::{AnimatedVertex, Renderer};
 use animation::{Animation, AnimationJoints};
 use std::collections::HashMap;
 use ultraviolet::{Isometry3, Mat3, Mat4, Rotor3, Vec3, Vec4};
-use wgpu::util::DeviceExt;
 
 pub struct AnimatedModel {
     pub opaque_geometry: Option<ModelBuffers>,
     pub alpha_clip_geometry: Option<ModelBuffers>,
     pub alpha_blend_geometry: Option<ModelBuffers>,
 
-    pub bind_group: wgpu::BindGroup,
     pub animations: Vec<Animation>,
-    pub num_joints: usize,
+    pub num_joints: u32,
     pub animation_joints: AnimationJoints,
 
     pub joint_indices_to_node_indices: Vec<usize>,
@@ -107,31 +105,7 @@ impl AnimatedModel {
 
         getter(gltf.animations(), skin.joints());
 
-        let num_joints = skin.joints().count();
-
-        let animated_model_uniform_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{} animated model uniform buffer", name)),
-                    contents: bytemuck::bytes_of(&(num_joints as u32)),
-                    usage: wgpu::BufferUsage::UNIFORM,
-                });
-
-        let bind_group = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("{} bind group", name)),
-                layout: &renderer.animated_model_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &animated_model_uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    },
-                }],
-            });
+        let num_joints = skin.joints().count() as u32;
 
         println!(
             "'{}' animated model loaded. Vertices: {}. Indices: {}. Textures: {}. Animations: {}",
@@ -164,7 +138,6 @@ impl AnimatedModel {
                 .upload(&renderer.device, &format!("{} level alpha blend", name)),
             alpha_clip_geometry: alpha_clip_geometry
                 .upload(&renderer.device, &format!("{} level alpha clip", name)),
-            bind_group,
             animations,
             num_joints,
 
