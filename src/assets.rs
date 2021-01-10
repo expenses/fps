@@ -391,6 +391,7 @@ pub struct Model {
     pub opaque_geometry: Option<ModelBuffers>,
     pub alpha_clip_geometry: Option<ModelBuffers>,
     pub alpha_blend_geometry: Option<ModelBuffers>,
+    pub name: String,
 }
 
 impl Model {
@@ -470,6 +471,7 @@ impl Model {
                 .upload(&renderer.device, &format!("{} level alpha blend", name)),
             alpha_clip_geometry: alpha_clip_geometry
                 .upload(&renderer.device, &format!("{} level alpha clip", name)),
+            name: name.to_string(),
         })
     }
 }

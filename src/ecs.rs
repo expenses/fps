@@ -1,5 +1,5 @@
 use crate::assets::AnimationJoints;
-use crate::{renderer, vec3_into, Model, ModelBuffers};
+use crate::{renderer, vec3_into, AnimatedModel, ModelBuffers, StaticModel};
 use legion::{world::SubWorld, IntoQuery};
 use ncollide3d::query::PointQuery;
 use ncollide3d::transformation::ToTriMesh;
@@ -32,18 +32,17 @@ pub struct DebugVisionCones(pub renderer::DynamicBuffer<renderer::debug_lines::V
 pub struct PlayerPosition(pub Vec3);
 
 #[legion::system(for_each)]
-#[filter(!legion::component::<AnimationState>())]
-fn render_models(
+fn render_static_models(
     #[resource] model_buffers: &mut ModelBuffers,
-    model: &Model,
+    model: &StaticModel,
     isometry: &Isometry3,
 ) {
-    let instances = model_buffers.get_static_buffer(model).unwrap();
+    let instances = model_buffers.get_static_buffer(model);
     instances.push(Instance::new(isometry.into_homogeneous_matrix()));
 }
 
 #[legion::system]
-#[read_component(Model)]
+#[read_component(AnimatedModel)]
 #[read_component(Isometry3)]
 #[write_component(AnimationState)]
 fn render_animated_models(
@@ -53,7 +52,7 @@ fn render_animated_models(
     //animation_state: &mut AnimationState,
     world: &mut SubWorld,
 ) {
-    let mut animated_models: Vec<_> = <(&Model, &Isometry3, &mut AnimationState)>::query()
+    let mut animated_models: Vec<_> = <(&AnimatedModel, &Isometry3, &mut AnimationState)>::query()
         .iter_mut(world)
         .collect();
 
@@ -122,7 +121,7 @@ fn debug_render_vision_cones(
 
 pub fn render_schedule() -> legion::Schedule {
     legion::Schedule::builder()
-        .add_system(render_models_system())
+        .add_system(render_static_models_system())
         .add_system(render_animated_models_system())
         .add_system(debug_render_vision_cones_system())
         .build()

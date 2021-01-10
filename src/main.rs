@@ -109,21 +109,25 @@ fn vec3_into<T: From<[f32; 3]>>(vec3: Vec3) -> T {
     arr.into()
 }
 
+fn empty_instance_buffer<T: bytemuck::Pod>(renderer: &Renderer, name: &str) -> DynamicBuffer<T> {
+    DynamicBuffer::new(
+        &renderer.device,
+        0,
+        &format!("{} instances", name),
+        wgpu::BufferUsage::VERTEX,
+    )
+}
+
 struct StaticModelBuffer {
     model: assets::Model,
     instances: DynamicBuffer<Instance>,
 }
 
 impl StaticModelBuffer {
-    fn load(model: assets::Model, name: &str, renderer: &Renderer) -> Self {
+    fn load(model: assets::Model, renderer: &Renderer) -> Self {
         Self {
+            instances: empty_instance_buffer(renderer, &model.name),
             model,
-            instances: DynamicBuffer::new(
-                &renderer.device,
-                0,
-                &format!("{} instances", name),
-                wgpu::BufferUsage::VERTEX,
-            ),
         }
     }
 }
@@ -136,12 +140,7 @@ struct AnimatedModelBuffer {
 impl AnimatedModelBuffer {
     fn load(model: assets::AnimatedModel, renderer: &Renderer) -> Self {
         Self {
-            instances: DynamicBuffer::new(
-                &renderer.device,
-                0,
-                &format!("{} instances", &model.name),
-                wgpu::BufferUsage::VERTEX,
-            ),
+            instances: empty_instance_buffer(renderer, &model.name),
             model,
         }
     }
@@ -226,7 +225,6 @@ impl ModelBuffers {
                     "mate bottle",
                     &mut array_of_textures,
                 )?,
-                "mate bottle",
                 renderer,
             ),
             StaticModelBuffer::load(
@@ -237,65 +235,73 @@ impl ModelBuffers {
                     "bush",
                     &mut array_of_textures,
                 )?,
-                "bush",
                 renderer,
             ),
         ];
 
         let animated_models = vec![
-            assets::AnimatedModel::load_gltf(
-                include_bytes!("../models/warehouse_robot.glb"),
-                &renderer,
-                &mut init_encoder,
-                "warehouse robot",
-                |_, mut joints| {
-                    animation_info.robot_base_node = joints
-                        .find(|node| node.name() == Some("Base"))
-                        .map(|node| node.index())
-                        .unwrap();
-                },
-                &mut array_of_textures,
-            )?,
-            assets::AnimatedModel::load_gltf(
-                include_bytes!("../models/mouse.glb"),
-                &renderer,
-                &mut init_encoder,
-                "mouse",
-                |animations, _| {
-                    let mut animations: std::collections::HashMap<_, _> = animations
-                        .map(|animation| (animation.name().unwrap(), animation.index()))
-                        .collect();
+            AnimatedModelBuffer::load(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/warehouse_robot.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "warehouse robot",
+                    |_, mut joints| {
+                        animation_info.robot_base_node = joints
+                            .find(|node| node.name() == Some("Base"))
+                            .map(|node| node.index())
+                            .unwrap();
+                    },
+                    &mut array_of_textures,
+                )?,
+                renderer,
+            ),
+            AnimatedModelBuffer::load(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/mouse.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "mouse",
+                    |animations, _| {
+                        let mut animations: std::collections::HashMap<_, _> = animations
+                            .map(|animation| (animation.name().unwrap(), animation.index()))
+                            .collect();
 
-                    animation_info.mouse_idle_animation = animations.remove("Idle").unwrap();
-                    animation_info.mouse_walk_animation = animations.remove("Walk").unwrap();
+                        animation_info.mouse_idle_animation = animations.remove("Idle").unwrap();
+                        animation_info.mouse_walk_animation = animations.remove("Walk").unwrap();
 
-                    if !animations.is_empty() {
-                        log::debug!("Unhandled animations:");
-                        animations.keys().for_each(|name| log::debug!("{}", name));
-                    }
-                },
-                &mut array_of_textures,
-            )?,
-            assets::AnimatedModel::load_gltf(
-                include_bytes!("../models/tentacle.glb"),
-                &renderer,
-                &mut init_encoder,
-                "tentacle",
-                |mut animations, _| {
-                    assert_eq!(animations.clone().count(), 2);
+                        if !animations.is_empty() {
+                            log::debug!("Unhandled animations:");
+                            animations.keys().for_each(|name| log::debug!("{}", name));
+                        }
+                    },
+                    &mut array_of_textures,
+                )?,
+                renderer,
+            ),
+            AnimatedModelBuffer::load(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/tentacle.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "tentacle",
+                    |mut animations, _| {
+                        assert_eq!(animations.clone().count(), 2);
 
-                    animation_info.tentacle_poke_animation = animations
-                        .find(|animation| animation.name() == Some("poke_baked"))
-                        .map(|animation| animation.index())
-                        .unwrap();
-                },
-                &mut array_of_textures,
-            )?,
+                        animation_info.tentacle_poke_animation = animations
+                            .find(|animation| animation.name() == Some("poke_baked"))
+                            .map(|animation| animation.index())
+                            .unwrap();
+                    },
+                    &mut array_of_textures,
+                )?,
+                renderer,
+            ),
         ];
 
         let num_joints: Vec<u32> = animated_models
             .iter()
-            .map(|model| model.num_joints)
+            .map(|model| model.model.num_joints)
             .collect();
 
         let num_joints_buffer =
@@ -318,7 +324,7 @@ impl ModelBuffers {
 
         let animated_joints = DynamicBuffer::new(
             &renderer.device,
-            0,
+            1,
             "animated joints buffer",
             wgpu::BufferUsage::STORAGE,
         );
@@ -329,11 +335,6 @@ impl ModelBuffers {
             &num_joints_buffer,
             &joint_offsets_buffer,
         );
-
-        let animated_models = animated_models
-            .into_iter()
-            .map(|model| AnimatedModelBuffer::load(model, renderer))
-            .collect();
 
         log::info!("{:?}", animation_info);
 
@@ -352,42 +353,30 @@ impl ModelBuffers {
         })
     }
 
-    fn get_static_buffer(&mut self, model: &Model) -> Option<&mut DynamicBuffer<Instance>> {
-        let mut index = *model as usize;
-
-        if index < self.animated_models.len() {
-            None
-        } else {
-            index -= self.animated_models.len();
-            Some(&mut self.static_models[index].instances)
-        }
+    fn get_static_buffer(&mut self, model: &StaticModel) -> &mut DynamicBuffer<Instance> {
+        &mut self.static_models[*model as usize].instances
     }
 
     fn get_animated_buffer(
         &mut self,
-        model: &Model,
+        model: &AnimatedModel,
     ) -> (
         &mut DynamicBuffer<AnimatedInstance>,
         &assets::AnimatedModel,
         &mut DynamicBuffer<Mat4>,
     ) {
-        let index = *model as usize;
-
         let AnimatedModelBuffer {
             instances, model, ..
-        } = &mut self.animated_models[index];
+        } = &mut self.animated_models[*model as usize];
 
         (instances, model, &mut self.animated_joints)
     }
 
-    fn clone_animation_joints(&self, model: &Model) -> Option<AnimationJoints> {
-        let index = *model as usize;
-
-        if index < self.animated_models.len() {
-            Some(self.animated_models[index].model.animation_joints.clone())
-        } else {
-            None
-        }
+    fn clone_animation_joints(&self, model: &AnimatedModel) -> AnimationJoints {
+        self.animated_models[*model as usize]
+            .model
+            .animation_joints
+            .clone()
     }
 
     fn upload(&mut self, renderer: &Renderer) {
@@ -543,14 +532,22 @@ impl ModelBuffers {
     }
 }
 
+#[derive(Copy, Clone)]
+enum StaticModel {
+    MateBottle = 0,
+    Bush = 1,
+}
+
 #[derive(Debug, Copy, Clone, PartialOrd, PartialEq, Eq, Ord)]
-enum Model {
+enum AnimatedModel {
     Robot = 0,
     Mouse = 1,
     Tentacle = 2,
-    // Static Models
-    MateBottle = 3,
-    Bush = 4,
+}
+
+enum EitherModel {
+    Static(StaticModel),
+    Animated(AnimatedModel),
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -622,21 +619,27 @@ async fn run() -> anyhow::Result<()> {
     for (node_index, property) in level.properties.iter() {
         if let assets::Property::Spawn(character) = property {
             let model = match character {
-                assets::Character::Robot => Model::Robot,
-                assets::Character::Mouse => Model::Mouse,
-                assets::Character::Tentacle => Model::Tentacle,
-                assets::Character::MateBottle => Model::MateBottle,
+                assets::Character::Robot => EitherModel::Animated(AnimatedModel::Robot),
+                assets::Character::Mouse => EitherModel::Animated(AnimatedModel::Mouse),
+                assets::Character::Tentacle => EitherModel::Animated(AnimatedModel::Tentacle),
+                assets::Character::MateBottle => EitherModel::Static(StaticModel::MateBottle),
             };
 
-            let entity = world.push((
-                model,
-                level.node_tree.transform_of(*node_index).into_isometry(),
-            ));
+            let entity = match model {
+                EitherModel::Static(model) => world.push((
+                    model,
+                    level.node_tree.transform_of(*node_index).into_isometry(),
+                )),
+                EitherModel::Animated(model) => world.push((
+                    model,
+                    level.node_tree.transform_of(*node_index).into_isometry(),
+                )),
+            };
 
             let mut entry = world.entry(entity).unwrap();
 
             match model {
-                Model::Robot => {
+                EitherModel::Animated(AnimatedModel::Robot) => {
                     entry.add_component(ecs::VisionCone::new(ncollide3d::shape::Cone::new(
                         10.0, 10.0,
                     )));
@@ -644,10 +647,11 @@ async fn run() -> anyhow::Result<()> {
                 _ => {}
             }
 
-            if let Some(joints) = model_buffers.clone_animation_joints(&model) {
+            if let EitherModel::Animated(model) = model {
+                let joints = model_buffers.clone_animation_joints(&model);
                 let animation = match model {
-                    Model::Tentacle => model_buffers.animation_info.tentacle_poke_animation,
-                    Model::Mouse => model_buffers.animation_info.mouse_idle_animation,
+                    AnimatedModel::Tentacle => model_buffers.animation_info.tentacle_poke_animation,
+                    AnimatedModel::Mouse => model_buffers.animation_info.mouse_idle_animation,
                     _ => 0,
                 };
 
