@@ -29,3 +29,4 @@ animation = { path = "animation" }
 opt-level = 3
 
 [workspace]
+members = [".", "animation"]

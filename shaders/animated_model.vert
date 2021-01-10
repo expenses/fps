@@ -21,15 +21,13 @@ layout(location = 4) out float out_emission;
 
 layout(set = 0, binding = 0) uniform ProjectionView {
     mat4 projection_view;
-    // mat4 view;
-    // mat4 projection;
 };
 
-layout(set = 1, binding = 1) uniform AnimatedModelUniforms {
+layout(set = 3, binding = 0) uniform AnimatedModelUniforms {
     uint num_joints;
 };
 
-layout(set = 3, binding = 0) readonly buffer JointTransforms {
+layout(set = 4, binding = 0) readonly buffer JointTransforms {
 	mat4 joint_transforms[];
 };
 
@@ -39,7 +37,7 @@ void main() {
     uint joint_offset = gl_InstanceIndex * num_joints;
 
     // Calculate skinned matrix from weights and joint indices of the current vertex
-	mat4 skin = 
+	mat4 skin =
 		joint_weights.x * joint_transforms[joint_indices.x + joint_offset] +
 		joint_weights.y * joint_transforms[joint_indices.y + joint_offset] +
 		joint_weights.z * joint_transforms[joint_indices.z + joint_offset] +

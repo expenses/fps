@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier: enable
 
 layout(location = 0) in vec2 uv;
 layout(location = 1) flat in int texture_index;
@@ -10,7 +11,7 @@ layout(location = 0) out vec4 colour;
 
 layout(set = 0, binding = 1) uniform sampler u_nearest_sampler;
 
-layout(set = 1, binding = 0) uniform texture2DArray u_texture;
+layout(set = 1, binding = 0) uniform texture2D u_texture[];
 
 struct Light {
     vec3 colour_output;
@@ -26,7 +27,7 @@ const vec3 AMBIENT = vec3(0.05);
 const float MIN_LIGHT_DISTANCE = 0.5;
 
 void main() {
-    vec4 sampled = texture(sampler2DArray(u_texture, u_nearest_sampler), vec3(uv, texture_index));
+    vec4 sampled = texture(sampler2D(u_texture[texture_index], u_nearest_sampler), uv);
 
     if (sampled.a < 0.5) {
         discard;

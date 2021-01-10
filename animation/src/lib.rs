@@ -1,89 +1,95 @@
 use gltf::animation::Interpolation;
 use ultraviolet::{Isometry3, Lerp, Mat4, Rotor3, Slerp, Vec3};
 
-pub fn read_animations(gltf: &gltf::Document, gltf_binary_buffer_blob: &[u8], model_name: &str) -> Vec<Animation> {
-    gltf.animations().map(|animation| {
-        let mut translation_channels = Vec::new();
-        let mut rotation_channels = Vec::new();
+pub fn read_animations(
+    gltf: &gltf::Document,
+    gltf_binary_buffer_blob: &[u8],
+    model_name: &str,
+) -> Vec<Animation> {
+    gltf.animations()
+        .map(|animation| {
+            let mut translation_channels = Vec::new();
+            let mut rotation_channels = Vec::new();
 
-        for (channel_index, channel) in animation.channels().enumerate() {
-            let reader = channel.reader(|buffer| {
-                assert_eq!(buffer.index(), 0);
-                Some(gltf_binary_buffer_blob)
-            });
+            for (channel_index, channel) in animation.channels().enumerate() {
+                let reader = channel.reader(|buffer| {
+                    assert_eq!(buffer.index(), 0);
+                    Some(gltf_binary_buffer_blob)
+                });
 
-            let inputs = reader.read_inputs().unwrap().collect();
+                let inputs = reader.read_inputs().unwrap().collect();
 
-            log::trace!(
-                "[{}] animation {:?}, channel {} ({:?}) uses {:?} interpolation.",
-                model_name,
-                animation.name(),
-                channel_index,
-                channel.target().property(),
-                channel.sampler().interpolation()
-            );
+                log::trace!(
+                    "[{}] animation {:?}, channel {} ({:?}) uses {:?} interpolation.",
+                    model_name,
+                    animation.name(),
+                    channel_index,
+                    channel.target().property(),
+                    channel.sampler().interpolation()
+                );
 
-            match channel.target().property() {
-                gltf::animation::Property::Translation => {
-                    let outputs = match reader.read_outputs().unwrap() {
-                        gltf::animation::util::ReadOutputs::Translations(translations) => {
-                            translations.map(|translation| translation.into()).collect()
-                        }
-                        _ => unreachable!(),
-                    };
+                match channel.target().property() {
+                    gltf::animation::Property::Translation => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Translations(translations) => {
+                                translations.map(|translation| translation.into()).collect()
+                            }
+                            _ => unreachable!(),
+                        };
 
-                    translation_channels.push(Channel {
-                        interpolation: channel.sampler().interpolation(),
-                        inputs,
-                        outputs,
-                        node_index: channel.target().node().index(),
-                    });
-                }
-                gltf::animation::Property::Rotation => {
-                    let outputs = match reader.read_outputs().unwrap() {
-                        gltf::animation::util::ReadOutputs::Rotations(rotations) => rotations
-                            .into_f32()
-                            .map(|rotation| Rotor3::from_quaternion_array(rotation))
-                            .collect(),
-                        _ => unreachable!(),
-                    };
+                        translation_channels.push(Channel {
+                            interpolation: channel.sampler().interpolation(),
+                            inputs,
+                            outputs,
+                            node_index: channel.target().node().index(),
+                        });
+                    }
+                    gltf::animation::Property::Rotation => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Rotations(rotations) => rotations
+                                .into_f32()
+                                .map(|rotation| Rotor3::from_quaternion_array(rotation))
+                                .collect(),
+                            _ => unreachable!(),
+                        };
 
-                    rotation_channels.push(Channel {
-                        interpolation: channel.sampler().interpolation(),
-                        inputs,
-                        outputs,
-                        node_index: channel.target().node().index(),
-                    });
-                }
-                property => {
-                    log::warn!(
-                        "[{}] Animation type {:?} is not supported, ignoring.",
-                        model_name,
-                        property
-                    );
+                        rotation_channels.push(Channel {
+                            interpolation: channel.sampler().interpolation(),
+                            inputs,
+                            outputs,
+                            node_index: channel.target().node().index(),
+                        });
+                    }
+                    property => {
+                        log::warn!(
+                            "[{}] Animation type {:?} is not supported, ignoring.",
+                            model_name,
+                            property
+                        );
+                    }
                 }
             }
-        }
 
-        let total_time = translation_channels
-            .iter()
-            .map(|channel| channel.inputs[channel.inputs.len() - 1])
-            .chain(
-                rotation_channels
-                    .iter()
-                    .map(|channel| channel.inputs[channel.inputs.len() - 1]),
-            )
-            .max_by_key(|&time| ordered_float::OrderedFloat(time))
-            .unwrap();
+            let total_time = translation_channels
+                .iter()
+                .map(|channel| channel.inputs[channel.inputs.len() - 1])
+                .chain(
+                    rotation_channels
+                        .iter()
+                        .map(|channel| channel.inputs[channel.inputs.len() - 1]),
+                )
+                .max_by_key(|&time| ordered_float::OrderedFloat(time))
+                .unwrap();
 
-        rotation_channels[0].sample(0.4999);
+            rotation_channels[0].sample(0.4999);
 
-        Animation {
-            total_time,
-            translation_channels,
-            rotation_channels,
-        }
-    }).collect()
+            Animation {
+                total_time,
+                translation_channels,
+                rotation_channels,
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -93,7 +99,10 @@ pub struct AnimationJoints {
 }
 
 impl AnimationJoints {
-    pub fn new(joint_isometries: Vec<Isometry3>, depth_first_nodes: &[(usize, Option<usize>)]) -> Self {
+    pub fn new(
+        joint_isometries: Vec<Isometry3>,
+        depth_first_nodes: &[(usize, Option<usize>)],
+    ) -> Self {
         let mut joints = Self {
             global_transforms: joint_isometries.clone(),
             local_transforms: joint_isometries,

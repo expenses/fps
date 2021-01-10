@@ -83,7 +83,7 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub main_bind_group_layout: wgpu::BindGroupLayout,
     pub lights_bind_group_layout: wgpu::BindGroupLayout,
-    pub texture_array_bind_group_layout: wgpu::BindGroupLayout,
+    pub array_of_textures_bind_group_layout: wgpu::BindGroupLayout,
     pub skybox_texture_bind_group_layout: wgpu::BindGroupLayout,
     pub window: winit::window::Window,
     pub swap_chain: wgpu::SwapChain,
@@ -101,10 +101,18 @@ pub struct Renderer {
     pub animated_model_bind_group_layout: wgpu::BindGroupLayout,
     pub joint_transform_bind_group_layout: wgpu::BindGroupLayout,
 
+    vs_static_model: wgpu::ShaderModule,
+    vs_animated_model: wgpu::ShaderModule,
+    fs_model: wgpu::ShaderModule,
+    fs_alpha_clip_model: wgpu::ShaderModule,
+
     pub static_opaque_render_pipeline: wgpu::RenderPipeline,
     pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
     pub static_transparent_render_pipeline: wgpu::RenderPipeline,
     pub animated_transparent_render_pipeline: wgpu::RenderPipeline,
+    pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+    pub animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+
     pub skybox_render_pipeline: wgpu::RenderPipeline,
 
     pub pre_fxaa_framebuffer: wgpu::TextureView,
@@ -114,9 +122,6 @@ pub struct Renderer {
     post_processing_bind_group_layout: wgpu::BindGroupLayout,
     pub fxaa_pipeline: wgpu::RenderPipeline,
     pub tonemap_pipeline: wgpu::RenderPipeline,
-
-    pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
-    pub animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
 }
 
 impl Renderer {
@@ -148,8 +153,12 @@ impl Renderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("device"),
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                    features: wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
+                        | wgpu::Features::UNSIZED_BINDING_ARRAY,
+                    limits: wgpu::Limits {
+                        max_bind_groups: 5,
+                        ..Default::default()
+                    },
                 },
                 None,
             )
@@ -245,21 +254,6 @@ impl Renderer {
             wgpu::TextureUsage::RENDER_ATTACHMENT,
         );
 
-        let texture_array_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture array bind group layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                }],
-            });
-
         let lights_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("lights bind group layout"),
@@ -293,28 +287,16 @@ impl Renderer {
         let animated_model_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("animated model bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStage::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
+                    count: None,
+                }],
             });
 
         let joint_transform_bind_group_layout =
@@ -333,45 +315,46 @@ impl Renderer {
             });
 
         let vs_static_model = wgpu::include_spirv!("../shaders/compiled/static_model.vert.spv");
-        let vs_static_model_module = device.create_shader_module(&vs_static_model);
+        let vs_static_model = device.create_shader_module(&vs_static_model);
 
         let vs_animated_model = wgpu::include_spirv!("../shaders/compiled/animated_model.vert.spv");
-        let vs_animated_model_module = device.create_shader_module(&vs_animated_model);
+        let vs_animated_model = device.create_shader_module(&vs_animated_model);
 
         let fs_model = wgpu::include_spirv!("../shaders/compiled/model.frag.spv");
-        let fs_model_module = device.create_shader_module(&fs_model);
+        let fs_model = device.create_shader_module(&fs_model);
 
         let fs_alpha_clip_model =
             wgpu::include_spirv!("../shaders/compiled/alpha_clip_model.frag.spv");
-        let fs_alpha_clip_model_module = device.create_shader_module(&fs_alpha_clip_model);
+        let fs_alpha_clip_model = device.create_shader_module(&fs_alpha_clip_model);
 
         let vs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.vert.spv");
-        let vs_skybox_module = device.create_shader_module(&vs_skybox);
+        let vs_skybox = device.create_shader_module(&vs_skybox);
         let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
-        let fs_skybox_module = device.create_shader_module(&fs_skybox);
+        let fs_skybox = device.create_shader_module(&fs_skybox);
 
-        let static_model_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("static model pipeline layout"),
-                bind_group_layouts: &[
-                    &main_bind_group_layout,
-                    &texture_array_bind_group_layout,
-                    &lights_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
+        let (
+            array_of_textures_bind_group_layout,
+            RenderPipelines {
+                static_opaque_render_pipeline,
+                static_transparent_render_pipeline,
+                static_alpha_clip_render_pipeline,
 
-        let animated_model_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("static model pipeline layout"),
-                bind_group_layouts: &[
-                    &main_bind_group_layout,
-                    &animated_model_bind_group_layout,
-                    &lights_bind_group_layout,
-                    &joint_transform_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
+                animated_opaque_render_pipeline,
+                animated_transparent_render_pipeline,
+                animated_alpha_clip_render_pipeline,
+            },
+        ) = render_pipelines_for_num_textures(
+            1,
+            &device,
+            &vs_static_model,
+            &vs_animated_model,
+            &fs_model,
+            &fs_alpha_clip_model,
+            &main_bind_group_layout,
+            &lights_bind_group_layout,
+            &animated_model_bind_group_layout,
+            &joint_transform_bind_group_layout,
+        );
 
         let skybox_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -380,84 +363,16 @@ impl Renderer {
                 push_constant_ranges: &[],
             });
 
-        let static_opaque_render_pipeline = create_render_pipeline(
-            &device,
-            "static opaque render pipeline",
-            &static_model_pipeline_layout,
-            &vs_static_model_module,
-            &fs_model_module,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
-            false,
-        );
-
-        let animated_opaque_render_pipeline = create_render_pipeline(
-            &device,
-            "animated opaque render pipeline",
-            &animated_model_pipeline_layout,
-            &vs_animated_model_module,
-            &fs_model_module,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
-            true,
-        );
-
-        let static_alpha_clip_render_pipeline = create_render_pipeline(
-            &device,
-            "static alpha clip render pipeline",
-            &static_model_pipeline_layout,
-            &vs_static_model_module,
-            &fs_alpha_clip_model_module,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
-            false,
-        );
-
-        let animated_alpha_clip_render_pipeline = create_render_pipeline(
-            &device,
-            "animated alpha clip render pipeline",
-            &animated_model_pipeline_layout,
-            &vs_animated_model_module,
-            &fs_alpha_clip_model_module,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
-            true,
-        );
-
-        let static_transparent_render_pipeline = create_render_pipeline(
-            &device,
-            "static transparent render pipeline",
-            &static_model_pipeline_layout,
-            &vs_static_model_module,
-            &fs_model_module,
-            alpha_blend_colour_descriptor(),
-            // Can't remember if this is a good idea or not.
-            false,
-            false,
-        );
-
-        let animated_transparent_render_pipeline = create_render_pipeline(
-            &device,
-            "animated transparent render pipeline",
-            &animated_model_pipeline_layout,
-            &vs_animated_model_module,
-            &fs_model_module,
-            alpha_blend_colour_descriptor(),
-            // Can't remember if this is a good idea or not.
-            false,
-            true,
-        );
-
         let skybox_render_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("skybox render pipeline"),
                 layout: Some(&skybox_render_pipeline_layout),
                 vertex_stage: wgpu::ProgrammableStageDescriptor {
-                    module: &vs_skybox_module,
+                    module: &vs_skybox,
                     entry_point: "main",
                 },
                 fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                    module: &fs_skybox_module,
+                    module: &fs_skybox,
                     entry_point: "main",
                 }),
                 rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
@@ -686,10 +601,8 @@ impl Renderer {
             surface,
             swap_chain,
             depth_texture,
-            static_opaque_render_pipeline,
-            static_transparent_render_pipeline,
             identity_instance_buffer,
-            texture_array_bind_group_layout,
+            array_of_textures_bind_group_layout,
             skybox_texture_bind_group_layout,
             lights_bind_group_layout,
             skybox_render_pipeline,
@@ -698,8 +611,14 @@ impl Renderer {
             mipmap_generation_pipeline,
             linear_sampler,
             screen_dimension_uniform_buffer,
+
+            static_opaque_render_pipeline,
             animated_opaque_render_pipeline,
+            static_transparent_render_pipeline,
             animated_transparent_render_pipeline,
+            static_alpha_clip_render_pipeline,
+            animated_alpha_clip_render_pipeline,
+
             animated_model_bind_group_layout,
             joint_transform_bind_group_layout,
 
@@ -711,8 +630,10 @@ impl Renderer {
             tonemap_bind_group,
             tonemap_pipeline,
 
-            static_alpha_clip_render_pipeline,
-            animated_alpha_clip_render_pipeline,
+            fs_model,
+            vs_static_model,
+            vs_animated_model,
+            fs_alpha_clip_model,
         })
     }
 
@@ -792,6 +713,41 @@ impl Renderer {
             window_size.width as f64 / 2.0,
             window_size.height as f64 / 2.0,
         )
+    }
+
+    pub fn rebuild_pipelines_for_textures(&mut self, num_textures: u32) {
+        let (
+            array_of_textures_bind_group_layout,
+            RenderPipelines {
+                static_opaque_render_pipeline,
+                static_transparent_render_pipeline,
+                static_alpha_clip_render_pipeline,
+
+                animated_opaque_render_pipeline,
+                animated_transparent_render_pipeline,
+                animated_alpha_clip_render_pipeline,
+            },
+        ) = render_pipelines_for_num_textures(
+            num_textures,
+            &self.device,
+            &self.vs_static_model,
+            &self.vs_animated_model,
+            &self.fs_model,
+            &self.fs_alpha_clip_model,
+            &self.main_bind_group_layout,
+            &self.lights_bind_group_layout,
+            &self.animated_model_bind_group_layout,
+            &self.joint_transform_bind_group_layout,
+        );
+
+        self.array_of_textures_bind_group_layout = array_of_textures_bind_group_layout;
+        self.static_opaque_render_pipeline = static_opaque_render_pipeline;
+        self.static_transparent_render_pipeline = static_transparent_render_pipeline;
+        self.static_alpha_clip_render_pipeline = static_alpha_clip_render_pipeline;
+
+        self.animated_opaque_render_pipeline = animated_opaque_render_pipeline;
+        self.animated_transparent_render_pipeline = animated_transparent_render_pipeline;
+        self.animated_alpha_clip_render_pipeline = animated_alpha_clip_render_pipeline;
     }
 }
 
@@ -953,7 +909,13 @@ impl Decal {
     }
 }
 
-pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [Vertex; 6] {
+pub fn decal_square(
+    position: Vec3,
+    normal: Vec3,
+    size: Vec2,
+    decal: Decal,
+    decals_texture_atlas_index: usize,
+) -> [Vertex; 6] {
     let offset = size / 2.0;
 
     let rotation = if normal == Vec3::new(0.0, -1.0, 0.0) {
@@ -987,7 +949,7 @@ pub fn decal_square(position: Vec3, normal: Vec3, size: Vec2, decal: Decal) -> [
         position: position + offsets[index],
         normal,
         uv: uvs[index],
-        texture_index: 0,
+        texture_index: decals_texture_atlas_index as i32,
         emission_strength: 0.0,
     };
 
@@ -1161,4 +1123,136 @@ fn post_processing_framebuffer_and_bind_group(
     });
 
     (framebuffer, bind_group)
+}
+
+struct RenderPipelines {
+    static_opaque_render_pipeline: wgpu::RenderPipeline,
+    static_transparent_render_pipeline: wgpu::RenderPipeline,
+    static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+
+    animated_opaque_render_pipeline: wgpu::RenderPipeline,
+    animated_transparent_render_pipeline: wgpu::RenderPipeline,
+    animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+}
+
+fn render_pipelines_for_num_textures(
+    num_textures: u32,
+    device: &wgpu::Device,
+
+    vs_static_model: &wgpu::ShaderModule,
+    vs_animated_model: &wgpu::ShaderModule,
+    fs_model: &wgpu::ShaderModule,
+    fs_alpha_clip_model: &wgpu::ShaderModule,
+
+    main_bind_group_layout: &wgpu::BindGroupLayout,
+    lights_bind_group_layout: &wgpu::BindGroupLayout,
+    animated_model_bind_group_layout: &wgpu::BindGroupLayout,
+    joint_transform_bind_group_layout: &wgpu::BindGroupLayout,
+) -> (wgpu::BindGroupLayout, RenderPipelines) {
+    let array_of_textures_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("array of textures bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStage::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: Some(std::num::NonZeroU32::new(num_textures).unwrap()),
+            }],
+        });
+
+    let static_model_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("static model pipeline layout"),
+            bind_group_layouts: &[
+                main_bind_group_layout,
+                &array_of_textures_bind_group_layout,
+                lights_bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
+
+    let animated_model_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("static model pipeline layout"),
+            bind_group_layouts: &[
+                main_bind_group_layout,
+                &array_of_textures_bind_group_layout,
+                lights_bind_group_layout,
+                animated_model_bind_group_layout,
+                joint_transform_bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
+
+    let pipelines = RenderPipelines {
+        static_opaque_render_pipeline: create_render_pipeline(
+            device,
+            "static opaque render pipeline",
+            &static_model_pipeline_layout,
+            vs_static_model,
+            fs_model,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            true,
+            false,
+        ),
+        static_alpha_clip_render_pipeline: create_render_pipeline(
+            device,
+            "static alpha clip render pipeline",
+            &static_model_pipeline_layout,
+            vs_static_model,
+            fs_alpha_clip_model,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            true,
+            false,
+        ),
+        static_transparent_render_pipeline: create_render_pipeline(
+            device,
+            "static transparent render pipeline",
+            &static_model_pipeline_layout,
+            vs_static_model,
+            fs_model,
+            alpha_blend_colour_descriptor(),
+            // Can't remember if this is a good idea or not.
+            false,
+            false,
+        ),
+
+        animated_opaque_render_pipeline: create_render_pipeline(
+            device,
+            "animated opaque render pipeline",
+            &animated_model_pipeline_layout,
+            vs_animated_model,
+            fs_model,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            true,
+            true,
+        ),
+        animated_alpha_clip_render_pipeline: create_render_pipeline(
+            device,
+            "animated alpha clip render pipeline",
+            &animated_model_pipeline_layout,
+            vs_animated_model,
+            fs_alpha_clip_model,
+            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            true,
+            true,
+        ),
+        animated_transparent_render_pipeline: create_render_pipeline(
+            device,
+            "animated transparent render pipeline",
+            &animated_model_pipeline_layout,
+            vs_animated_model,
+            fs_model,
+            alpha_blend_colour_descriptor(),
+            // Can't remember if this is a good idea or not.
+            false,
+            true,
+        ),
+    };
+
+    (array_of_textures_bind_group_layout, pipelines)
 }

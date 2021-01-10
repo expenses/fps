@@ -1,10 +1,12 @@
 //mod animation;
+mod array_of_textures;
 mod assets;
 mod ecs;
 mod renderer;
 
 use crate::assets::AnimationJoints;
 use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, INDEX_FORMAT};
+use array_of_textures::ArrayOfTextures;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
@@ -209,12 +211,14 @@ struct ModelBuffers {
     animated_models: Vec<AnimatedModelBuffer>,
     static_models: Vec<StaticModelBuffer>,
     animation_info: AnimationInfo,
+    array_of_textures_bind_group: wgpu::BindGroup,
 }
 
 impl ModelBuffers {
     fn new(
-        renderer: &Renderer,
+        renderer: &mut Renderer,
         mut init_encoder: &mut wgpu::CommandEncoder,
+        mut array_of_textures: ArrayOfTextures,
     ) -> anyhow::Result<Self> {
         let mut animation_info = AnimationInfo::default();
 
@@ -225,6 +229,7 @@ impl ModelBuffers {
                     &renderer,
                     &mut init_encoder,
                     "mate bottle",
+                    &mut array_of_textures,
                 )?,
                 "mate bottle",
                 renderer,
@@ -235,10 +240,11 @@ impl ModelBuffers {
                     &renderer,
                     &mut init_encoder,
                     "bush",
+                    &mut array_of_textures,
                 )?,
                 "bush",
                 renderer,
-            )
+            ),
         ];
 
         let animated_models = vec![
@@ -254,6 +260,7 @@ impl ModelBuffers {
                             .map(|node| node.index())
                             .unwrap();
                     },
+                    &mut array_of_textures,
                 )?,
                 "robot",
                 renderer,
@@ -277,6 +284,7 @@ impl ModelBuffers {
                             animations.keys().for_each(|name| log::debug!("{}", name));
                         }
                     },
+                    &mut array_of_textures,
                 )?,
                 "mouse",
                 renderer,
@@ -295,6 +303,7 @@ impl ModelBuffers {
                             .map(|animation| animation.index())
                             .unwrap();
                     },
+                    &mut array_of_textures,
                 )?,
                 "tentacle",
                 renderer,
@@ -303,10 +312,13 @@ impl ModelBuffers {
 
         log::info!("{:?}", animation_info);
 
+        let array_of_textures_bind_group = array_of_textures.bind(renderer);
+
         Ok(Self {
             static_models,
             animated_models,
             animation_info,
+            array_of_textures_bind_group,
         })
     }
 
@@ -383,13 +395,7 @@ impl ModelBuffers {
         for StaticModelBuffer { instances, model } in &self.static_models {
             if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_indexed(
-                        render_pass,
-                        opaque_geometry,
-                        &model.textures,
-                        slice,
-                        num,
-                    );
+                    render_indexed(render_pass, opaque_geometry, slice, num);
                 }
             }
         }
@@ -418,19 +424,17 @@ impl ModelBuffers {
         }
     }
 
-    fn render_alpha_clip<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, renderer: &'a Renderer) {
+    fn render_alpha_clip<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        renderer: &'a Renderer,
+    ) {
         render_pass.set_pipeline(&renderer.static_alpha_clip_render_pipeline);
 
         for StaticModelBuffer { instances, model } in &self.static_models {
             if let Some(alpha_clip_geometry) = model.alpha_clip_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_indexed(
-                        render_pass,
-                        alpha_clip_geometry,
-                        &model.textures,
-                        slice,
-                        num,
-                    );
+                    render_indexed(render_pass, alpha_clip_geometry, slice, num);
                 }
             }
         }
@@ -469,13 +473,7 @@ impl ModelBuffers {
         for StaticModelBuffer { instances, model } in &self.static_models {
             if let Some(alpha_blend_geometry) = model.alpha_blend_geometry.as_ref() {
                 if let Some((slice, num)) = instances.get() {
-                    render_indexed(
-                        render_pass,
-                        alpha_blend_geometry,
-                        &model.textures,
-                        slice,
-                        num,
-                    );
+                    render_indexed(render_pass, alpha_blend_geometry, slice, num);
                 }
             }
         }
@@ -540,16 +538,22 @@ async fn run() -> anyhow::Result<()> {
                 label: Some("init encoder"),
             });
 
-    let level =
-        assets::Level::load_gltf(&level_bytes, &renderer, &mut init_encoder, &level_filename)?;
+    let mut array_of_textures = ArrayOfTextures::default();
 
-    let model_buffers = ModelBuffers::new(&renderer, &mut init_encoder)?;
+    let level = assets::Level::load_gltf(
+        &level_bytes,
+        &renderer,
+        &mut init_encoder,
+        &level_filename,
+        &mut array_of_textures,
+    )?;
 
     let monkey_gun = assets::Model::load_gltf(
         include_bytes!("../models/monkey_test_gun.glb"),
         &renderer,
         &mut init_encoder,
         "monkey gun",
+        &mut array_of_textures,
     )?;
 
     let skybox_texture = assets::load_skybox(
@@ -559,11 +563,15 @@ async fn run() -> anyhow::Result<()> {
         "star skybox",
     )?;
 
-    let decals_texture = assets::load_single_texture(
+    let decals_texture_atlas_index = assets::load_single_texture(
         include_bytes!("../textures/decals.png"),
         &renderer,
         "decals",
+        &mut init_encoder,
+        &mut array_of_textures,
     )?;
+
+    let model_buffers = ModelBuffers::new(&mut renderer, &mut init_encoder, array_of_textures)?;
 
     renderer.queue.submit(Some(init_encoder.finish()));
 
@@ -827,6 +835,7 @@ async fn run() -> anyhow::Result<()> {
                         normal,
                         Vec2::broadcast(0.5),
                         renderer::Decal::BulletImpact,
+                        decals_texture_atlas_index,
                     )
                     .iter()
                     {
@@ -965,6 +974,7 @@ async fn run() -> anyhow::Result<()> {
                     });
 
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
+                    render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
                     // Render opaque things
@@ -978,7 +988,6 @@ async fn run() -> anyhow::Result<()> {
                                 render_indexed(
                                     &mut render_pass,
                                     opaque_geometry,
-                                    &monkey_gun.textures,
                                     gun_instance.slice(..),
                                     1,
                                 );
@@ -990,7 +999,6 @@ async fn run() -> anyhow::Result<()> {
                             render_indexed(
                                 &mut render_pass,
                                 opaque_geometry,
-                                &level.texture_array_bind_group,
                                 renderer.identity_instance_buffer.slice(..),
                                 1,
                             );
@@ -1008,7 +1016,6 @@ async fn run() -> anyhow::Result<()> {
                             render_indexed(
                                 &mut render_pass,
                                 alpha_clip_geometry,
-                                &level.texture_array_bind_group,
                                 renderer.identity_instance_buffer.slice(..),
                                 1,
                             );
@@ -1026,12 +1033,12 @@ async fn run() -> anyhow::Result<()> {
                     // Render transparent things
 
                     render_pass.set_pipeline(&renderer.static_transparent_render_pipeline);
+                    render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
 
                     if let Some(alpha_blend_geometry) = level.alpha_blend_geometry.as_ref() {
                         render_indexed(
                             &mut render_pass,
                             alpha_blend_geometry,
-                            &level.texture_array_bind_group,
                             renderer.identity_instance_buffer.slice(..),
                             1,
                         );
@@ -1040,7 +1047,6 @@ async fn run() -> anyhow::Result<()> {
                     // Render decals
 
                     if let Some((slice, len)) = decal_buffer.get() {
-                        render_pass.set_bind_group(1, &decals_texture, &[]);
                         render_pass.set_vertex_buffer(0, slice);
                         render_pass
                             .set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
@@ -1494,11 +1500,9 @@ fn render_debug_lines<'a>(
 fn render_indexed<'a>(
     render_pass: &mut wgpu::RenderPass<'a>,
     buffers: &'a assets::ModelBuffers,
-    textures: &'a wgpu::BindGroup,
     instances: wgpu::BufferSlice<'a>,
     num_instances: u32,
 ) {
-    render_pass.set_bind_group(1, textures, &[]);
     render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
@@ -1513,8 +1517,8 @@ fn render_animated_indexed<'a>(
     num_instances: u32,
     joint_transforms_bind_group: &'a wgpu::BindGroup,
 ) {
-    render_pass.set_bind_group(1, bind_group, &[]);
-    render_pass.set_bind_group(3, joint_transforms_bind_group, &[]);
+    render_pass.set_bind_group(3, bind_group, &[]);
+    render_pass.set_bind_group(4, joint_transforms_bind_group, &[]);
     render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
     render_pass.set_vertex_buffer(1, instances);
     render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
