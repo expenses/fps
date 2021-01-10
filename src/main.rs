@@ -157,7 +157,7 @@ struct AnimationInfo {
 }
 
 fn create_animated_models_bind_group(
-    animated_joints: &DynamicBuffer<Mat4>,
+    animated_joints: &AnimatedJointsBuffer,
     renderer: &Renderer,
     num_joints_buffer: &wgpu::Buffer,
     joint_offsets_buffer: &wgpu::Buffer,
@@ -171,7 +171,7 @@ fn create_animated_models_bind_group(
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
-                        buffer: animated_joints.buffer(),
+                        buffer: &animated_joints.buffer,
                         offset: 0,
                         size: None,
                     },
@@ -196,6 +196,50 @@ fn create_animated_models_bind_group(
         })
 }
 
+struct AnimatedJointsBuffer {
+    capacity: usize,
+    buffer: wgpu::Buffer,
+}
+
+impl AnimatedJointsBuffer {
+    fn new(capacity: usize, renderer: &Renderer) -> Self {
+        Self {
+            capacity,
+            buffer: renderer.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("animated joints buffer"),
+                size: (capacity * std::mem::size_of::<Mat4>()) as u64,
+                usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+                mapped_at_creation: false,
+            }),
+        }
+    }
+
+    fn push(&self, offset: usize, slice: &[Mat4], renderer: &Renderer) {
+        renderer.queue.write_buffer(
+            &self.buffer,
+            (offset * std::mem::size_of::<Mat4>()) as u64,
+            bytemuck::cast_slice(slice),
+        );
+    }
+
+    fn ensure_can_fit(&mut self, items: usize, renderer: &Renderer) -> bool {
+        if items > self.capacity {
+            let new_capacity = (self.capacity * 2).max(items);
+
+            self.buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("animated joints buffer"),
+                size: (new_capacity * std::mem::size_of::<Mat4>()) as u64,
+                usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            true
+        } else {
+            false
+        }
+    }
+}
+
 struct ModelBuffers {
     animated_models: Vec<AnimatedModelBuffer>,
     static_models: Vec<StaticModelBuffer>,
@@ -204,8 +248,9 @@ struct ModelBuffers {
 
     num_joints_buffer: wgpu::Buffer,
     joint_offsets_buffer: wgpu::Buffer,
-    animated_joints: DynamicBuffer<Mat4>,
+    animated_joints: AnimatedJointsBuffer,
     animated_models_bind_group: wgpu::BindGroup,
+    animated_joints_staging_buffers: Vec<Vec<Mat4>>,
 }
 
 impl ModelBuffers {
@@ -322,12 +367,7 @@ impl ModelBuffers {
                     usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
                 });
 
-        let animated_joints = DynamicBuffer::new(
-            &renderer.device,
-            1,
-            "animated joints buffer",
-            wgpu::BufferUsage::STORAGE,
-        );
+        let animated_joints = AnimatedJointsBuffer::new(1, &renderer);
 
         let animated_models_bind_group = create_animated_models_bind_group(
             &animated_joints,
@@ -340,6 +380,8 @@ impl ModelBuffers {
 
         let array_of_textures_bind_group = array_of_textures.bind(renderer);
 
+        let animated_joints_staging_buffers = vec![Vec::new(); animated_models.len()];
+
         Ok(Self {
             static_models,
             animated_models,
@@ -350,6 +392,7 @@ impl ModelBuffers {
             joint_offsets_buffer,
             animated_joints,
             animated_models_bind_group,
+            animated_joints_staging_buffers,
         })
     }
 
@@ -363,13 +406,19 @@ impl ModelBuffers {
     ) -> (
         &mut DynamicBuffer<AnimatedInstance>,
         &assets::AnimatedModel,
-        &mut DynamicBuffer<Mat4>,
+        &mut Vec<Mat4>,
     ) {
+        let index = *model as usize;
+
         let AnimatedModelBuffer {
             instances, model, ..
-        } = &mut self.animated_models[*model as usize];
+        } = &mut self.animated_models[index];
 
-        (instances, model, &mut self.animated_joints)
+        (
+            instances,
+            model,
+            &mut self.animated_joints_staging_buffers[index],
+        )
     }
 
     fn clone_animation_joints(&self, model: &AnimatedModel) -> AnimationJoints {
@@ -380,14 +429,34 @@ impl ModelBuffers {
     }
 
     fn upload(&mut self, renderer: &Renderer) {
-        let mut current_offset = 0;
-        let joint_offsets: Vec<_> = self
-            .animated_models
+        let total_joints = self
+            .animated_joints_staging_buffers
             .iter()
-            .map(|model| {
+            .map(|staging_buffer| staging_buffer.len())
+            .sum();
+
+        let resized = self.animated_joints.ensure_can_fit(total_joints, renderer);
+
+        if resized {
+            self.animated_models_bind_group = create_animated_models_bind_group(
+                &self.animated_joints,
+                renderer,
+                &self.num_joints_buffer,
+                &self.joint_offsets_buffer,
+            );
+        }
+
+        let mut current_offset = 0;
+        let joint_offsets: Vec<u32> = self
+            .animated_joints_staging_buffers
+            .iter()
+            .map(|staging_buffer| {
                 let offset = current_offset;
-                current_offset += model.model.num_joints * model.instances.len_waiting() as u32;
-                offset
+
+                self.animated_joints.push(offset, staging_buffer, renderer);
+                current_offset += staging_buffer.len();
+
+                offset as u32
             })
             .collect();
 
@@ -397,16 +466,8 @@ impl ModelBuffers {
             bytemuck::cast_slice(&joint_offsets),
         );
 
-        let resized = self.animated_joints.upload(renderer);
-        self.animated_joints.clear();
-
-        if resized {
-            self.animated_models_bind_group = create_animated_models_bind_group(
-                &self.animated_joints,
-                renderer,
-                &self.num_joints_buffer,
-                &self.joint_offsets_buffer,
-            );
+        for buffer in &mut self.animated_joints_staging_buffers {
+            buffer.clear();
         }
 
         for model in &mut self.animated_models {
