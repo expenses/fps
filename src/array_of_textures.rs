@@ -17,9 +17,7 @@ impl ArrayOfTextures {
         encoder: &mut wgpu::CommandEncoder,
     ) -> usize {
         let (image_width, image_height) = image.dimensions();
-
-        assert_eq!(image_width % 64, 0);
-        assert_eq!(image_height % 64, 0);
+        assert_eq!(image_width % (wgpu::COPY_BYTES_PER_ROW_ALIGNMENT / 4), 0);
 
         let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),

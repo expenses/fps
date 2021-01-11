@@ -63,7 +63,7 @@ pub struct ModelBuffers {
 
 #[derive(Debug)]
 pub enum Property {
-    Spawn(Character),
+    Spawn(String),
     NoCollide,
     RenderOrder(u8),
 }
@@ -72,8 +72,7 @@ impl Property {
     fn parse(string: &str) -> anyhow::Result<Self> {
         if string.starts_with("spawn/") {
             let remainder = &string["spawn/".len()..];
-            let character = Character::parse(remainder)?;
-            Ok(Self::Spawn(character))
+            Ok(Self::Spawn(remainder.to_string()))
         } else if string.starts_with("render_order/") {
             let remainder = &string["render_order/".len()..];
             let order = remainder.parse()?;
@@ -83,26 +82,6 @@ impl Property {
                 "nocollide" => Ok(Self::NoCollide),
                 _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
             }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum Character {
-    Robot,
-    Mouse,
-    Tentacle,
-    MateBottle,
-}
-
-impl Character {
-    fn parse(string: &str) -> anyhow::Result<Self> {
-        match string {
-            "robot" => Ok(Self::Robot),
-            "mouse" => Ok(Self::Mouse),
-            "tentacle" => Ok(Self::Tentacle),
-            "mate_bottle" => Ok(Self::MateBottle),
-            _ => Err(anyhow::anyhow!("Unrecognised string '{}'", string)),
         }
     }
 }
@@ -328,11 +307,11 @@ impl Level {
         let nav_mesh = create_navmesh(&collision_geometry);
 
         println!(
-            "'{}' level loaded. Vertices: {}. Indices: {}. Textures: {}. Lights: {}. Nav mesh vertices: {}. Nav mesh indices: {}",
+            "'{}' level loaded. Vertices: {}. Indices: {}. Images: {}. Lights: {}. Nav mesh vertices: {}. Nav mesh indices: {}",
             name,
             opaque_geometry.vertices.len(),
             opaque_geometry.indices.len(),
-            gltf.textures().count() as u32,
+            gltf.images().count() as u32,
             lights.len(),
             nav_mesh.vertices.len(), nav_mesh.indices.len(),
         );
@@ -457,11 +436,11 @@ impl Model {
         }
 
         println!(
-            "'{}' model loaded. Vertices: {}. Indices: {}. Textures: {}",
+            "'{}' model loaded. Vertices: {}. Indices: {}. Images: {}",
             name,
             opaque_geometry.vertices.len(),
             opaque_geometry.indices.len(),
-            gltf.textures().count() as u32,
+            gltf.images().count() as u32,
         );
 
         Ok(Self {

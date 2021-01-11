@@ -55,10 +55,14 @@ impl AnimatedModel {
             .nodes()
             .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
         {
-            assert!(node.skin().is_some());
+            let transform = if node.skin().is_some() {
+                // We can't apply transformations on animated models, but we also don't need to..
+                Mat4::identity()
+            } else {
+                // We allow combining animated and non animated meshes
+                node_tree.transform_of(node.index())
+            };
 
-            // We can't apply transformations on animated models, but we also don't need to..
-            let transform = Mat4::identity();
             let normal_matrix = normal_matrix(transform);
 
             for primitive in mesh.primitives() {
@@ -110,11 +114,11 @@ impl AnimatedModel {
         let num_joints = skin.joints().count() as u32;
 
         println!(
-            "'{}' animated model loaded. Vertices: {}. Indices: {}. Textures: {}. Animations: {}",
+            "'{}' animated model loaded. Vertices: {}. Indices: {}. Images: {}. Animations: {}",
             name,
             opaque_geometry.vertices.len(),
             opaque_geometry.indices.len(),
-            gltf.textures().count() as u32,
+            gltf.images().count() as u32,
             animations.len(),
         );
 
@@ -211,15 +215,23 @@ fn add_animated_primitive_geometry_to_buffers(
     let positions = reader.read_positions().unwrap();
     let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
     let normals = reader.read_normals().unwrap();
-    let joints = reader.read_joints(0).unwrap().into_u16();
-    let joint_weights = reader.read_weights(0).unwrap().into_f32();
+
+    let mut joints = reader.read_joints(0).map(|iter| iter.into_u16());
+    let mut joint_weights = reader.read_weights(0).map(|iter| iter.into_f32());
 
     positions
         .zip(tex_coordinates)
         .zip(normals)
-        .zip(joints)
-        .zip(joint_weights)
-        .for_each(|((((p, uv), n), j), jw)| {
+        .for_each(|((p, uv), n)| {
+            let j = match joints {
+                Some(ref mut iter) => iter.next().unwrap(),
+                None => [0; 4],
+            };
+            let jw = match joint_weights {
+                Some(ref mut iter) => iter.next().unwrap(),
+                None => [1.0, 0.0, 0.0, 0.0],
+            };
+
             let position = transform * Vec4::new(p[0], p[1], p[2], 1.0);
             assert_eq!(position.w, 1.0);
             let position = position.xyz();

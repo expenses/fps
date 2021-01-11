@@ -679,11 +679,15 @@ async fn run() -> anyhow::Result<()> {
 
     for (node_index, property) in level.properties.iter() {
         if let assets::Property::Spawn(character) = property {
-            let model = match character {
-                assets::Character::Robot => EitherModel::Animated(AnimatedModel::Robot),
-                assets::Character::Mouse => EitherModel::Animated(AnimatedModel::Mouse),
-                assets::Character::Tentacle => EitherModel::Animated(AnimatedModel::Tentacle),
-                assets::Character::MateBottle => EitherModel::Static(StaticModel::MateBottle),
+            let model = match &character[..] {
+                "robot" => EitherModel::Animated(AnimatedModel::Robot),
+                "mouse" => EitherModel::Animated(AnimatedModel::Mouse),
+                "tentacle" => EitherModel::Animated(AnimatedModel::Tentacle),
+                "mate_bottle" => EitherModel::Static(StaticModel::Bush),
+                other => {
+                    println!("Model spawn not handled: {}", other);
+                    continue;
+                }
             };
 
             let entity = match model {
