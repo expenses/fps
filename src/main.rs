@@ -291,8 +291,9 @@ impl ModelBuffers {
                     &renderer,
                     &mut init_encoder,
                     "warehouse robot",
-                    |_, mut joints| {
+                    |_, joints| {
                         animation_info.robot_base_node = joints
+                            .unwrap()
                             .find(|node| node.name() == Some("Base"))
                             .map(|node| node.index())
                             .unwrap();
@@ -338,6 +339,17 @@ impl ModelBuffers {
                             .map(|animation| animation.index())
                             .unwrap();
                     },
+                    &mut array_of_textures,
+                )?,
+                renderer,
+            ),
+            AnimatedModelBuffer::load(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/mario_kart_square.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "mario cube",
+                    |_, _| {},
                     &mut array_of_textures,
                 )?,
                 renderer,
@@ -396,13 +408,13 @@ impl ModelBuffers {
         })
     }
 
-    fn get_static_buffer(&mut self, model: &StaticModel) -> &mut DynamicBuffer<Instance> {
+    fn get_static_buffer(&mut self, model: &StaticModelType) -> &mut DynamicBuffer<Instance> {
         &mut self.static_models[*model as usize].instances
     }
 
     fn get_animated_buffer(
         &mut self,
-        model: &AnimatedModel,
+        model: &AnimatedModelType,
     ) -> (
         &mut DynamicBuffer<AnimatedInstance>,
         &assets::AnimatedModel,
@@ -421,7 +433,7 @@ impl ModelBuffers {
         )
     }
 
-    fn clone_animation_joints(&self, model: &AnimatedModel) -> AnimationJoints {
+    fn clone_animation_joints(&self, model: &AnimatedModelType) -> AnimationJoints {
         self.animated_models[*model as usize]
             .model
             .animation_joints
@@ -594,21 +606,22 @@ impl ModelBuffers {
 }
 
 #[derive(Copy, Clone)]
-enum StaticModel {
+enum StaticModelType {
     MateBottle = 0,
     Bush = 1,
 }
 
-#[derive(Debug, Copy, Clone, PartialOrd, PartialEq, Eq, Ord)]
-enum AnimatedModel {
+#[derive(Debug, Copy, Clone, PartialEq)]
+enum AnimatedModelType {
     Robot = 0,
     Mouse = 1,
     Tentacle = 2,
+    MarioCube = 3,
 }
 
 enum EitherModel {
-    Static(StaticModel),
-    Animated(AnimatedModel),
+    Static(StaticModelType),
+    Animated(AnimatedModelType),
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -680,11 +693,12 @@ async fn run() -> anyhow::Result<()> {
     for (node_index, property) in level.properties.iter() {
         if let assets::Property::Spawn(character) = property {
             let model = match &character[..] {
-                "robot" => EitherModel::Animated(AnimatedModel::Robot),
-                "mouse" => EitherModel::Animated(AnimatedModel::Mouse),
-                "tentacle" => EitherModel::Animated(AnimatedModel::Tentacle),
-                "mate_bottle" => EitherModel::Static(StaticModel::MateBottle),
-                "bush" => EitherModel::Static(StaticModel::Bush),
+                "robot" => EitherModel::Animated(AnimatedModelType::Robot),
+                "mouse" => EitherModel::Animated(AnimatedModelType::Mouse),
+                "tentacle" => EitherModel::Animated(AnimatedModelType::Tentacle),
+                "mate_bottle" => EitherModel::Static(StaticModelType::MateBottle),
+                "bush" => EitherModel::Static(StaticModelType::Bush),
+                "mario_cube" => EitherModel::Animated(AnimatedModelType::MarioCube),
                 other => {
                     println!("Model spawn not handled: {}", other);
                     continue;
@@ -705,7 +719,7 @@ async fn run() -> anyhow::Result<()> {
             let mut entry = world.entry(entity).unwrap();
 
             match model {
-                EitherModel::Animated(AnimatedModel::Robot) => {
+                EitherModel::Animated(AnimatedModelType::Robot) => {
                     entry.add_component(ecs::VisionCone::new(ncollide3d::shape::Cone::new(
                         10.0, 10.0,
                     )));
@@ -716,8 +730,10 @@ async fn run() -> anyhow::Result<()> {
             if let EitherModel::Animated(model) = model {
                 let joints = model_buffers.clone_animation_joints(&model);
                 let animation = match model {
-                    AnimatedModel::Tentacle => model_buffers.animation_info.tentacle_poke_animation,
-                    AnimatedModel::Mouse => model_buffers.animation_info.mouse_idle_animation,
+                    AnimatedModelType::Tentacle => {
+                        model_buffers.animation_info.tentacle_poke_animation
+                    }
+                    AnimatedModelType::Mouse => model_buffers.animation_info.mouse_idle_animation,
                     _ => 0,
                 };
 

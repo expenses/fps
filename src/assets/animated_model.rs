@@ -30,7 +30,7 @@ impl AnimatedModel {
         renderer: &Renderer,
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
-        getter: impl FnOnce(gltf::iter::Animations, gltf::skin::iter::Joints),
+        getter: impl FnOnce(gltf::iter::Animations, Option<gltf::skin::iter::Joints>),
         array_of_textures: &mut ArrayOfTextures,
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
@@ -92,9 +92,11 @@ impl AnimatedModel {
             }
         }
 
-        assert_eq!(gltf.skins().count(), 1);
-        let skin = gltf.skins().next().unwrap();
-        assert!(skin.skeleton().is_none());
+        assert!(gltf.skins().count() <= 1);
+        let skin = gltf.skins().next();
+        if let Some(skin) = skin.as_ref() {
+            assert!(skin.skeleton().is_none());
+        }
 
         assert_eq!(gltf.scenes().count(), 1);
         let scene = gltf.scenes().next().unwrap();
@@ -109,16 +111,27 @@ impl AnimatedModel {
 
         let animations = animation::read_animations(&gltf, buffer_blob, name);
 
-        getter(gltf.animations(), skin.joints());
+        getter(gltf.animations(), skin.as_ref().map(|skin| skin.joints()));
 
-        let num_joints = skin.joints().count() as u32;
+        let (joint_indices_to_node_indices, num_joints) = if let Some(skin) = skin.as_ref() {
+            (
+                skin.joints().map(|node| node.index()).collect(),
+                skin.joints().count() as u32,
+            )
+        } else {
+            (
+                gltf.nodes().map(|node| node.index()).collect(),
+                gltf.nodes().count() as u32,
+            )
+        };
 
         println!(
-            "'{}' animated model loaded. Vertices: {}. Indices: {}. Images: {}. Animations: {}",
+            "'{}' animated model loaded. Vertices: {}. Indices: {}. Images: {}. Joints: {}. Animations: {}",
             name,
             opaque_geometry.vertices.len(),
             opaque_geometry.indices.len(),
             gltf.images().count() as u32,
+            num_joints,
             animations.len(),
         );
 
@@ -137,6 +150,21 @@ impl AnimatedModel {
         let depth_first_nodes: Vec<_> = node_tree.iter_depth_first().collect();
         let animation_joints = AnimationJoints::new(joint_isometries, &depth_first_nodes[..]);
 
+        let inverse_bind_matrices = if let Some(skin) = skin.as_ref() {
+            skin.reader(|buffer| {
+                assert_eq!(buffer.index(), 0);
+                Some(buffer_blob)
+            })
+            .read_inverse_bind_matrices()
+            .ok_or_else(|| anyhow::anyhow!("Missing inverse bind matrices"))?
+            .map(|mat| mat.into())
+            .collect()
+        } else {
+            gltf.nodes()
+                .map(|node| node_tree.transform_of(node.index()))
+                .collect()
+        };
+
         Ok(Self {
             opaque_geometry: opaque_geometry
                 .upload(&renderer.device, &format!("{} level opaque", name)),
@@ -149,16 +177,8 @@ impl AnimatedModel {
 
             animation_joints,
 
-            joint_indices_to_node_indices: skin.joints().map(|node| node.index()).collect(),
-            inverse_bind_matrices: skin
-                .reader(|buffer| {
-                    assert_eq!(buffer.index(), 0);
-                    Some(buffer_blob)
-                })
-                .read_inverse_bind_matrices()
-                .ok_or_else(|| anyhow::anyhow!("Missing inverse bind matrices"))?
-                .map(|mat| mat.into())
-                .collect(),
+            joint_indices_to_node_indices,
+            inverse_bind_matrices,
             depth_first_nodes,
             name: name.to_string(),
         })

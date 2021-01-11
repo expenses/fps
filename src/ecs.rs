@@ -1,5 +1,5 @@
 use crate::assets::AnimationJoints;
-use crate::{renderer, vec3_into, AnimatedModel, ModelBuffers, StaticModel};
+use crate::{renderer, vec3_into, AnimatedModelType, ModelBuffers, StaticModelType};
 use ncollide3d::query::PointQuery;
 use ncollide3d::transformation::ToTriMesh;
 use renderer::{AnimatedInstance, Instance};
@@ -33,7 +33,7 @@ pub struct PlayerPosition(pub Vec3);
 #[legion::system(for_each)]
 fn render_static_models(
     #[resource] model_buffers: &mut ModelBuffers,
-    model: &StaticModel,
+    model: &StaticModelType,
     isometry: &Isometry3,
 ) {
     let instances = model_buffers.get_static_buffer(model);
@@ -43,7 +43,7 @@ fn render_static_models(
 #[legion::system(for_each)]
 fn render_animated_models(
     #[resource] model_buffers: &mut ModelBuffers,
-    model: &AnimatedModel,
+    model: &AnimatedModelType,
     isometry: &Isometry3,
     animation_state: &mut AnimationState,
 ) {

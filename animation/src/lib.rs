@@ -1,4 +1,5 @@
 use gltf::animation::Interpolation;
+use std::fmt;
 use ultraviolet::{Isometry3, Lerp, Mat4, Rotor3, Slerp, Vec3};
 
 pub fn read_animations(
@@ -132,6 +133,8 @@ impl AnimationJoints {
             if let Some(parent) = parent {
                 let parent_transform = self.global_transforms[parent];
                 self.global_transforms[index] = parent_transform * self.local_transforms[index];
+            } else {
+                self.global_transforms[index] = self.local_transforms[index];
             }
         }
     }
@@ -141,12 +144,21 @@ impl AnimationJoints {
     }
 }
 
-#[derive(Debug)]
 struct Channel<T> {
     interpolation: Interpolation,
     inputs: Vec<f32>,
     outputs: Vec<T>,
     node_index: usize,
+}
+
+impl<T> fmt::Debug for Channel<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Channel")
+            .field("interpolation", &self.interpolation)
+            .field("num_values", &self.inputs.len())
+            .field("node_index", &self.node_index)
+            .finish()
+    }
 }
 
 impl<T: Interpolate> Channel<T> {
