@@ -683,7 +683,8 @@ async fn run() -> anyhow::Result<()> {
                 "robot" => EitherModel::Animated(AnimatedModel::Robot),
                 "mouse" => EitherModel::Animated(AnimatedModel::Mouse),
                 "tentacle" => EitherModel::Animated(AnimatedModel::Tentacle),
-                "mate_bottle" => EitherModel::Static(StaticModel::Bush),
+                "mate_bottle" => EitherModel::Static(StaticModel::MateBottle),
+                "bush" => EitherModel::Static(StaticModel::Bush),
                 other => {
                     println!("Model spawn not handled: {}", other);
                     continue;
