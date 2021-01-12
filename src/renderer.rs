@@ -163,6 +163,8 @@ impl Renderer {
                         | wgpu::Features::PUSH_CONSTANTS,
                     limits: wgpu::Limits {
                         max_push_constant_size: std::mem::size_of::<[Mat4; 2]>() as u32,
+                        // todo: set this to something crazy high.
+                        max_sampled_textures_per_shader_stage: 32,
                         ..Default::default()
                     },
                 },

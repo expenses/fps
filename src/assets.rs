@@ -140,6 +140,28 @@ fn load_properties(gltf: &gltf::Document) -> anyhow::Result<HashMap<usize, Prope
         .collect()
 }
 
+fn load_material_properties(
+    gltf: &gltf::Document,
+) -> anyhow::Result<HashMap<Option<usize>, MaterialProperty>> {
+    gltf.materials()
+        .filter_map(|material| {
+            material
+                .extras()
+                .as_ref()
+                .map(|json_value| (material.index(), json_value))
+        })
+        .map(|(material_index, json_value)| {
+            let map: HashMap<String, f32> = serde_json::from_str(json_value.get())?;
+            assert_eq!(map.len(), 1);
+            let key = map.keys().next().unwrap();
+            Ok((
+                material_index,
+                MaterialProperty::parse(&key[..], map[&key[..]])?,
+            ))
+        })
+        .collect()
+}
+
 pub struct Level {
     pub opaque_geometry: Option<ModelBuffers>,
     pub alpha_clip_geometry: Option<ModelBuffers>,
@@ -165,24 +187,7 @@ impl Level {
 
         let properties = load_properties(&gltf)?;
 
-        let material_properties = gltf
-            .materials()
-            .filter_map(|material| {
-                material
-                    .extras()
-                    .as_ref()
-                    .map(|json_value| (material.index(), json_value))
-            })
-            .map(|(material_index, json_value)| {
-                let map: HashMap<String, f32> = serde_json::from_str(json_value.get())?;
-                assert_eq!(map.len(), 1);
-                let key = map.keys().next().unwrap();
-                Ok((
-                    material_index,
-                    MaterialProperty::parse(&key[..], map[&key[..]])?,
-                ))
-            })
-            .collect::<anyhow::Result<HashMap<Option<usize>, MaterialProperty>>>()?;
+        let material_properties = load_material_properties(&gltf)?;
 
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
@@ -385,6 +390,7 @@ impl Model {
         let node_tree = NodeTree::new(&gltf);
 
         let properties = load_properties(&gltf)?;
+        let material_properties = load_material_properties(&gltf)?;
 
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
@@ -427,7 +433,7 @@ impl Model {
                     transform,
                     normal_matrix,
                     buffer_blob,
-                    &HashMap::new(),
+                    &material_properties,
                     staging_buffers,
                     None,
                     &image_index_to_array_index,

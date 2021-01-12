@@ -48,6 +48,7 @@ fn render_animated_models(
     animation_state: &mut AnimationState,
 ) {
     let index = *model as u32;
+
     let (instances, model, staging_buffer) = model_buffers.get_animated_buffer(model);
     instances.push(AnimatedInstance::new(
         isometry.into_homogeneous_matrix(),
@@ -56,6 +57,7 @@ fn render_animated_models(
 
     let animation = &model.animations[animation_state.animation];
     animation_state.time = (animation_state.time + 1.0 / 60.0) % animation.total_time();
+
     animation.animate(
         &mut animation_state.joints,
         animation_state.time,

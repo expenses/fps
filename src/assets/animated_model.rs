@@ -1,12 +1,12 @@
 use super::{
-    load_images_into_array, normal_matrix, MaterialProperty, ModelBuffers, NodeTree,
-    StagingModelBuffers,
+    load_images_into_array, load_material_properties, normal_matrix, MaterialProperty,
+    ModelBuffers, NodeTree, StagingModelBuffers,
 };
 use crate::array_of_textures::ArrayOfTextures;
 use crate::renderer::{AnimatedVertex, Renderer};
 use animation::{Animation, AnimationJoints};
 use std::collections::HashMap;
-use ultraviolet::{Isometry3, Mat3, Mat4, Rotor3, Vec3, Vec4};
+use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 
 pub struct AnimatedModel {
     pub opaque_geometry: Option<ModelBuffers>,
@@ -36,6 +36,8 @@ impl AnimatedModel {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
 
+        let material_properties = load_material_properties(&gltf)?;
+
         let buffer_blob = gltf.blob.as_ref().unwrap();
 
         let image_index_to_array_index = load_images_into_array(
@@ -50,6 +52,12 @@ impl AnimatedModel {
         let mut opaque_geometry = StagingModelBuffers::default();
         let mut alpha_blend_geometry = StagingModelBuffers::default();
         let mut alpha_clip_geometry = StagingModelBuffers::default();
+
+        assert!(gltf.skins().count() <= 1);
+        let skin = gltf.skins().next();
+        if let Some(skin) = skin.as_ref() {
+            assert!(skin.skeleton().is_none());
+        }
 
         for (node, mesh) in gltf
             .nodes()
@@ -85,17 +93,12 @@ impl AnimatedModel {
                     transform,
                     normal_matrix,
                     buffer_blob,
-                    &HashMap::new(),
+                    &material_properties,
                     staging_buffers,
                     &image_index_to_array_index,
+                    skin.is_some(),
                 )?;
             }
-        }
-
-        assert!(gltf.skins().count() <= 1);
-        let skin = gltf.skins().next();
-        if let Some(skin) = skin.as_ref() {
-            assert!(skin.skeleton().is_none());
         }
 
         assert_eq!(gltf.scenes().count(), 1);
@@ -109,7 +112,7 @@ impl AnimatedModel {
             }
         }
 
-        let animations = animation::read_animations(&gltf, buffer_blob, name);
+        let animations = animation::read_animations(gltf.animations(), buffer_blob, name);
 
         getter(gltf.animations(), skin.as_ref().map(|skin| skin.joints()));
 
@@ -137,18 +140,8 @@ impl AnimatedModel {
 
         log::info!("Joints: {}, Nodes: {}", num_joints, gltf.nodes().count());
 
-        let joint_isometries: Vec<_> = gltf
-            .nodes()
-            .map(|node| {
-                let (translation, rotation, _) = node.transform().decomposed();
-                let translation = Vec3::from(translation);
-                let rotation = Rotor3::from_quaternion_array(rotation);
-                Isometry3::new(translation, rotation)
-            })
-            .collect();
-
         let depth_first_nodes: Vec<_> = node_tree.iter_depth_first().collect();
-        let animation_joints = AnimationJoints::new(joint_isometries, &depth_first_nodes[..]);
+        let animation_joints = AnimationJoints::new(gltf.nodes(), &depth_first_nodes[..]);
 
         let inverse_bind_matrices = if let Some(skin) = skin.as_ref() {
             skin.reader(|buffer| {
@@ -161,7 +154,7 @@ impl AnimatedModel {
             .collect()
         } else {
             gltf.nodes()
-                .map(|node| node_tree.transform_of(node.index()))
+                .map(|node| node_tree.transform_of(node.index()).inversed())
                 .collect()
         };
 
@@ -194,6 +187,7 @@ fn add_animated_primitive_geometry_to_buffers(
     material_properties: &HashMap<Option<usize>, MaterialProperty>,
     staging_buffers: &mut StagingModelBuffers<AnimatedVertex>,
     image_index_to_array_index: &[usize],
+    is_skinned: bool,
 ) -> anyhow::Result<()> {
     let emission_strength = match material_properties.get(&primitive.material().index()) {
         Some(MaterialProperty::EmissionStrength(strength)) => *strength,
@@ -245,7 +239,13 @@ fn add_animated_primitive_geometry_to_buffers(
         .for_each(|((p, uv), n)| {
             let j = match joints {
                 Some(ref mut iter) => iter.next().unwrap(),
-                None => [0; 4],
+                // If the mesh is skinned we use the root joint (presumed to be 0), otherwise we're
+                // just using the nodes as joints and should use the node index instead.
+                None => {
+                    let joint = if is_skinned { 0 } else { node.index() as u16 };
+
+                    [joint; 4]
+                }
             };
             let jw = match joint_weights {
                 Some(ref mut iter) => iter.next().unwrap(),

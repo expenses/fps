@@ -354,6 +354,28 @@ impl ModelBuffers {
                 )?,
                 renderer,
             ),
+            AnimatedModelBuffer::load(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/juggling_balls.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "jugging balls",
+                    |_, _| {},
+                    &mut array_of_textures,
+                )?,
+                renderer,
+            ),
+            AnimatedModelBuffer::load(
+                assets::AnimatedModel::load_gltf(
+                    include_bytes!("../models/explosion.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "jugging balls",
+                    |_, _| {},
+                    &mut array_of_textures,
+                )?,
+                renderer,
+            ),
         ];
 
         let num_joints: Vec<u32> = animated_models
@@ -617,6 +639,8 @@ enum AnimatedModelType {
     Mouse = 1,
     Tentacle = 2,
     MarioCube = 3,
+    JugglingBalls = 4,
+    Explosion = 5,
 }
 
 enum EitherModel {
@@ -699,6 +723,7 @@ async fn run() -> anyhow::Result<()> {
                 "mate_bottle" => EitherModel::Static(StaticModelType::MateBottle),
                 "bush" => EitherModel::Static(StaticModelType::Bush),
                 "mario_cube" => EitherModel::Animated(AnimatedModelType::MarioCube),
+                "juggling_balls" => EitherModel::Animated(AnimatedModelType::Explosion),
                 other => {
                     println!("Model spawn not handled: {}", other);
                     continue;

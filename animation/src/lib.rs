@@ -1,16 +1,17 @@
 use gltf::animation::Interpolation;
 use std::fmt;
-use ultraviolet::{Isometry3, Lerp, Mat4, Rotor3, Slerp, Vec3};
+use ultraviolet::{Lerp, Mat4, Rotor3, Similarity3, Slerp, Vec3};
 
 pub fn read_animations(
-    gltf: &gltf::Document,
+    animations: gltf::iter::Animations,
     gltf_binary_buffer_blob: &[u8],
     model_name: &str,
 ) -> Vec<Animation> {
-    gltf.animations()
+    animations
         .map(|animation| {
             let mut translation_channels = Vec::new();
             let mut rotation_channels = Vec::new();
+            let mut scale_channels = Vec::new();
 
             for (channel_index, channel) in animation.channels().enumerate() {
                 let reader = channel.reader(|buffer| {
@@ -61,6 +62,21 @@ pub fn read_animations(
                             node_index: channel.target().node().index(),
                         });
                     }
+                    gltf::animation::Property::Scale => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Scales(scales) => scales
+                                .map(|scales| (scales[0] + scales[1] + scales[2]) / 3.0)
+                                .collect(),
+                            _ => unreachable!(),
+                        };
+
+                        scale_channels.push(Channel {
+                            interpolation: channel.sampler().interpolation(),
+                            inputs,
+                            outputs,
+                            node_index: channel.target().node().index(),
+                        });
+                    }
                     property => {
                         log::warn!(
                             "[{}] Animation type {:?} is not supported, ignoring.",
@@ -79,15 +95,19 @@ pub fn read_animations(
                         .iter()
                         .map(|channel| channel.inputs[channel.inputs.len() - 1]),
                 )
+                .chain(
+                    scale_channels
+                        .iter()
+                        .map(|channel| channel.inputs[channel.inputs.len() - 1]),
+                )
                 .max_by_key(|&time| ordered_float::OrderedFloat(time))
                 .unwrap();
-
-            rotation_channels[0].sample(0.4999);
 
             Animation {
                 total_time,
                 translation_channels,
                 rotation_channels,
+                scale_channels,
             }
         })
         .collect()
@@ -95,18 +115,26 @@ pub fn read_animations(
 
 #[derive(Clone)]
 pub struct AnimationJoints {
-    global_transforms: Vec<Isometry3>,
-    local_transforms: Vec<Isometry3>,
+    global_transforms: Vec<Similarity3>,
+    local_transforms: Vec<Similarity3>,
 }
 
 impl AnimationJoints {
-    pub fn new(
-        joint_isometries: Vec<Isometry3>,
-        depth_first_nodes: &[(usize, Option<usize>)],
-    ) -> Self {
+    pub fn new(nodes: gltf::iter::Nodes, depth_first_nodes: &[(usize, Option<usize>)]) -> Self {
+        let joint_similarities: Vec<_> = nodes
+            .map(|node| {
+                let (translation, rotation, scale) = node.transform().decomposed();
+                let translation = Vec3::from(translation);
+                let rotation = Rotor3::from_quaternion_array(rotation);
+                let scale = (scale[0] + scale[1] + scale[2]) / 3.0;
+
+                Similarity3::new(translation, rotation, scale)
+            })
+            .collect();
+
         let mut joints = Self {
-            global_transforms: joint_isometries.clone(),
-            local_transforms: joint_isometries,
+            global_transforms: joint_similarities.clone(),
+            local_transforms: joint_similarities,
         };
 
         joints.update(depth_first_nodes);
@@ -139,7 +167,7 @@ impl AnimationJoints {
         }
     }
 
-    pub fn get_global_transform(&self, node_index: usize) -> Isometry3 {
+    pub fn get_global_transform(&self, node_index: usize) -> Similarity3 {
         self.global_transforms[node_index]
     }
 }
@@ -221,6 +249,7 @@ pub struct Animation {
     total_time: f32,
     translation_channels: Vec<Channel<Vec3>>,
     rotation_channels: Vec<Channel<Rotor3>>,
+    scale_channels: Vec<Channel<f32>>,
 }
 
 impl Animation {
@@ -246,6 +275,13 @@ impl Animation {
             .filter_map(move |channel| channel.sample(time))
             .for_each(|(node_index, rotation)| {
                 animation_joints.local_transforms[node_index].rotation = rotation;
+            });
+
+        self.scale_channels
+            .iter()
+            .filter_map(move |channel| channel.sample(time))
+            .for_each(|(node_index, scale)| {
+                animation_joints.local_transforms[node_index].scale = scale;
             });
 
         animation_joints.update(depth_first_nodes);
@@ -311,5 +347,29 @@ impl Interpolate for Rotor3 {
             + (t * t * t - t * t) * m1;
 
         result.normalized()
+    }
+}
+
+impl Interpolate for f32 {
+    fn linear(self, other: Self, t: f32) -> Self {
+        self.lerp(other, t)
+    }
+
+    fn cubic_spline(
+        source: [Self; 3],
+        source_time: f32,
+        target: [Self; 3],
+        target_time: f32,
+        t: f32,
+    ) -> Self {
+        let p0 = source[1];
+        let m0 = (target_time - source_time) * source[2];
+        let p1 = target[1];
+        let m1 = (target_time - source_time) * target[0];
+
+        (2.0 * t * t * t - 3.0 * t * t + 1.0) * p0
+            + (t * t * t - 2.0 * t * t + t) * m0
+            + (-2.0 * t * t * t + 3.0 * t * t) * p1
+            + (t * t * t - t * t) * m1
     }
 }
