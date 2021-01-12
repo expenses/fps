@@ -370,7 +370,7 @@ impl ModelBuffers {
                     include_bytes!("../models/explosion.glb"),
                     &renderer,
                     &mut init_encoder,
-                    "jugging balls",
+                    "explosion",
                     |_, _| {},
                     &mut array_of_textures,
                 )?,
@@ -723,7 +723,8 @@ async fn run() -> anyhow::Result<()> {
                 "mate_bottle" => EitherModel::Static(StaticModelType::MateBottle),
                 "bush" => EitherModel::Static(StaticModelType::Bush),
                 "mario_cube" => EitherModel::Animated(AnimatedModelType::MarioCube),
-                "juggling_balls" => EitherModel::Animated(AnimatedModelType::Explosion),
+                "juggling_balls" => EitherModel::Animated(AnimatedModelType::JugglingBalls),
+                "explosion" => EitherModel::Animated(AnimatedModelType::Explosion),
                 other => {
                     println!("Model spawn not handled: {}", other);
                     continue;

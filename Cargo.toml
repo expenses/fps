@@ -21,6 +21,7 @@ serde_json = "1.0.60"
 ultraviolet = { git = "https://github.com/expenses/ultraviolet", branch = "quaternion-convertion", features = ["bytemuck"] }
 wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 winit = "0.24.0"
+num-integer = "0.1.44"
 
 animation = { path = "animation" }
 

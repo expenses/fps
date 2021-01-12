@@ -788,7 +788,6 @@ fn create_render_pipeline(
     vs_module: &wgpu::ShaderModule,
     fs_module: &wgpu::ShaderModule,
     colour_descriptor: wgpu::ColorStateDescriptor,
-    depth_write_enabled: bool,
     animated: bool,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -810,7 +809,7 @@ fn create_render_pipeline(
         color_states: &[colour_descriptor],
         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
             format: DEPTH_FORMAT,
-            depth_write_enabled,
+            depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
@@ -1145,7 +1144,6 @@ fn render_pipelines_for_num_textures(
             vs_static_model,
             fs_model,
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
             false,
         ),
         static_alpha_clip_render_pipeline: create_render_pipeline(
@@ -1155,7 +1153,6 @@ fn render_pipelines_for_num_textures(
             vs_static_model,
             fs_alpha_clip_model,
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
             false,
         ),
         static_transparent_render_pipeline: create_render_pipeline(
@@ -1165,8 +1162,6 @@ fn render_pipelines_for_num_textures(
             vs_static_model,
             fs_model,
             alpha_blend_colour_descriptor(),
-            // Can't remember if this is a good idea or not.
-            false,
             false,
         ),
 
@@ -1178,7 +1173,6 @@ fn render_pipelines_for_num_textures(
             fs_model,
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
-            true,
         ),
         animated_alpha_clip_render_pipeline: create_render_pipeline(
             device,
@@ -1188,7 +1182,6 @@ fn render_pipelines_for_num_textures(
             fs_alpha_clip_model,
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
-            true,
         ),
         animated_transparent_render_pipeline: create_render_pipeline(
             device,
@@ -1197,8 +1190,6 @@ fn render_pipelines_for_num_textures(
             vs_animated_model,
             fs_model,
             alpha_blend_colour_descriptor(),
-            // Can't remember if this is a good idea or not.
-            false,
             true,
         ),
     };

@@ -610,6 +610,7 @@ dependencies = [
  "log",
  "lyon_tessellation",
  "ncollide3d",
+ "num-integer",
  "serde_json",
  "ultraviolet",
  "wgpu",
