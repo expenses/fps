@@ -1,6 +1,7 @@
 use super::{
-    load_images_into_array, load_material_properties, normal_matrix, MaterialProperty,
-    ModelBuffers, NodeTree, StagingModelBuffers,
+    load_images_into_array, load_material_properties, normal_matrix, IndexBufferView,
+    MaterialProperty, NodeTree, StagingModelBuffers, ordered_mesh_nodes,
+    load_properties,
 };
 use crate::array_of_textures::ArrayOfTextures;
 use crate::renderer::{AnimatedVertex, Renderer};
@@ -9,9 +10,9 @@ use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 
 pub struct AnimatedModel {
-    pub opaque_geometry: Option<ModelBuffers>,
-    pub alpha_clip_geometry: Option<ModelBuffers>,
-    pub alpha_blend_geometry: Option<ModelBuffers>,
+    pub opaque_geometry: IndexBufferView,
+    pub alpha_clip_geometry: IndexBufferView,
+    pub alpha_blend_geometry: IndexBufferView,
 
     pub animations: Vec<Animation>,
     pub num_joints: u32,
@@ -32,10 +33,12 @@ impl AnimatedModel {
         name: &str,
         getter: impl FnOnce(gltf::iter::Animations, Option<gltf::skin::iter::Joints>),
         array_of_textures: &mut ArrayOfTextures,
+        staging_buffers: &mut StagingModelBuffers<AnimatedVertex>,
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
 
+        let properties = load_properties(&gltf)?;
         let material_properties = load_material_properties(&gltf)?;
 
         let buffer_blob = gltf.blob.as_ref().unwrap();
@@ -59,10 +62,7 @@ impl AnimatedModel {
             assert!(skin.skeleton().is_none());
         }
 
-        for (node, mesh) in gltf
-            .nodes()
-            .filter_map(|node| node.mesh().map(|mesh| (node, mesh)))
-        {
+        for (node, mesh) in ordered_mesh_nodes(&gltf, &properties) {
             let transform = if node.skin().is_some() {
                 // We can't apply transformations on animated models, but we also don't need to..
                 Mat4::identity()
@@ -159,12 +159,10 @@ impl AnimatedModel {
         };
 
         Ok(Self {
-            opaque_geometry: opaque_geometry
-                .upload(&renderer.device, &format!("{} level opaque", name)),
-            alpha_blend_geometry: alpha_blend_geometry
-                .upload(&renderer.device, &format!("{} level alpha blend", name)),
-            alpha_clip_geometry: alpha_clip_geometry
-                .upload(&renderer.device, &format!("{} level alpha clip", name)),
+            opaque_geometry: staging_buffers.merge(opaque_geometry.clone()),
+            alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry.clone()),
+            alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry.clone()),
+
             animations,
             num_joints,
 

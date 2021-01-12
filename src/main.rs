@@ -4,7 +4,7 @@ mod assets;
 mod ecs;
 mod renderer;
 
-use crate::assets::AnimationJoints;
+use crate::assets::{AnimationJoints, StagingModelBuffers};
 use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, INDEX_FORMAT};
 use array_of_textures::ArrayOfTextures;
 use ncollide3d::query::RayCast;
@@ -134,13 +134,15 @@ impl StaticModelBuffer {
 
 struct AnimatedModelBuffer {
     model: assets::AnimatedModel,
-    instances: DynamicBuffer<AnimatedInstance>,
+    instances: Vec<AnimatedInstance>,
+    joints: Vec<Mat4>,
 }
 
 impl AnimatedModelBuffer {
     fn load(model: assets::AnimatedModel, renderer: &Renderer) -> Self {
         Self {
-            instances: empty_instance_buffer(renderer, &model.name),
+            instances: Vec::new(),
+            joints: Vec::new(),
             model,
         }
     }
@@ -157,7 +159,7 @@ struct AnimationInfo {
 }
 
 fn create_animated_models_bind_group(
-    animated_joints: &AnimatedJointsBuffer,
+    animated_joints: &MergedBuffer<Mat4>,
     renderer: &Renderer,
     num_joints_buffer: &wgpu::Buffer,
     joint_offsets_buffer: &wgpu::Buffer,
@@ -196,48 +198,89 @@ fn create_animated_models_bind_group(
         })
 }
 
-struct AnimatedJointsBuffer {
+// A buffer that different slices are uploaded and merged into
+struct MergedBuffer<T> {
     capacity: usize,
     buffer: wgpu::Buffer,
+    name: String,
+    usage: wgpu::BufferUsage,
+    _phantom: std::marker::PhantomData<T>
 }
 
-impl AnimatedJointsBuffer {
-    fn new(capacity: usize, renderer: &Renderer) -> Self {
+impl<T: bytemuck::Pod> MergedBuffer<T> {
+    fn new(capacity: usize, renderer: &Renderer, usage: wgpu::BufferUsage, name: &str) -> Self {
         Self {
             capacity,
             buffer: renderer.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("animated joints buffer"),
-                size: (capacity * std::mem::size_of::<Mat4>()) as u64,
-                usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+                label: Some(name),
+                size: (capacity * std::mem::size_of::<T>()) as u64,
+                usage: usage | wgpu::BufferUsage::COPY_DST,
                 mapped_at_creation: false,
             }),
+            name: name.to_string(),
+            usage,
+            _phantom: std::marker::PhantomData,
         }
     }
 
-    fn push(&self, offset: usize, slice: &[Mat4], renderer: &Renderer) {
-        renderer.queue.write_buffer(
-            &self.buffer,
-            (offset * std::mem::size_of::<Mat4>()) as u64,
-            bytemuck::cast_slice(slice),
-        );
-    }
+    fn upload<'a>(&mut self, staging_buffers: impl Iterator<Item = &'a Vec<T>> + Clone, renderer: &Renderer) -> bool {
+        let num_items = staging_buffers.clone().map(|buffer| buffer.len()).sum();
+        let mut resized = false;
 
-    fn ensure_can_fit(&mut self, items: usize, renderer: &Renderer) -> bool {
-        if items > self.capacity {
-            let new_capacity = (self.capacity * 2).max(items);
+        if num_items > self.capacity {
+            let new_capacity = (self.capacity * 2).max(num_items);
 
             self.buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("animated joints buffer"),
-                size: (new_capacity * std::mem::size_of::<Mat4>()) as u64,
-                usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
+                label: Some(&self.name),
+                size: (new_capacity * std::mem::size_of::<T>()) as u64,
+                usage: self.usage | wgpu::BufferUsage::COPY_DST,
                 mapped_at_creation: false,
             });
 
-            true
-        } else {
-            false
+            resized = true;
         }
+
+        let mut offset = 0;
+
+        for buffer in staging_buffers {
+            println!("{:?} {:?}", offset, buffer.len());
+
+            renderer.queue.write_buffer(
+                &self.buffer,
+                (offset * std::mem::size_of::<T>()) as u64,
+                bytemuck::cast_slice(buffer),
+            );
+
+            offset += buffer.len();
+        }
+
+        resized
     }
+
+    fn slice(&self) -> wgpu::BufferSlice {
+        self.buffer.slice(..)
+    }
+}
+
+fn offsets<'a, T: 'a>(slices: impl Iterator<Item = &'a Vec<T>> + 'a) -> impl Iterator<Item = u32> + 'a {
+    let mut current_offset = 0;
+
+    slices.map(move |slice| {
+        let offset = current_offset;
+        current_offset += slice.len();
+        offset as u32
+    })
+}
+
+
+fn offsets_and_sizes<'a, T: 'a>(slices: impl Iterator<Item = &'a Vec<T>> + 'a) -> impl Iterator<Item = (u32, u32)> + 'a {
+    let mut current_offset = 0;
+
+    slices.map(move |slice| {
+        let offset = current_offset;
+        current_offset += slice.len();
+        (offset as u32, slice.len() as u32)
+    })
 }
 
 struct ModelBuffers {
@@ -248,9 +291,13 @@ struct ModelBuffers {
 
     num_joints_buffer: wgpu::Buffer,
     joint_offsets_buffer: wgpu::Buffer,
-    animated_joints: AnimatedJointsBuffer,
+    animated_joints: MergedBuffer<Mat4>,
     animated_models_bind_group: wgpu::BindGroup,
-    animated_joints_staging_buffers: Vec<Vec<Mat4>>,
+    animated_instances: MergedBuffer<AnimatedInstance>,
+    animated_instance_offsets_and_sizes: Vec<(u32, u32)>,
+
+    animated_model_vertices: wgpu::Buffer,
+    animated_model_indices: wgpu::Buffer,
 }
 
 impl ModelBuffers {
@@ -284,6 +331,8 @@ impl ModelBuffers {
             ),
         ];
 
+        let mut staging_buffers = StagingModelBuffers::default();
+
         let animated_models = vec![
             AnimatedModelBuffer::load(
                 assets::AnimatedModel::load_gltf(
@@ -299,6 +348,7 @@ impl ModelBuffers {
                             .unwrap();
                     },
                     &mut array_of_textures,
+                    &mut staging_buffers,
                 )?,
                 renderer,
             ),
@@ -322,6 +372,7 @@ impl ModelBuffers {
                         }
                     },
                     &mut array_of_textures,
+                    &mut staging_buffers,
                 )?,
                 renderer,
             ),
@@ -340,6 +391,7 @@ impl ModelBuffers {
                             .unwrap();
                     },
                     &mut array_of_textures,
+                    &mut staging_buffers,
                 )?,
                 renderer,
             ),
@@ -351,6 +403,7 @@ impl ModelBuffers {
                     "mario cube",
                     |_, _| {},
                     &mut array_of_textures,
+                    &mut staging_buffers,
                 )?,
                 renderer,
             ),
@@ -362,6 +415,7 @@ impl ModelBuffers {
                     "jugging balls",
                     |_, _| {},
                     &mut array_of_textures,
+                    &mut staging_buffers,
                 )?,
                 renderer,
             ),
@@ -373,6 +427,7 @@ impl ModelBuffers {
                     "explosion",
                     |_, _| {},
                     &mut array_of_textures,
+                    &mut staging_buffers,
                 )?,
                 renderer,
             ),
@@ -401,7 +456,8 @@ impl ModelBuffers {
                     usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_DST,
                 });
 
-        let animated_joints = AnimatedJointsBuffer::new(1, &renderer);
+        let animated_joints = MergedBuffer::new(1, &renderer, wgpu::BufferUsage::STORAGE, "animated joints buffer");
+        let animated_instances = MergedBuffer::new(1, &renderer, wgpu::BufferUsage::VERTEX, "animated instances buffer");
 
         let animated_models_bind_group = create_animated_models_bind_group(
             &animated_joints,
@@ -414,7 +470,8 @@ impl ModelBuffers {
 
         let array_of_textures_bind_group = array_of_textures.bind(renderer);
 
-        let animated_joints_staging_buffers = vec![Vec::new(); animated_models.len()];
+        let (animated_model_vertices, animated_model_indices) = staging_buffers
+            .upload_simple(&renderer.device, "animated model");
 
         Ok(Self {
             static_models,
@@ -426,7 +483,11 @@ impl ModelBuffers {
             joint_offsets_buffer,
             animated_joints,
             animated_models_bind_group,
-            animated_joints_staging_buffers,
+            animated_instances,
+
+            animated_model_vertices,
+            animated_model_indices,
+            animated_instance_offsets_and_sizes: Vec::new(),
         })
     }
 
@@ -438,20 +499,20 @@ impl ModelBuffers {
         &mut self,
         model: &AnimatedModelType,
     ) -> (
-        &mut DynamicBuffer<AnimatedInstance>,
+        &mut Vec<AnimatedInstance>,
         &assets::AnimatedModel,
         &mut Vec<Mat4>,
     ) {
         let index = *model as usize;
 
         let AnimatedModelBuffer {
-            instances, model, ..
+            instances, model, joints, ..
         } = &mut self.animated_models[index];
 
         (
             instances,
             model,
-            &mut self.animated_joints_staging_buffers[index],
+            joints,
         )
     }
 
@@ -463,13 +524,12 @@ impl ModelBuffers {
     }
 
     fn upload(&mut self, renderer: &Renderer) {
-        let total_joints = self
-            .animated_joints_staging_buffers
-            .iter()
-            .map(|staging_buffer| staging_buffer.len())
-            .sum();
+        // Joints
 
-        let resized = self.animated_joints.ensure_can_fit(total_joints, renderer);
+        let resized = self.animated_joints.upload(
+            self.animated_models.iter().map(|model| &model.joints),
+            renderer
+        );
 
         if resized {
             self.animated_models_bind_group = create_animated_models_bind_group(
@@ -480,18 +540,7 @@ impl ModelBuffers {
             );
         }
 
-        let mut current_offset = 0;
-        let joint_offsets: Vec<u32> = self
-            .animated_joints_staging_buffers
-            .iter()
-            .map(|staging_buffer| {
-                let offset = current_offset;
-
-                self.animated_joints.push(offset, staging_buffer, renderer);
-                current_offset += staging_buffer.len();
-
-                offset as u32
-            })
+        let joint_offsets: Vec<_> = offsets(self.animated_models.iter().map(|model| &model.joints))
             .collect();
 
         renderer.queue.write_buffer(
@@ -500,12 +549,23 @@ impl ModelBuffers {
             bytemuck::cast_slice(&joint_offsets),
         );
 
-        for buffer in &mut self.animated_joints_staging_buffers {
-            buffer.clear();
-        }
+        // Instances
+
+        self.animated_instances.upload(
+            self.animated_models.iter().map(|model| &model.instances),
+            renderer
+        );
+
+        self.animated_instance_offsets_and_sizes = offsets_and_sizes(
+            self.animated_models.iter().map(|model| &model.instances)
+        ).collect();
+
+        println!("{:?} {:?}", joint_offsets, self.animated_instance_offsets_and_sizes);
+
+        // Clears.
 
         for model in &mut self.animated_models {
-            model.instances.upload(renderer);
+            model.joints.clear();
             model.instances.clear();
         }
 
@@ -533,16 +593,22 @@ impl ModelBuffers {
             bytemuck::bytes_of(&renderer.projection_view),
         );
         render_pass.set_bind_group(3, &self.animated_models_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.animated_model_vertices.slice(..));
+        render_pass.set_vertex_buffer(1, self.animated_instances.slice());
+        render_pass.set_index_buffer(self.animated_model_indices.slice(..), INDEX_FORMAT);
 
-        for AnimatedModelBuffer {
-            instances, model, ..
-        } in &self.animated_models
+        for (model, &(instance_offset, instance_size)) in self.animated_models.iter().zip(&self.animated_instance_offsets_and_sizes)
         {
-            if let Some((slice, num)) = instances.get() {
-                if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
-                    render_animated_indexed(render_pass, opaque_geometry, slice, num)
-                }
-            }
+            println!("{:?} {}", instance_offset, instance_size);
+            //if let Some((instances, num_instances)) = instances.get() {
+                //if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
+                    render_pass.draw_indexed(
+                        model.model.opaque_geometry.offset..model.model.opaque_geometry.offset+model.model.opaque_geometry.size,
+                        0,
+                        instance_offset..instance_offset+instance_size
+                    )
+                //}
+            //}
         }
     }
 
@@ -566,6 +632,7 @@ impl ModelBuffers {
             }
         }
 
+        /*
         render_pass.set_pipeline(&renderer.animated_alpha_clip_render_pipeline);
         render_pass.set_push_constants(
             wgpu::ShaderStage::VERTEX,
@@ -584,6 +651,7 @@ impl ModelBuffers {
                 }
             }
         }
+        */
     }
 
     fn render_transparent<'a>(
@@ -606,6 +674,7 @@ impl ModelBuffers {
             }
         }
 
+        /*
         render_pass.set_pipeline(&renderer.animated_transparent_render_pipeline);
         render_pass.set_push_constants(
             wgpu::ShaderStage::VERTEX,
@@ -624,6 +693,7 @@ impl ModelBuffers {
                 }
             }
         }
+        */
     }
 }
 

@@ -10,6 +10,12 @@ mod animated_model;
 pub use animated_model::AnimatedModel;
 pub use animation::AnimationJoints;
 
+#[derive(Debug)]
+pub struct IndexBufferView {
+    pub offset: u32,
+    pub size: u32,
+}
+
 #[repr(C)]
 #[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 struct Light {
@@ -19,7 +25,8 @@ struct Light {
     padding: i32,
 }
 
-struct StagingModelBuffers<T> {
+#[derive(Clone)]
+pub struct StagingModelBuffers<T> {
     vertices: Vec<T>,
     indices: Vec<u32>,
 }
@@ -34,6 +41,21 @@ impl<T> Default for StagingModelBuffers<T> {
 }
 
 impl<T: bytemuck::Pod> StagingModelBuffers<T> {
+    pub fn upload_simple(&self, device: &wgpu::Device, name: &str) -> (wgpu::Buffer, wgpu::Buffer) {
+        (
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{} vertices", name)),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsage::VERTEX,
+            }),
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{} indices", name)),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsage::INDEX,
+            })
+        )
+    }
+
     fn upload(&self, device: &wgpu::Device, name: &str) -> Option<ModelBuffers> {
         if self.indices.is_empty() {
             return None;
@@ -52,6 +74,20 @@ impl<T: bytemuck::Pod> StagingModelBuffers<T> {
             }),
             num_indices: self.indices.len() as u32,
         })
+    }
+
+    fn merge(&mut self, other: StagingModelBuffers<T>) -> IndexBufferView {
+        let num_vertices = self.vertices.len() as u32;
+
+        let view = IndexBufferView {
+            offset: self.indices.len() as u32,
+            size: other.indices.len() as u32,
+        };
+
+        self.vertices.extend(other.vertices.into_iter());
+        self.indices.extend(other.indices.into_iter().map(|index| num_vertices + index));
+
+        view
     }
 }
 
