@@ -1,5 +1,6 @@
 use gltf::animation::Interpolation;
 use std::fmt;
+use std::ops::{Add, Mul};
 use ultraviolet::{Lerp, Mat4, Rotor3, Similarity3, Slerp, Vec3};
 
 pub fn read_animations(
@@ -50,7 +51,7 @@ pub fn read_animations(
                         let outputs = match reader.read_outputs().unwrap() {
                             gltf::animation::util::ReadOutputs::Rotations(rotations) => rotations
                                 .into_f32()
-                                .map(|rotation| Rotor3::from_quaternion_array(rotation))
+                                .map(Rotor3::from_quaternion_array)
                                 .collect(),
                             _ => unreachable!(),
                         };
@@ -211,7 +212,7 @@ impl<T: Interpolate> Channel<T> {
         let from_start = t - previous_time;
         let factor = from_start / delta;
 
-        let i = match self.interpolation {
+        let value = match self.interpolation {
             Interpolation::Step => self.outputs[i],
             Interpolation::Linear => {
                 let previous_value = self.outputs[i];
@@ -220,27 +221,35 @@ impl<T: Interpolate> Channel<T> {
                 previous_value.linear(next_value, factor)
             }
             Interpolation::CubicSpline => {
-                let previous_values = [
-                    self.outputs[i * 3],
-                    self.outputs[i * 3 + 1],
-                    self.outputs[i * 3 + 2],
-                ];
-                let next_values = [
-                    self.outputs[i * 3 + 3],
-                    self.outputs[i * 3 + 4],
-                    self.outputs[i * 3 + 5],
-                ];
+                // See the bottom of:
+                // https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#animations
+                //
+                // The keyframes are grouped in sets of 3, arranged as:
+                // * An in-tangent
+                // * A value
+                // * An out-tangent
+                //
+                // We don't care about the in-tangent for the starting point, or the out-tangent for
+                // the ending point so we don't load those.
+
+                let starting_point = self.outputs[i * 3 + 1];
+                let starting_out_tangent = self.outputs[i * 3 + 2];
+
+                let ending_in_tangent = self.outputs[i * 3 + 3];
+                let ending_point = self.outputs[i * 3 + 4];
+
                 Interpolate::cubic_spline(
-                    previous_values,
-                    previous_time,
-                    next_values,
-                    next_time,
+                    starting_point,
+                    starting_out_tangent,
+                    ending_point,
+                    ending_in_tangent,
+                    delta,
                     factor,
                 )
             }
         };
 
-        Some((self.node_index, i))
+        Some((self.node_index, value))
     }
 }
 
@@ -292,10 +301,11 @@ trait Interpolate: Copy {
     fn linear(self, other: Self, t: f32) -> Self;
 
     fn cubic_spline(
-        source: [Self; 3],
-        source_time: f32,
-        target: [Self; 3],
-        target_time: f32,
+        starting_point: Self,
+        starting_out_tangent: Self,
+        ending_in_point: Self,
+        ending_out_tangent: Self,
+        time_between_keyframes: f32,
         t: f32,
     ) -> Self;
 }
@@ -306,21 +316,21 @@ impl Interpolate for Vec3 {
     }
 
     fn cubic_spline(
-        source: [Self; 3],
-        source_time: f32,
-        target: [Self; 3],
-        target_time: f32,
+        starting_point: Self,
+        starting_out_tangent: Self,
+        ending_in_point: Self,
+        ending_out_tangent: Self,
+        time_between_keyframes: f32,
         t: f32,
     ) -> Self {
-        let p0 = source[1];
-        let m0 = (target_time - source_time) * source[2];
-        let p1 = target[1];
-        let m1 = (target_time - source_time) * target[0];
-
-        (2.0 * t * t * t - 3.0 * t * t + 1.0) * p0
-            + (t * t * t - 2.0 * t * t + t) * m0
-            + (-2.0 * t * t * t + 3.0 * t * t) * p1
-            + (t * t * t - t * t) * m1
+        cubic_spline_interpolate(
+            starting_point,
+            starting_out_tangent,
+            ending_in_point,
+            ending_out_tangent,
+            time_between_keyframes,
+            t,
+        )
     }
 }
 
@@ -330,23 +340,22 @@ impl Interpolate for Rotor3 {
     }
 
     fn cubic_spline(
-        source: [Self; 3],
-        source_time: f32,
-        target: [Self; 3],
-        target_time: f32,
+        starting_point: Self,
+        starting_out_tangent: Self,
+        ending_in_point: Self,
+        ending_out_tangent: Self,
+        time_between_keyframes: f32,
         t: f32,
     ) -> Self {
-        let p0 = source[1];
-        let m0 = (target_time - source_time) * source[2];
-        let p1 = target[1];
-        let m1 = (target_time - source_time) * target[0];
-
-        let result = (2.0 * t * t * t - 3.0 * t * t + 1.0) * p0
-            + (t * t * t - 2.0 * t * t + t) * m0
-            + (-2.0 * t * t * t + 3.0 * t * t) * p1
-            + (t * t * t - t * t) * m1;
-
-        result.normalized()
+        cubic_spline_interpolate(
+            starting_point,
+            starting_out_tangent,
+            ending_in_point,
+            ending_out_tangent,
+            time_between_keyframes,
+            t,
+        )
+        .normalized()
     }
 }
 
@@ -356,20 +365,47 @@ impl Interpolate for f32 {
     }
 
     fn cubic_spline(
-        source: [Self; 3],
-        source_time: f32,
-        target: [Self; 3],
-        target_time: f32,
+        starting_point: Self,
+        starting_out_tangent: Self,
+        ending_in_point: Self,
+        ending_out_tangent: Self,
+        time_between_keyframes: f32,
         t: f32,
     ) -> Self {
-        let p0 = source[1];
-        let m0 = (target_time - source_time) * source[2];
-        let p1 = target[1];
-        let m1 = (target_time - source_time) * target[0];
-
-        (2.0 * t * t * t - 3.0 * t * t + 1.0) * p0
-            + (t * t * t - 2.0 * t * t + t) * m0
-            + (-2.0 * t * t * t + 3.0 * t * t) * p1
-            + (t * t * t - t * t) * m1
+        cubic_spline_interpolate(
+            starting_point,
+            starting_out_tangent,
+            ending_in_point,
+            ending_out_tangent,
+            time_between_keyframes,
+            t,
+        )
     }
+}
+
+// For a full explanation see:
+// https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#appendix-c-spline-interpolation
+fn cubic_spline_interpolate<T>(
+    starting_point: T,
+    starting_out_tangent: T,
+    ending_point: T,
+    ending_in_tangent: T,
+    time_between_keyframes: f32,
+    t: f32,
+) -> T
+where
+    T: Add<T, Output = T> + Mul<f32, Output = T> + Copy,
+{
+    let p0 = starting_point;
+    let m0 = starting_out_tangent * time_between_keyframes;
+    let p1 = ending_point;
+    let m1 = ending_in_tangent * time_between_keyframes;
+
+    let t2 = t * t;
+    let t3 = t * t * t;
+
+    p0 * (2.0 * t3 - 3.0 * t2 + 1.0)
+        + m0 * (t3 - 2.0 * t2 + t)
+        + p1 * (-2.0 * t3 + 3.0 * t2)
+        + m1 * (t3 - t2)
 }
