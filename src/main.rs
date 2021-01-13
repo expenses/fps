@@ -134,14 +134,14 @@ impl StaticModelBuffer {
 
 struct AnimatedModelBuffer {
     model: assets::AnimatedModel,
-    instances: Vec<AnimatedInstance>,
+    instances: DynamicBuffer<AnimatedInstance>,
     joints: Vec<Mat4>,
 }
 
 impl AnimatedModelBuffer {
     fn load(model: assets::AnimatedModel, renderer: &Renderer) -> Self {
         Self {
-            instances: Vec::new(),
+            instances: empty_instance_buffer(renderer, &model.name),
             joints: Vec::new(),
             model,
         }
@@ -499,7 +499,7 @@ impl ModelBuffers {
         &mut self,
         model: &AnimatedModelType,
     ) -> (
-        &mut Vec<AnimatedInstance>,
+        &mut DynamicBuffer<AnimatedInstance>,
         &assets::AnimatedModel,
         &mut Vec<Mat4>,
     ) {
@@ -551,21 +551,22 @@ impl ModelBuffers {
 
         // Instances
 
-        self.animated_instances.upload(
+        /*self.animated_instances.upload(
             self.animated_models.iter().map(|model| &model.instances),
             renderer
-        );
+        );*/
 
-        self.animated_instance_offsets_and_sizes = offsets_and_sizes(
+        /*self.animated_instance_offsets_and_sizes = offsets_and_sizes(
             self.animated_models.iter().map(|model| &model.instances)
-        ).collect();
+        ).collect();*/
 
-        println!("{:?} {:?}", joint_offsets, self.animated_instance_offsets_and_sizes);
+        //println!("{:?} {:?}", joint_offsets, self.animated_instance_offsets_and_sizes);
 
         // Clears.
 
         for model in &mut self.animated_models {
             model.joints.clear();
+            model.instances.upload(renderer);
             model.instances.clear();
         }
 
@@ -594,21 +595,19 @@ impl ModelBuffers {
         );
         render_pass.set_bind_group(3, &self.animated_models_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.animated_model_vertices.slice(..));
-        render_pass.set_vertex_buffer(1, self.animated_instances.slice());
+        //render_pass.set_vertex_buffer(1, self.animated_instances.slice());
         render_pass.set_index_buffer(self.animated_model_indices.slice(..), INDEX_FORMAT);
 
-        for (model, &(instance_offset, instance_size)) in self.animated_models.iter().zip(&self.animated_instance_offsets_and_sizes)
+        for model in self.animated_models.iter()//.zip(&self.animated_instance_offsets_and_sizes)
         {
-            println!("{:?} {}", instance_offset, instance_size);
-            //if let Some((instances, num_instances)) = instances.get() {
-                //if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
-                    render_pass.draw_indexed(
-                        model.model.opaque_geometry.offset..model.model.opaque_geometry.offset+model.model.opaque_geometry.size,
-                        0,
-                        instance_offset..instance_offset+instance_size
-                    )
-                //}
-            //}
+            if let Some((slice, num)) = model.instances.get() {
+                render_pass.set_vertex_buffer(1, slice);
+                render_pass.draw_indexed(
+                    model.model.opaque_geometry.offset..model.model.opaque_geometry.offset+model.model.opaque_geometry.size,
+                    0,
+                    0..num
+                )
+            }
         }
     }
 
