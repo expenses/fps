@@ -158,9 +158,9 @@ impl AnimatedModel {
         };
 
         Ok(Self {
-            opaque_geometry: staging_buffers.merge(opaque_geometry.clone()),
-            alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry.clone()),
-            alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry.clone()),
+            opaque_geometry: staging_buffers.merge(opaque_geometry),
+            alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry),
+            alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry),
 
             animations,
             num_joints,

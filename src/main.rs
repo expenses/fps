@@ -5,7 +5,7 @@ mod ecs;
 mod renderer;
 
 use crate::assets::{AnimationJoints, StagingModelBuffers};
-use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, INDEX_FORMAT};
+use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, Vertex, INDEX_FORMAT};
 use array_of_textures::ArrayOfTextures;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
@@ -109,19 +109,15 @@ fn vec3_into<T: From<[f32; 3]>>(vec3: Vec3) -> T {
     arr.into()
 }
 
-fn empty_vertex_buffer<T: bytemuck::Pod>(renderer: &Renderer, name: &str) -> DynamicBuffer<T> {
-    DynamicBuffer::new(&renderer.device, 0, &name, wgpu::BufferUsage::VERTEX)
-}
-
 struct StaticModelBuffer {
     model: assets::Model,
-    instances: DynamicBuffer<Instance>,
+    instances: Vec<Instance>,
 }
 
 impl StaticModelBuffer {
-    fn load(model: assets::Model, renderer: &Renderer) -> Self {
+    fn load(model: assets::Model) -> Self {
         Self {
-            instances: empty_vertex_buffer(renderer, &format!("{} instances", model.name)),
+            instances: Vec::new(),
             model,
         }
     }
@@ -291,6 +287,14 @@ struct ModelBuffers {
     animated_model_vertices: wgpu::Buffer,
     animated_model_indices: wgpu::Buffer,
 
+    static_model_vertices: wgpu::Buffer,
+    static_model_indices: wgpu::Buffer,
+    static_instances: MergedBuffer<Instance>,
+
+    static_model_opaque_draws: DynamicBuffer<DrawIndexedIndirect>,
+    static_model_alpha_clip_draws: DynamicBuffer<DrawIndexedIndirect>,
+    static_model_alpha_blend_draws: DynamicBuffer<DrawIndexedIndirect>,
+
     animated_model_opaque_draws: DynamicBuffer<DrawIndexedIndirect>,
     animated_model_alpha_clip_draws: DynamicBuffer<DrawIndexedIndirect>,
     animated_model_alpha_blend_draws: DynamicBuffer<DrawIndexedIndirect>,
@@ -301,33 +305,30 @@ impl ModelBuffers {
         renderer: &mut Renderer,
         mut init_encoder: &mut wgpu::CommandEncoder,
         mut array_of_textures: ArrayOfTextures,
+        mut static_staging_buffers: StagingModelBuffers<Vertex>,
     ) -> anyhow::Result<Self> {
         let mut animation_info = AnimationInfo::default();
 
         let static_models = vec![
-            StaticModelBuffer::load(
-                assets::Model::load_gltf(
-                    include_bytes!("../models/mate.glb"),
-                    &renderer,
-                    &mut init_encoder,
-                    "mate bottle",
-                    &mut array_of_textures,
-                )?,
-                renderer,
-            ),
-            StaticModelBuffer::load(
-                assets::Model::load_gltf(
-                    include_bytes!("../models/bush.glb"),
-                    &renderer,
-                    &mut init_encoder,
-                    "bush",
-                    &mut array_of_textures,
-                )?,
-                renderer,
-            ),
+            StaticModelBuffer::load(assets::Model::load_gltf(
+                include_bytes!("../models/mate.glb"),
+                &renderer,
+                &mut init_encoder,
+                "mate bottle",
+                &mut array_of_textures,
+                &mut static_staging_buffers,
+            )?),
+            StaticModelBuffer::load(assets::Model::load_gltf(
+                include_bytes!("../models/bush.glb"),
+                &renderer,
+                &mut init_encoder,
+                "bush",
+                &mut array_of_textures,
+                &mut static_staging_buffers,
+            )?),
         ];
 
-        let mut staging_buffers = StagingModelBuffers::default();
+        let mut animated_staging_buffers = StagingModelBuffers::default();
 
         let animated_models = vec![
             AnimatedModelBuffer::load(assets::AnimatedModel::load_gltf(
@@ -343,7 +344,7 @@ impl ModelBuffers {
                         .unwrap();
                 },
                 &mut array_of_textures,
-                &mut staging_buffers,
+                &mut animated_staging_buffers,
             )?),
             AnimatedModelBuffer::load(assets::AnimatedModel::load_gltf(
                 include_bytes!("../models/mouse.glb"),
@@ -364,7 +365,7 @@ impl ModelBuffers {
                     }
                 },
                 &mut array_of_textures,
-                &mut staging_buffers,
+                &mut animated_staging_buffers,
             )?),
             AnimatedModelBuffer::load(assets::AnimatedModel::load_gltf(
                 include_bytes!("../models/tentacle.glb"),
@@ -380,7 +381,7 @@ impl ModelBuffers {
                         .unwrap();
                 },
                 &mut array_of_textures,
-                &mut staging_buffers,
+                &mut animated_staging_buffers,
             )?),
             AnimatedModelBuffer::load(assets::AnimatedModel::load_gltf(
                 include_bytes!("../models/mario_kart_square.glb"),
@@ -389,7 +390,7 @@ impl ModelBuffers {
                 "mario cube",
                 |_, _| {},
                 &mut array_of_textures,
-                &mut staging_buffers,
+                &mut animated_staging_buffers,
             )?),
             AnimatedModelBuffer::load(assets::AnimatedModel::load_gltf(
                 include_bytes!("../models/juggling_balls.glb"),
@@ -398,7 +399,7 @@ impl ModelBuffers {
                 "jugging balls",
                 |_, _| {},
                 &mut array_of_textures,
-                &mut staging_buffers,
+                &mut animated_staging_buffers,
             )?),
             AnimatedModelBuffer::load(assets::AnimatedModel::load_gltf(
                 include_bytes!("../models/explosion.glb"),
@@ -407,7 +408,7 @@ impl ModelBuffers {
                 "explosion",
                 |_, _| {},
                 &mut array_of_textures,
-                &mut staging_buffers,
+                &mut animated_staging_buffers,
             )?),
         ];
 
@@ -448,6 +449,12 @@ impl ModelBuffers {
             wgpu::BufferUsage::STORAGE,
             "animated joints buffer",
         );
+        let static_instances = MergedBuffer::new(
+            1,
+            &renderer,
+            wgpu::BufferUsage::VERTEX,
+            "static instances buffer",
+        );
         let animated_instances = MergedBuffer::new(
             1,
             &renderer,
@@ -466,8 +473,11 @@ impl ModelBuffers {
 
         let array_of_textures_bind_group = array_of_textures.bind(renderer);
 
+        let (static_model_vertices, static_model_indices) =
+            static_staging_buffers.upload_simple(&renderer.device, "static model");
+
         let (animated_model_vertices, animated_model_indices) =
-            staging_buffers.upload_simple(&renderer.device, "animated model");
+            animated_staging_buffers.upload_simple(&renderer.device, "animated model");
 
         Ok(Self {
             static_models,
@@ -483,6 +493,11 @@ impl ModelBuffers {
 
             animated_model_vertices,
             animated_model_indices,
+
+            static_model_vertices,
+            static_model_indices,
+            static_instances,
+
             animated_model_opaque_draws: DynamicBuffer::new(
                 &renderer.device,
                 0,
@@ -501,10 +516,28 @@ impl ModelBuffers {
                 "animated model alpha blend draws",
                 wgpu::BufferUsage::INDIRECT,
             ),
+            static_model_opaque_draws: DynamicBuffer::new(
+                &renderer.device,
+                0,
+                "static model opaque draws",
+                wgpu::BufferUsage::INDIRECT,
+            ),
+            static_model_alpha_clip_draws: DynamicBuffer::new(
+                &renderer.device,
+                0,
+                "static model alpha clip draws",
+                wgpu::BufferUsage::INDIRECT,
+            ),
+            static_model_alpha_blend_draws: DynamicBuffer::new(
+                &renderer.device,
+                0,
+                "static model alpha blend draws",
+                wgpu::BufferUsage::INDIRECT,
+            ),
         })
     }
 
-    fn get_static_buffer(&mut self, model: &StaticModelType) -> &mut DynamicBuffer<Instance> {
+    fn get_static_buffer(&mut self, model: &StaticModelType) -> &mut Vec<Instance> {
         &mut self.static_models[*model as usize].instances
     }
 
@@ -579,6 +612,11 @@ impl ModelBuffers {
 
         // Instances
 
+        self.static_instances.upload(
+            self.static_models.iter().map(|model| &model.instances),
+            renderer,
+        );
+
         self.animated_instances.upload(
             self.animated_models.iter().map(|model| &model.instances),
             renderer,
@@ -586,49 +624,103 @@ impl ModelBuffers {
 
         // Upload draw commands to buffers.
 
+        self.static_model_opaque_draws.clear();
+        self.static_model_alpha_clip_draws.clear();
+        self.static_model_alpha_blend_draws.clear();
+
         self.animated_model_opaque_draws.clear();
         self.animated_model_alpha_clip_draws.clear();
         self.animated_model_alpha_blend_draws.clear();
 
-        let mut instance_offset = 0;
+        // Static models
+        {
+            let mut instance_offset = 0;
 
-        for model in &self.animated_models {
-            let instance_count = model.instances.len() as u32;
+            for model in &self.static_models {
+                let instance_count = model.instances.len() as u32;
 
-            if model.model.opaque_geometry.size > 0 {
-                self.animated_model_opaque_draws.push(DrawIndexedIndirect {
-                    vertex_count: model.model.opaque_geometry.size,
-                    instance_count,
-                    base_index: model.model.opaque_geometry.offset,
-                    vertex_offset: 0,
-                    base_instance: instance_offset,
-                });
-            }
-
-            if model.model.alpha_clip_geometry.size > 0 {
-                self.animated_model_alpha_clip_draws
-                    .push(DrawIndexedIndirect {
-                        vertex_count: model.model.alpha_clip_geometry.size,
+                if model.model.opaque_geometry.size > 0 {
+                    self.static_model_opaque_draws.push(DrawIndexedIndirect {
+                        vertex_count: model.model.opaque_geometry.size,
                         instance_count,
-                        base_index: model.model.alpha_clip_geometry.offset,
+                        base_index: model.model.opaque_geometry.offset,
                         vertex_offset: 0,
                         base_instance: instance_offset,
                     });
-            }
+                }
 
-            if model.model.alpha_blend_geometry.size > 0 {
-                self.animated_model_alpha_blend_draws
-                    .push(DrawIndexedIndirect {
-                        vertex_count: model.model.alpha_blend_geometry.size,
-                        instance_count,
-                        base_index: model.model.alpha_blend_geometry.offset,
-                        vertex_offset: 0,
-                        base_instance: instance_offset,
-                    });
-            }
+                if model.model.alpha_clip_geometry.size > 0 {
+                    self.static_model_alpha_clip_draws
+                        .push(DrawIndexedIndirect {
+                            vertex_count: model.model.alpha_clip_geometry.size,
+                            instance_count,
+                            base_index: model.model.alpha_clip_geometry.offset,
+                            vertex_offset: 0,
+                            base_instance: instance_offset,
+                        });
+                }
 
-            instance_offset += instance_count;
+                if model.model.alpha_blend_geometry.size > 0 {
+                    self.static_model_alpha_blend_draws
+                        .push(DrawIndexedIndirect {
+                            vertex_count: model.model.alpha_blend_geometry.size,
+                            instance_count,
+                            base_index: model.model.alpha_blend_geometry.offset,
+                            vertex_offset: 0,
+                            base_instance: instance_offset,
+                        });
+                }
+
+                instance_offset += instance_count;
+            }
         }
+
+        // Animated models
+        {
+            let mut instance_offset = 0;
+
+            for model in &self.animated_models {
+                let instance_count = model.instances.len() as u32;
+
+                if model.model.opaque_geometry.size > 0 {
+                    self.animated_model_opaque_draws.push(DrawIndexedIndirect {
+                        vertex_count: model.model.opaque_geometry.size,
+                        instance_count,
+                        base_index: model.model.opaque_geometry.offset,
+                        vertex_offset: 0,
+                        base_instance: instance_offset,
+                    });
+                }
+
+                if model.model.alpha_clip_geometry.size > 0 {
+                    self.animated_model_alpha_clip_draws
+                        .push(DrawIndexedIndirect {
+                            vertex_count: model.model.alpha_clip_geometry.size,
+                            instance_count,
+                            base_index: model.model.alpha_clip_geometry.offset,
+                            vertex_offset: 0,
+                            base_instance: instance_offset,
+                        });
+                }
+
+                if model.model.alpha_blend_geometry.size > 0 {
+                    self.animated_model_alpha_blend_draws
+                        .push(DrawIndexedIndirect {
+                            vertex_count: model.model.alpha_blend_geometry.size,
+                            instance_count,
+                            base_index: model.model.alpha_blend_geometry.offset,
+                            vertex_offset: 0,
+                            base_instance: instance_offset,
+                        });
+                }
+
+                instance_offset += instance_count;
+            }
+        }
+
+        self.static_model_opaque_draws.upload(renderer);
+        self.static_model_alpha_clip_draws.upload(renderer);
+        self.static_model_alpha_blend_draws.upload(renderer);
 
         self.animated_model_opaque_draws.upload(renderer);
         self.animated_model_alpha_clip_draws.upload(renderer);
@@ -642,9 +734,31 @@ impl ModelBuffers {
         }
 
         for model in &mut self.static_models {
-            model.instances.upload(renderer);
             model.instances.clear();
         }
+    }
+
+    fn render_static<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        renderer: &'a Renderer,
+        pipeline: &'a wgpu::RenderPipeline,
+        draw_buffer: &'a DynamicBuffer<DrawIndexedIndirect>,
+    ) {
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_push_constants(
+            wgpu::ShaderStage::VERTEX,
+            0,
+            bytemuck::bytes_of(&renderer.projection_view),
+        );
+        render_pass.set_vertex_buffer(0, self.static_model_vertices.slice(..));
+        render_pass.set_vertex_buffer(1, self.static_instances.slice());
+        render_pass.set_index_buffer(self.static_model_indices.slice(..), INDEX_FORMAT);
+        render_pass.multi_draw_indexed_indirect(
+            draw_buffer.buffer(),
+            0,
+            draw_buffer.len_waiting() as u32,
+        );
     }
 
     fn render_animated<'a>(
@@ -672,15 +786,12 @@ impl ModelBuffers {
     }
 
     fn render_opaque<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, renderer: &'a Renderer) {
-        render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
-
-        for StaticModelBuffer { instances, model } in &self.static_models {
-            if let Some(opaque_geometry) = model.opaque_geometry.as_ref() {
-                if let Some((slice, num)) = instances.get() {
-                    render_indexed(render_pass, opaque_geometry, slice, num);
-                }
-            }
-        }
+        self.render_static(
+            render_pass,
+            renderer,
+            &renderer.static_opaque_render_pipeline,
+            &self.static_model_opaque_draws,
+        );
 
         self.render_animated(
             render_pass,
@@ -695,20 +806,12 @@ impl ModelBuffers {
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
     ) {
-        render_pass.set_pipeline(&renderer.static_alpha_clip_render_pipeline);
-        render_pass.set_push_constants(
-            wgpu::ShaderStage::VERTEX,
-            0,
-            bytemuck::bytes_of(&renderer.projection_view),
+        self.render_static(
+            render_pass,
+            renderer,
+            &renderer.static_alpha_clip_render_pipeline,
+            &self.static_model_alpha_clip_draws,
         );
-
-        for StaticModelBuffer { instances, model } in &self.static_models {
-            if let Some(alpha_clip_geometry) = model.alpha_clip_geometry.as_ref() {
-                if let Some((slice, num)) = instances.get() {
-                    render_indexed(render_pass, alpha_clip_geometry, slice, num);
-                }
-            }
-        }
 
         self.render_animated(
             render_pass,
@@ -723,20 +826,12 @@ impl ModelBuffers {
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
     ) {
-        render_pass.set_pipeline(&renderer.static_alpha_blend_render_pipeline);
-        render_pass.set_push_constants(
-            wgpu::ShaderStage::VERTEX,
-            0,
-            bytemuck::bytes_of(&renderer.projection_view),
+        self.render_static(
+            render_pass,
+            renderer,
+            &renderer.static_alpha_blend_render_pipeline,
+            &self.static_model_alpha_blend_draws,
         );
-
-        for StaticModelBuffer { instances, model } in &self.static_models {
-            if let Some(alpha_blend_geometry) = model.alpha_blend_geometry.as_ref() {
-                if let Some((slice, num)) = instances.get() {
-                    render_indexed(render_pass, alpha_blend_geometry, slice, num);
-                }
-            }
-        }
 
         self.render_animated(
             render_pass,
@@ -794,6 +889,7 @@ async fn run() -> anyhow::Result<()> {
             });
 
     let mut array_of_textures = ArrayOfTextures::default();
+    let mut static_staging_buffers = StagingModelBuffers::default();
 
     let level = assets::Level::load_gltf(
         &level_bytes,
@@ -809,6 +905,7 @@ async fn run() -> anyhow::Result<()> {
         &mut init_encoder,
         "monkey gun",
         &mut array_of_textures,
+        &mut static_staging_buffers,
     )?;
 
     let skybox_texture = assets::load_skybox(
@@ -826,7 +923,12 @@ async fn run() -> anyhow::Result<()> {
         &mut array_of_textures,
     )?;
 
-    let model_buffers = ModelBuffers::new(&mut renderer, &mut init_encoder, array_of_textures)?;
+    let model_buffers = ModelBuffers::new(
+        &mut renderer,
+        &mut init_encoder,
+        array_of_textures,
+        static_staging_buffers,
+    )?;
 
     renderer.queue.submit(Some(init_encoder.finish()));
 
@@ -1261,14 +1363,14 @@ async fn run() -> anyhow::Result<()> {
                         // Render gun
 
                         if settings.draw_gun {
-                            if let Some(opaque_geometry) = monkey_gun.opaque_geometry.as_ref() {
+                            /*if let Some(opaque_geometry) = monkey_gun.opaque_geometry.as_ref() {
                                 render_indexed(
                                     &mut render_pass,
                                     opaque_geometry,
                                     gun_instance.slice(..),
                                     1,
                                 );
-                            }
+                            }*/
                         }
 
                         // Render level

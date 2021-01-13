@@ -409,9 +409,9 @@ fn create_navmesh(
 }
 
 pub struct Model {
-    pub opaque_geometry: Option<ModelBuffers>,
-    pub alpha_clip_geometry: Option<ModelBuffers>,
-    pub alpha_blend_geometry: Option<ModelBuffers>,
+    pub opaque_geometry: IndexBufferView,
+    pub alpha_clip_geometry: IndexBufferView,
+    pub alpha_blend_geometry: IndexBufferView,
     pub name: String,
 }
 
@@ -422,6 +422,7 @@ impl Model {
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
         array_of_textures: &mut ArrayOfTextures,
+        staging_buffers: &mut StagingModelBuffers<Vertex>,
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
         let node_tree = NodeTree::new(&gltf);
@@ -487,12 +488,9 @@ impl Model {
         );
 
         Ok(Self {
-            opaque_geometry: opaque_geometry
-                .upload(&renderer.device, &format!("{} level opaque", name)),
-            alpha_blend_geometry: alpha_blend_geometry
-                .upload(&renderer.device, &format!("{} level alpha blend", name)),
-            alpha_clip_geometry: alpha_clip_geometry
-                .upload(&renderer.device, &format!("{} level alpha clip", name)),
+            opaque_geometry: staging_buffers.merge(opaque_geometry),
+            alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry),
+            alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry),
             name: name.to_string(),
         })
     }
