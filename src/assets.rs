@@ -52,7 +52,7 @@ impl<T: bytemuck::Pod> StagingModelBuffers<T> {
                 label: Some(&format!("{} indices", name)),
                 contents: bytemuck::cast_slice(&self.indices),
                 usage: wgpu::BufferUsage::INDEX,
-            })
+            }),
         )
     }
 
@@ -85,7 +85,8 @@ impl<T: bytemuck::Pod> StagingModelBuffers<T> {
         };
 
         self.vertices.extend(other.vertices.into_iter());
-        self.indices.extend(other.indices.into_iter().map(|index| num_vertices + index));
+        self.indices
+            .extend(other.indices.into_iter().map(|index| num_vertices + index));
 
         view
     }

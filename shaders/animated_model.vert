@@ -32,14 +32,22 @@ layout(set = 3, binding = 1) readonly buffer NumJoints {
 	uint num_joints[];
 };
 
-layout(set = 3, binding = 2) readonly buffer JointOffsets {
-    uint joint_offsets[];
+struct Offset {
+    uint joint_offset;
+    // It would be lovely to not upload this and use `gl_BaseInstanceARB` instead but you can't do
+    // that in wgpu.
+    uint instance_offset;
+};
+
+layout(set = 3, binding = 2) readonly buffer Offsets {
+    Offset offsets[];
 };
 
 void main() {
     mat4 transform = mat4(transform_1, transform_2, transform_3, transform_4);
 
-    uint joint_offset = joint_offsets[model_index] + gl_InstanceIndex * num_joints[model_index];
+    Offset offset = offsets[model_index];
+    uint joint_offset = offset.joint_offset + (gl_InstanceIndex - offset.instance_offset) * num_joints[model_index];
 
     // Calculate skinned matrix from weights and joint indices of the current vertex
 	mat4 skin =

@@ -1,7 +1,6 @@
 use super::{
-    load_images_into_array, load_material_properties, normal_matrix, IndexBufferView,
-    MaterialProperty, NodeTree, StagingModelBuffers, ordered_mesh_nodes,
-    load_properties,
+    load_images_into_array, load_material_properties, load_properties, normal_matrix,
+    ordered_mesh_nodes, IndexBufferView, MaterialProperty, NodeTree, StagingModelBuffers,
 };
 use crate::array_of_textures::ArrayOfTextures;
 use crate::renderer::{AnimatedVertex, Renderer};

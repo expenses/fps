@@ -113,8 +113,8 @@ pub struct Renderer {
 
     pub static_opaque_render_pipeline: wgpu::RenderPipeline,
     pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
-    pub static_transparent_render_pipeline: wgpu::RenderPipeline,
-    pub animated_transparent_render_pipeline: wgpu::RenderPipeline,
+    pub static_alpha_blend_render_pipeline: wgpu::RenderPipeline,
+    pub animated_alpha_blend_render_pipeline: wgpu::RenderPipeline,
     pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
     pub animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
 
@@ -160,7 +160,8 @@ impl Renderer {
                     label: Some("device"),
                     features: wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
                         | wgpu::Features::UNSIZED_BINDING_ARRAY
-                        | wgpu::Features::PUSH_CONSTANTS,
+                        | wgpu::Features::PUSH_CONSTANTS
+                        | wgpu::Features::MULTI_DRAW_INDIRECT,
                     limits: wgpu::Limits {
                         max_push_constant_size: std::mem::size_of::<[Mat4; 2]>() as u32,
                         // todo: set this to something crazy high.
@@ -330,11 +331,11 @@ impl Renderer {
             array_of_textures_bind_group_layout,
             RenderPipelines {
                 static_opaque_render_pipeline,
-                static_transparent_render_pipeline,
+                static_alpha_blend_render_pipeline,
                 static_alpha_clip_render_pipeline,
 
                 animated_opaque_render_pipeline,
-                animated_transparent_render_pipeline,
+                animated_alpha_blend_render_pipeline,
                 animated_alpha_clip_render_pipeline,
             },
         ) = render_pipelines_for_num_textures(
@@ -597,8 +598,8 @@ impl Renderer {
 
             static_opaque_render_pipeline,
             animated_opaque_render_pipeline,
-            static_transparent_render_pipeline,
-            animated_transparent_render_pipeline,
+            static_alpha_blend_render_pipeline,
+            animated_alpha_blend_render_pipeline,
             static_alpha_clip_render_pipeline,
             animated_alpha_clip_render_pipeline,
 
@@ -688,11 +689,11 @@ impl Renderer {
             array_of_textures_bind_group_layout,
             RenderPipelines {
                 static_opaque_render_pipeline,
-                static_transparent_render_pipeline,
+                static_alpha_blend_render_pipeline,
                 static_alpha_clip_render_pipeline,
 
                 animated_opaque_render_pipeline,
-                animated_transparent_render_pipeline,
+                animated_alpha_blend_render_pipeline,
                 animated_alpha_clip_render_pipeline,
             },
         ) = render_pipelines_for_num_textures(
@@ -709,11 +710,11 @@ impl Renderer {
 
         self.array_of_textures_bind_group_layout = array_of_textures_bind_group_layout;
         self.static_opaque_render_pipeline = static_opaque_render_pipeline;
-        self.static_transparent_render_pipeline = static_transparent_render_pipeline;
+        self.static_alpha_blend_render_pipeline = static_alpha_blend_render_pipeline;
         self.static_alpha_clip_render_pipeline = static_alpha_clip_render_pipeline;
 
         self.animated_opaque_render_pipeline = animated_opaque_render_pipeline;
-        self.animated_transparent_render_pipeline = animated_transparent_render_pipeline;
+        self.animated_alpha_blend_render_pipeline = animated_alpha_blend_render_pipeline;
         self.animated_alpha_clip_render_pipeline = animated_alpha_clip_render_pipeline;
     }
 }
@@ -954,6 +955,10 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
         }
     }
 
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+
     pub fn push(&mut self, item: T) {
         self.waiting.push(item)
     }
@@ -1071,11 +1076,11 @@ fn post_processing_framebuffer_and_bind_group(
 
 struct RenderPipelines {
     static_opaque_render_pipeline: wgpu::RenderPipeline,
-    static_transparent_render_pipeline: wgpu::RenderPipeline,
+    static_alpha_blend_render_pipeline: wgpu::RenderPipeline,
     static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
 
     animated_opaque_render_pipeline: wgpu::RenderPipeline,
-    animated_transparent_render_pipeline: wgpu::RenderPipeline,
+    animated_alpha_blend_render_pipeline: wgpu::RenderPipeline,
     animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
 }
 
@@ -1155,9 +1160,9 @@ fn render_pipelines_for_num_textures(
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             false,
         ),
-        static_transparent_render_pipeline: create_render_pipeline(
+        static_alpha_blend_render_pipeline: create_render_pipeline(
             device,
-            "static transparent render pipeline",
+            "static alpha blend render pipeline",
             &static_model_pipeline_layout,
             vs_static_model,
             fs_model,
@@ -1183,9 +1188,9 @@ fn render_pipelines_for_num_textures(
             PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             true,
         ),
-        animated_transparent_render_pipeline: create_render_pipeline(
+        animated_alpha_blend_render_pipeline: create_render_pipeline(
             device,
-            "animated transparent render pipeline",
+            "animated alpha blend render pipeline",
             &animated_model_pipeline_layout,
             vs_animated_model,
             fs_model,
