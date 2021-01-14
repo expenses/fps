@@ -1,6 +1,6 @@
-use crate::renderer::{Renderer, DynamicBuffer, Vertex, AnimatedInstance, Instance, INDEX_FORMAT};
-use crate::assets::{self, AnimationJoints, StagingModelBuffers};
 use crate::array_of_textures::ArrayOfTextures;
+use crate::assets::{self, AnimationJoints, StagingModelBuffers};
+use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, Vertex, INDEX_FORMAT};
 use ultraviolet::Mat4;
 use wgpu::util::DeviceExt;
 
@@ -669,7 +669,11 @@ impl ModelBuffers {
         );
     }
 
-    pub fn render_opaque<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, renderer: &'a Renderer) {
+    pub fn render_opaque<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        renderer: &'a Renderer,
+    ) {
         self.render_static(
             render_pass,
             renderer,

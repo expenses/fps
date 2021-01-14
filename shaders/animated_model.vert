@@ -30,7 +30,9 @@ layout(set = 3, binding = 0) readonly buffer JointTransforms {
 };
 
 struct Offset {
+    // The offset from the start of `joint_transforms` for a model.
     uint joint_offset;
+    // The offset from the start of the instance buffer for a model.
     // It would be lovely to not upload this and use `gl_BaseInstanceARB` instead but you can't do
     // that in wgpu.
     uint instance_offset;

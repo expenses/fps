@@ -80,8 +80,7 @@ const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
 const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
 
 const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Ushort4, 6 => Float4];
-const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 6] =
-    wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4, 11 => Uint, 12 => Uint];
+const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 6] = wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4, 11 => Uint, 12 => Uint];
 
 pub struct Renderer {
     pub device: wgpu::Device,
@@ -774,15 +773,31 @@ pub fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
     }
 }
 
-fn create_render_pipeline(
-    device: &wgpu::Device,
-    label: &str,
-    layout: &wgpu::PipelineLayout,
-    vs_module: &wgpu::ShaderModule,
-    fs_module: &wgpu::ShaderModule,
+struct PipelineParams<'a> {
+    device: &'a wgpu::Device,
+    label: &'a str,
+    layout: &'a wgpu::PipelineLayout,
+    vs_module: &'a wgpu::ShaderModule,
+    fs_module: &'a wgpu::ShaderModule,
     colour_descriptor: wgpu::ColorStateDescriptor,
     animated: bool,
-) -> wgpu::RenderPipeline {
+    backface_culling: bool,
+    depth_write: bool,
+}
+
+fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
+    let PipelineParams {
+        device,
+        label,
+        layout,
+        vs_module,
+        fs_module,
+        colour_descriptor,
+        animated,
+        backface_culling,
+        depth_write,
+    } = params;
+
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
@@ -795,14 +810,18 @@ fn create_render_pipeline(
             entry_point: "main",
         }),
         rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-            cull_mode: wgpu::CullMode::Back,
+            cull_mode: if backface_culling {
+                wgpu::CullMode::Back
+            } else {
+                wgpu::CullMode::None
+            },
             ..Default::default()
         }),
         primitive_topology: wgpu::PrimitiveTopology::TriangleList,
         color_states: &[colour_descriptor],
         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
             format: DEPTH_FORMAT,
-            depth_write_enabled: true,
+            depth_write_enabled: depth_write,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
@@ -1133,62 +1152,77 @@ fn render_pipelines_for_num_textures(
             }],
         });
 
-    let pipelines = RenderPipelines {
-        static_opaque_render_pipeline: create_render_pipeline(
-            device,
-            "static opaque render pipeline",
-            &static_model_pipeline_layout,
-            vs_static_model,
-            fs_model,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            false,
-        ),
-        static_alpha_clip_render_pipeline: create_render_pipeline(
-            device,
-            "static alpha clip render pipeline",
-            &static_model_pipeline_layout,
-            vs_static_model,
-            fs_alpha_clip_model,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            false,
-        ),
-        static_alpha_blend_render_pipeline: create_render_pipeline(
-            device,
-            "static alpha blend render pipeline",
-            &static_model_pipeline_layout,
-            vs_static_model,
-            fs_model,
-            alpha_blend_colour_descriptor(),
-            false,
-        ),
+    // todo: we want to have 2 seperate alpha blend pipelines - one with depth writes on and one
+    // with them off.
 
-        animated_opaque_render_pipeline: create_render_pipeline(
+    let pipelines = RenderPipelines {
+        static_opaque_render_pipeline: create_render_pipeline(PipelineParams {
             device,
-            "animated opaque render pipeline",
-            &animated_model_pipeline_layout,
-            vs_animated_model,
-            fs_model,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
-        ),
-        animated_alpha_clip_render_pipeline: create_render_pipeline(
+            label: "static opaque render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_static_model,
+            fs_module: fs_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            animated: false,
+            backface_culling: true,
+            depth_write: true,
+        }),
+        static_alpha_clip_render_pipeline: create_render_pipeline(PipelineParams {
             device,
-            "animated alpha clip render pipeline",
-            &animated_model_pipeline_layout,
-            vs_animated_model,
-            fs_alpha_clip_model,
-            PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
-            true,
-        ),
-        animated_alpha_blend_render_pipeline: create_render_pipeline(
+            label: "static alpha clip render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_static_model,
+            fs_module: fs_alpha_clip_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            animated: false,
+            backface_culling: false,
+            depth_write: true,
+        }),
+        static_alpha_blend_render_pipeline: create_render_pipeline(PipelineParams {
             device,
-            "animated alpha blend render pipeline",
-            &animated_model_pipeline_layout,
-            vs_animated_model,
-            fs_model,
-            alpha_blend_colour_descriptor(),
-            true,
-        ),
+            label: "static alpha blend render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_static_model,
+            fs_module: fs_model,
+            colour_descriptor: alpha_blend_colour_descriptor(),
+            animated: false,
+            backface_culling: true,
+            depth_write: true,
+        }),
+
+        animated_opaque_render_pipeline: create_render_pipeline(PipelineParams {
+            device,
+            label: "animated opaque render pipeline",
+            layout: &animated_model_pipeline_layout,
+            vs_module: vs_animated_model,
+            fs_module: fs_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            animated: true,
+            backface_culling: true,
+            depth_write: true,
+        }),
+        animated_alpha_clip_render_pipeline: create_render_pipeline(PipelineParams {
+            device,
+            label: "animated alpha clip render pipeline",
+            layout: &animated_model_pipeline_layout,
+            vs_module: vs_animated_model,
+            fs_module: fs_alpha_clip_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            animated: true,
+            backface_culling: false,
+            depth_write: true,
+        }),
+        animated_alpha_blend_render_pipeline: create_render_pipeline(PipelineParams {
+            device,
+            label: "animated alpha blend render pipeline",
+            layout: &animated_model_pipeline_layout,
+            vs_module: vs_animated_model,
+            fs_module: fs_model,
+            colour_descriptor: alpha_blend_colour_descriptor(),
+            animated: true,
+            backface_culling: true,
+            depth_write: true,
+        }),
     };
 
     (array_of_textures_bind_group_layout, pipelines)

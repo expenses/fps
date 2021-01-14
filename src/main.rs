@@ -1,13 +1,13 @@
 //mod animation;
 mod array_of_textures;
 mod assets;
+mod buffers;
 mod ecs;
 mod renderer;
-mod buffers;
 
 use crate::assets::StagingModelBuffers;
+use crate::buffers::{AnimatedModelType, ModelBuffers, StaticModelType};
 use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
-use crate::buffers::{ModelBuffers, StaticModelType, AnimatedModelType};
 use array_of_textures::ArrayOfTextures;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
