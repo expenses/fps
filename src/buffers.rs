@@ -1,6 +1,6 @@
 use crate::array_of_textures::ArrayOfTextures;
 use crate::assets::{AnimatedModel, AnimationJoints, Level, Model, StagingModelBuffers};
-use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, Vertex, INDEX_FORMAT};
+use crate::renderer::{AnimatedInstance, Instance, Renderer, Vertex, INDEX_FORMAT};
 use ultraviolet::Mat4;
 use wgpu::util::DeviceExt;
 
@@ -141,6 +141,61 @@ impl<T: bytemuck::Pod> MergedBuffer<T> {
     }
 }
 
+struct DrawBuffer {
+    buffer: wgpu::Buffer,
+    capacity: usize,
+    to_be_uploaded: Vec<DrawIndexedIndirect>,
+    uploaded: u32,
+    name: String,
+}
+
+impl DrawBuffer {
+    fn new(renderer: &Renderer, name: &str) -> Self {
+        let capacity = 1;
+
+        Self {
+            buffer: renderer.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(name),
+                size: (capacity * std::mem::size_of::<DrawIndexedIndirect>()) as u64,
+                usage: wgpu::BufferUsage::INDIRECT | wgpu::BufferUsage::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            capacity,
+            to_be_uploaded: Vec::new(),
+            uploaded: 0,
+            name: name.to_string(),
+        }
+    }
+
+    fn push(&mut self, draw: DrawIndexedIndirect) {
+        self.to_be_uploaded.push(draw);
+    }
+
+    fn upload(&mut self, renderer: &Renderer, reverse: bool) {
+        if reverse {
+            self.to_be_uploaded.reverse();
+        }
+
+        if self.to_be_uploaded.len() > self.capacity {
+            let new_capacity = (self.capacity * 2).max(self.to_be_uploaded.len());
+
+            self.buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&self.name),
+                size: (new_capacity * std::mem::size_of::<DrawIndexedIndirect>()) as u64,
+                usage: wgpu::BufferUsage::INDIRECT | wgpu::BufferUsage::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        renderer
+            .queue
+            .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.to_be_uploaded));
+
+        self.uploaded = self.to_be_uploaded.len() as u32;
+        self.to_be_uploaded.clear();
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct DrawIndexedIndirect {
@@ -194,13 +249,13 @@ pub struct ModelBuffers {
     static_model_indices: wgpu::Buffer,
     static_instances: MergedBuffer<Instance>,
 
-    static_model_opaque_draws: DynamicBuffer<DrawIndexedIndirect>,
-    static_model_alpha_clip_draws: DynamicBuffer<DrawIndexedIndirect>,
-    static_model_alpha_blend_draws: DynamicBuffer<DrawIndexedIndirect>,
+    static_model_opaque_draws: DrawBuffer,
+    static_model_alpha_clip_draws: DrawBuffer,
+    static_model_alpha_blend_draws: DrawBuffer,
 
-    animated_model_opaque_draws: DynamicBuffer<DrawIndexedIndirect>,
-    animated_model_alpha_clip_draws: DynamicBuffer<DrawIndexedIndirect>,
-    animated_model_alpha_blend_draws: DynamicBuffer<DrawIndexedIndirect>,
+    animated_model_opaque_draws: DrawBuffer,
+    animated_model_alpha_clip_draws: DrawBuffer,
+    animated_model_alpha_blend_draws: DrawBuffer,
 }
 
 impl ModelBuffers {
@@ -395,41 +450,23 @@ impl ModelBuffers {
             static_model_indices,
             static_instances,
 
-            animated_model_opaque_draws: DynamicBuffer::new(
-                &renderer.device,
-                0,
-                "animated model opaque draws",
-                wgpu::BufferUsage::INDIRECT,
-            ),
-            animated_model_alpha_clip_draws: DynamicBuffer::new(
-                &renderer.device,
-                0,
+            animated_model_opaque_draws: DrawBuffer::new(renderer, "animated model opaque draws"),
+            animated_model_alpha_clip_draws: DrawBuffer::new(
+                renderer,
                 "animated model alpha clip draws",
-                wgpu::BufferUsage::INDIRECT,
             ),
-            animated_model_alpha_blend_draws: DynamicBuffer::new(
-                &renderer.device,
-                0,
+            animated_model_alpha_blend_draws: DrawBuffer::new(
+                renderer,
                 "animated model alpha blend draws",
-                wgpu::BufferUsage::INDIRECT,
             ),
-            static_model_opaque_draws: DynamicBuffer::new(
-                &renderer.device,
-                0,
-                "static model opaque draws",
-                wgpu::BufferUsage::INDIRECT,
-            ),
-            static_model_alpha_clip_draws: DynamicBuffer::new(
-                &renderer.device,
-                0,
+            static_model_opaque_draws: DrawBuffer::new(renderer, "static model opaque draws"),
+            static_model_alpha_clip_draws: DrawBuffer::new(
+                renderer,
                 "static model alpha clip draws",
-                wgpu::BufferUsage::INDIRECT,
             ),
-            static_model_alpha_blend_draws: DynamicBuffer::new(
-                &renderer.device,
-                0,
+            static_model_alpha_blend_draws: DrawBuffer::new(
+                renderer,
                 "static model alpha blend draws",
-                wgpu::BufferUsage::INDIRECT,
             ),
         })
     }
@@ -530,14 +567,6 @@ impl ModelBuffers {
 
         // Upload draw commands to buffers.
 
-        self.static_model_opaque_draws.clear();
-        self.static_model_alpha_clip_draws.clear();
-        self.static_model_alpha_blend_draws.clear();
-
-        self.animated_model_opaque_draws.clear();
-        self.animated_model_alpha_clip_draws.clear();
-        self.animated_model_alpha_blend_draws.clear();
-
         // Static models
         {
             let gun_instances = draw_gun as u32;
@@ -578,7 +607,7 @@ impl ModelBuffers {
 
                 if model.alpha_blend_geometry.size > 0 {
                     self.static_model_alpha_blend_draws
-                        .push_front(DrawIndexedIndirect {
+                        .push(DrawIndexedIndirect {
                             vertex_count: model.alpha_blend_geometry.size,
                             instance_count,
                             base_index: model.alpha_blend_geometry.offset,
@@ -621,7 +650,7 @@ impl ModelBuffers {
 
                 if model.model.alpha_blend_geometry.size > 0 {
                     self.animated_model_alpha_blend_draws
-                        .push_front(DrawIndexedIndirect {
+                        .push(DrawIndexedIndirect {
                             vertex_count: model.model.alpha_blend_geometry.size,
                             instance_count,
                             base_index: model.model.alpha_blend_geometry.offset,
@@ -634,13 +663,13 @@ impl ModelBuffers {
             }
         }
 
-        self.static_model_opaque_draws.upload(renderer);
-        self.static_model_alpha_clip_draws.upload(renderer);
-        self.static_model_alpha_blend_draws.upload(renderer);
+        self.static_model_opaque_draws.upload(renderer, false);
+        self.static_model_alpha_clip_draws.upload(renderer, false);
+        self.static_model_alpha_blend_draws.upload(renderer, true);
 
-        self.animated_model_opaque_draws.upload(renderer);
-        self.animated_model_alpha_clip_draws.upload(renderer);
-        self.animated_model_alpha_blend_draws.upload(renderer);
+        self.animated_model_opaque_draws.upload(renderer, false);
+        self.animated_model_alpha_clip_draws.upload(renderer, false);
+        self.animated_model_alpha_blend_draws.upload(renderer, true);
 
         // Clears.
 
@@ -659,7 +688,7 @@ impl ModelBuffers {
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
         pipeline: &'a wgpu::RenderPipeline,
-        draw_buffer: &'a DynamicBuffer<DrawIndexedIndirect>,
+        draw_buffer: &'a DrawBuffer,
     ) {
         render_pass.set_pipeline(pipeline);
         render_pass.set_push_constants(
@@ -670,11 +699,7 @@ impl ModelBuffers {
         render_pass.set_vertex_buffer(0, self.static_model_vertices.slice(..));
         render_pass.set_vertex_buffer(1, self.static_instances.slice());
         render_pass.set_index_buffer(self.static_model_indices.slice(..), INDEX_FORMAT);
-        render_pass.multi_draw_indexed_indirect(
-            draw_buffer.buffer(),
-            0,
-            draw_buffer.len_waiting() as u32,
-        );
+        render_pass.multi_draw_indexed_indirect(&draw_buffer.buffer, 0, draw_buffer.uploaded);
     }
 
     fn render_animated<'a>(
@@ -682,7 +707,7 @@ impl ModelBuffers {
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
         pipeline: &'a wgpu::RenderPipeline,
-        draw_buffer: &'a DynamicBuffer<DrawIndexedIndirect>,
+        draw_buffer: &'a DrawBuffer,
     ) {
         render_pass.set_pipeline(pipeline);
         render_pass.set_push_constants(
@@ -694,11 +719,7 @@ impl ModelBuffers {
         render_pass.set_vertex_buffer(0, self.animated_model_vertices.slice(..));
         render_pass.set_vertex_buffer(1, self.animated_instances.slice());
         render_pass.set_index_buffer(self.animated_model_indices.slice(..), INDEX_FORMAT);
-        render_pass.multi_draw_indexed_indirect(
-            draw_buffer.buffer(),
-            0,
-            draw_buffer.len_waiting() as u32,
-        );
+        render_pass.multi_draw_indexed_indirect(&draw_buffer.buffer, 0, draw_buffer.uploaded);
     }
 
     pub fn render_opaque<'a>(

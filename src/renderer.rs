@@ -966,14 +966,6 @@ impl<T: bytemuck::Pod> DynamicBuffer<T> {
         }
     }
 
-    pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
-    }
-
-    pub fn push_front(&mut self, item: T) {
-        self.waiting.insert(0, item);
-    }
-
     pub fn push(&mut self, item: T) {
         self.waiting.push(item)
     }
