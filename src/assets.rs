@@ -41,7 +41,7 @@ impl<T> Default for StagingModelBuffers<T> {
 }
 
 impl<T: bytemuck::Pod> StagingModelBuffers<T> {
-    pub fn upload_simple(&self, device: &wgpu::Device, name: &str) -> (wgpu::Buffer, wgpu::Buffer) {
+    pub fn upload(&self, device: &wgpu::Device, name: &str) -> (wgpu::Buffer, wgpu::Buffer) {
         (
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("{} vertices", name)),
@@ -54,26 +54,6 @@ impl<T: bytemuck::Pod> StagingModelBuffers<T> {
                 usage: wgpu::BufferUsage::INDEX,
             }),
         )
-    }
-
-    fn upload(&self, device: &wgpu::Device, name: &str) -> Option<ModelBuffers> {
-        if self.indices.is_empty() {
-            return None;
-        }
-
-        Some(ModelBuffers {
-            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("{} geometry vertices", name)),
-                contents: bytemuck::cast_slice(&self.vertices),
-                usage: wgpu::BufferUsage::VERTEX,
-            }),
-            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("{} geometry indices", name)),
-                contents: bytemuck::cast_slice(&self.indices),
-                usage: wgpu::BufferUsage::INDEX,
-            }),
-            num_indices: self.indices.len() as u32,
-        })
     }
 
     fn merge(&mut self, other: StagingModelBuffers<T>) -> IndexBufferView {
@@ -90,12 +70,6 @@ impl<T: bytemuck::Pod> StagingModelBuffers<T> {
 
         view
     }
-}
-
-pub struct ModelBuffers {
-    pub vertices: wgpu::Buffer,
-    pub indices: wgpu::Buffer,
-    pub num_indices: u32,
 }
 
 #[derive(Debug)]
@@ -200,9 +174,7 @@ fn load_material_properties(
 }
 
 pub struct Level {
-    pub opaque_geometry: Option<ModelBuffers>,
-    pub alpha_clip_geometry: Option<ModelBuffers>,
-    pub alpha_blend_geometry: Option<ModelBuffers>,
+    pub model: Model,
     pub lights_bind_group: wgpu::BindGroup,
     pub properties: HashMap<usize, Property>,
     pub node_tree: NodeTree,
@@ -217,6 +189,7 @@ impl Level {
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
         array_of_textures: &mut ArrayOfTextures,
+        staging_buffers: &mut StagingModelBuffers<Vertex>,
     ) -> anyhow::Result<Self> {
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
@@ -359,12 +332,11 @@ impl Level {
         );
 
         Ok(Self {
-            opaque_geometry: opaque_geometry
-                .upload(&renderer.device, &format!("{} level opaque", name)),
-            alpha_blend_geometry: alpha_blend_geometry
-                .upload(&renderer.device, &format!("{} level alpha blend", name)),
-            alpha_clip_geometry: alpha_clip_geometry
-                .upload(&renderer.device, &format!("{} level alpha clip", name)),
+            model: Model {
+                opaque_geometry: staging_buffers.merge(opaque_geometry),
+                alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry),
+                alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry),
+            },
             lights_bind_group,
             properties,
             node_tree,
@@ -412,7 +384,6 @@ pub struct Model {
     pub opaque_geometry: IndexBufferView,
     pub alpha_clip_geometry: IndexBufferView,
     pub alpha_blend_geometry: IndexBufferView,
-    pub name: String,
 }
 
 impl Model {
@@ -491,7 +462,6 @@ impl Model {
             opaque_geometry: staging_buffers.merge(opaque_geometry),
             alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry),
             alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry),
-            name: name.to_string(),
         })
     }
 }

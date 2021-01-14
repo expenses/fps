@@ -20,8 +20,6 @@ pub struct AnimatedModel {
     pub joint_indices_to_node_indices: Vec<usize>,
     pub inverse_bind_matrices: Vec<Mat4>,
     pub depth_first_nodes: Vec<(usize, Option<usize>)>,
-
-    pub name: String,
 }
 
 impl AnimatedModel {
@@ -170,7 +168,6 @@ impl AnimatedModel {
             joint_indices_to_node_indices,
             inverse_bind_matrices,
             depth_first_nodes,
-            name: name.to_string(),
         })
     }
 }

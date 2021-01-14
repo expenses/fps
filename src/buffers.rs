@@ -1,5 +1,5 @@
 use crate::array_of_textures::ArrayOfTextures;
-use crate::assets::{AnimatedModel, AnimationJoints, Model, StagingModelBuffers};
+use crate::assets::{AnimatedModel, AnimationJoints, Level, Model, StagingModelBuffers};
 use crate::renderer::{AnimatedInstance, DynamicBuffer, Instance, Renderer, Vertex, INDEX_FORMAT};
 use ultraviolet::Mat4;
 use wgpu::util::DeviceExt;
@@ -371,10 +371,10 @@ impl ModelBuffers {
         let array_of_textures_bind_group = array_of_textures.bind(renderer);
 
         let (static_model_vertices, static_model_indices) =
-            static_staging_buffers.upload_simple(&renderer.device, "static model");
+            static_staging_buffers.upload(&renderer.device, "static model");
 
         let (animated_model_vertices, animated_model_indices) =
-            animated_staging_buffers.upload_simple(&renderer.device, "animated model");
+            animated_staging_buffers.upload(&renderer.device, "animated model");
 
         Ok(Self {
             static_hand_models,
@@ -461,7 +461,13 @@ impl ModelBuffers {
             .clone()
     }
 
-    pub fn upload(&mut self, renderer: &Renderer, camera_view: Mat4, draw_gun: bool) {
+    pub fn upload(
+        &mut self,
+        renderer: &Renderer,
+        camera_view: Mat4,
+        draw_gun: bool,
+        level: &Level,
+    ) {
         // Joints
 
         let resized = self.animated_joints.upload(
@@ -505,8 +511,13 @@ impl ModelBuffers {
         // Instances
 
         self.static_instances.upload(
-            std::iter::once(&[Instance::new(camera_view.inversed())][..])
-                .chain(self.static_models.iter().map(|model| &model.instances[..])),
+            [&[
+                Instance::new(camera_view.inversed()),
+                Instance::new(Mat4::identity()),
+            ][..]]
+            .iter()
+            .cloned()
+            .chain(self.static_models.iter().map(|model| &model.instances[..])),
             renderer,
         );
 
@@ -532,7 +543,12 @@ impl ModelBuffers {
             let gun_instances = draw_gun as u32;
             let mut instance_offset = 1 - gun_instances;
 
-            let models = std::iter::once((&self.static_hand_models[0], gun_instances)).chain(
+            let extra_models = [
+                (&self.static_hand_models[0], gun_instances),
+                (&level.model, 1),
+            ];
+
+            let models = extra_models.iter().cloned().chain(
                 self.static_models
                     .iter()
                     .map(|model| (&model.model, model.instances.len() as u32)),

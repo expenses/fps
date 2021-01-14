@@ -149,6 +149,7 @@ async fn run() -> anyhow::Result<()> {
         &mut init_encoder,
         &level_filename,
         &mut array_of_textures,
+        &mut static_staging_buffers,
     )?;
 
     let skybox_texture = assets::load_skybox(
@@ -549,7 +550,7 @@ async fn run() -> anyhow::Result<()> {
             debug_contact_points_buffer.upload(&renderer);
             debug_player_collider_buffer.upload(&renderer);
 
-            model_buffers.upload(&renderer, camera_view, settings.draw_gun);
+            model_buffers.upload(&renderer, camera_view, settings.draw_gun, &level);
             debug_vision_cones.0.upload(&renderer);
             debug_vision_cones.0.clear();
 
@@ -588,49 +589,8 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
-                    // Render opaque things
-                    {
-                        render_pass.set_pipeline(&renderer.static_opaque_render_pipeline);
-                        render_pass.set_push_constants(
-                            wgpu::ShaderStage::VERTEX,
-                            0,
-                            bytemuck::bytes_of(&renderer.projection_view),
-                        );
-
-                        // Render level
-                        if let Some(opaque_geometry) = level.opaque_geometry.as_ref() {
-                            render_indexed(
-                                &mut render_pass,
-                                opaque_geometry,
-                                renderer.identity_instance_buffer.slice(..),
-                                1,
-                            );
-                        }
-
-                        model_buffers.render_opaque(&mut render_pass, &renderer);
-                    }
-
-                    // Render alpha clipped things
-                    {
-                        render_pass.set_pipeline(&renderer.static_alpha_clip_render_pipeline);
-                        render_pass.set_push_constants(
-                            wgpu::ShaderStage::VERTEX,
-                            0,
-                            bytemuck::bytes_of(&renderer.projection_view),
-                        );
-
-                        // Render level
-                        if let Some(alpha_clip_geometry) = level.alpha_clip_geometry.as_ref() {
-                            render_indexed(
-                                &mut render_pass,
-                                alpha_clip_geometry,
-                                renderer.identity_instance_buffer.slice(..),
-                                1,
-                            );
-                        }
-
-                        model_buffers.render_alpha_clip(&mut render_pass, &renderer);
-                    }
+                    model_buffers.render_opaque(&mut render_pass, &renderer);
+                    model_buffers.render_alpha_clip(&mut render_pass, &renderer);
 
                     // Render the skybox
 
@@ -645,26 +605,17 @@ async fn run() -> anyhow::Result<()> {
 
                     // Render transparent things
 
-                    render_pass.set_pipeline(&renderer.static_alpha_blend_render_pipeline);
                     render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
 
-                    if let Some(alpha_blend_geometry) = level.alpha_blend_geometry.as_ref() {
+                    // Render decals
+
+                    if let Some((slice, len)) = decal_buffer.get() {
+                        render_pass.set_pipeline(&renderer.static_alpha_blend_render_pipeline);
                         render_pass.set_push_constants(
                             wgpu::ShaderStage::VERTEX,
                             0,
                             bytemuck::bytes_of(&renderer.projection_view),
                         );
-                        render_indexed(
-                            &mut render_pass,
-                            alpha_blend_geometry,
-                            renderer.identity_instance_buffer.slice(..),
-                            1,
-                        );
-                    }
-
-                    // Render decals
-
-                    if let Some((slice, len)) = decal_buffer.get() {
                         render_pass.set_vertex_buffer(0, slice);
                         render_pass
                             .set_vertex_buffer(1, renderer.identity_instance_buffer.slice(..));
@@ -1132,16 +1083,4 @@ fn render_debug_lines<'a>(
         render_pass.set_vertex_buffer(0, slice);
         render_pass.draw(0..len, 0..1);
     }
-}
-
-fn render_indexed<'a>(
-    render_pass: &mut wgpu::RenderPass<'a>,
-    buffers: &'a assets::ModelBuffers,
-    instances: wgpu::BufferSlice<'a>,
-    num_instances: u32,
-) {
-    render_pass.set_vertex_buffer(0, buffers.vertices.slice(..));
-    render_pass.set_vertex_buffer(1, instances);
-    render_pass.set_index_buffer(buffers.indices.slice(..), INDEX_FORMAT);
-    render_pass.draw_indexed(0..buffers.num_indices, 0, 0..num_instances);
 }
