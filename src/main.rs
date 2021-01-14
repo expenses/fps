@@ -151,15 +151,6 @@ async fn run() -> anyhow::Result<()> {
         &mut array_of_textures,
     )?;
 
-    let monkey_gun = assets::Model::load_gltf(
-        include_bytes!("../models/monkey_test_gun.glb"),
-        &renderer,
-        &mut init_encoder,
-        "monkey gun",
-        &mut array_of_textures,
-        &mut static_staging_buffers,
-    )?;
-
     let skybox_texture = assets::load_skybox(
         include_bytes!("../textures/skybox.png"),
         &renderer,
@@ -554,17 +545,11 @@ async fn run() -> anyhow::Result<()> {
                 Vec4::new(1.0, 0.0, 0.25, 1.0),
             );
 
-            let gun_instance = renderer::single_instance_buffer(
-                &renderer.device,
-                renderer::Instance::new(camera_view.inversed()),
-                "gun instance",
-            );
-
             decal_buffer.upload(&renderer);
             debug_contact_points_buffer.upload(&renderer);
             debug_player_collider_buffer.upload(&renderer);
 
-            model_buffers.upload(&renderer);
+            model_buffers.upload(&renderer, camera_view, settings.draw_gun);
             debug_vision_cones.0.upload(&renderer);
             debug_vision_cones.0.clear();
 
@@ -611,19 +596,6 @@ async fn run() -> anyhow::Result<()> {
                             0,
                             bytemuck::bytes_of(&renderer.projection_view),
                         );
-
-                        // Render gun
-
-                        if settings.draw_gun {
-                            /*if let Some(opaque_geometry) = monkey_gun.opaque_geometry.as_ref() {
-                                render_indexed(
-                                    &mut render_pass,
-                                    opaque_geometry,
-                                    gun_instance.slice(..),
-                                    1,
-                                );
-                            }*/
-                        }
 
                         // Render level
                         if let Some(opaque_geometry) = level.opaque_geometry.as_ref() {
