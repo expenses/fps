@@ -13,6 +13,7 @@ layout(location = 8) in vec4 transform_2;
 layout(location = 9) in vec4 transform_3;
 layout(location = 10) in vec4 transform_4;
 layout(location = 11) in uint model_index;
+layout(location = 12) in uint num_joints;
 
 layout(location = 0) out vec2 out_uv;
 layout(location = 1) out flat uint out_texture_index;
@@ -28,10 +29,6 @@ layout(set = 3, binding = 0) readonly buffer JointTransforms {
 	mat4 joint_transforms[];
 };
 
-layout(set = 3, binding = 1) readonly buffer NumJoints {
-	uint num_joints[];
-};
-
 struct Offset {
     uint joint_offset;
     // It would be lovely to not upload this and use `gl_BaseInstanceARB` instead but you can't do
@@ -39,7 +36,7 @@ struct Offset {
     uint instance_offset;
 };
 
-layout(set = 3, binding = 2) readonly buffer Offsets {
+layout(set = 3, binding = 1) readonly buffer Offsets {
     Offset offsets[];
 };
 
@@ -47,7 +44,7 @@ void main() {
     mat4 transform = mat4(transform_1, transform_2, transform_3, transform_4);
 
     Offset offset = offsets[model_index];
-    uint joint_offset = offset.joint_offset + (gl_InstanceIndex - offset.instance_offset) * num_joints[model_index];
+    uint joint_offset = offset.joint_offset + (gl_InstanceIndex - offset.instance_offset) * num_joints;
 
     // Calculate skinned matrix from weights and joint indices of the current vertex
 	mat4 skin =

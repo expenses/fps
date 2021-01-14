@@ -53,6 +53,7 @@ fn render_animated_models(
     instances.push(AnimatedInstance::new(
         isometry.into_homogeneous_matrix(),
         index,
+        model.num_joints,
     ));
 
     let animation = &model.animations[animation_state.animation];

@@ -47,7 +47,6 @@ pub struct AnimationInfo {
 fn create_animated_models_bind_group(
     animated_joints: &MergedBuffer<Mat4>,
     renderer: &Renderer,
-    num_joints_buffer: &wgpu::Buffer,
     animated_model_offsets_buffer: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     renderer
@@ -66,14 +65,6 @@ fn create_animated_models_bind_group(
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: num_joints_buffer,
-                        offset: 0,
-                        size: None,
-                    },
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: animated_model_offsets_buffer,
                         offset: 0,
@@ -189,7 +180,6 @@ pub struct ModelBuffers {
     pub animation_info: AnimationInfo,
     pub array_of_textures_bind_group: wgpu::BindGroup,
 
-    num_joints_buffer: wgpu::Buffer,
     animated_model_offsets_buffer: wgpu::Buffer,
     animated_joints: MergedBuffer<Mat4>,
     animated_models_bind_group: wgpu::BindGroup,
@@ -323,20 +313,6 @@ impl ModelBuffers {
             )?),
         ];
 
-        let num_joints: Vec<u32> = animated_models
-            .iter()
-            .map(|model| model.model.num_joints)
-            .collect();
-
-        let num_joints_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("num joints buffer"),
-                    contents: bytemuck::cast_slice(&num_joints),
-                    usage: wgpu::BufferUsage::STORAGE,
-                });
-
         let animated_model_offsets = vec![
             Offset {
                 joint_offset: 0,
@@ -376,7 +352,6 @@ impl ModelBuffers {
         let animated_models_bind_group = create_animated_models_bind_group(
             &animated_joints,
             renderer,
-            &num_joints_buffer,
             &animated_model_offsets_buffer,
         );
 
@@ -396,7 +371,6 @@ impl ModelBuffers {
             animation_info,
             array_of_textures_bind_group,
 
-            num_joints_buffer,
             animated_model_offsets_buffer,
             animated_joints,
             animated_models_bind_group,
@@ -491,7 +465,6 @@ impl ModelBuffers {
             self.animated_models_bind_group = create_animated_models_bind_group(
                 &self.animated_joints,
                 renderer,
-                &self.num_joints_buffer,
                 &self.animated_model_offsets_buffer,
             );
         }
