@@ -1152,8 +1152,24 @@ fn render_pipelines_for_num_textures(
             }],
         });
 
-    // todo: we want to have 2 seperate alpha blend pipelines - one with depth writes on and one
-    // with them off.
+    // Decisions:
+    //
+    // Alpha clipping and backface culling:
+    //
+    // It might be a good idea to turn off backface culling for alpha clipping.
+    // Most things that you want alpha clipping for (bushes, barbed fences etc) are going to be
+    // double-sided. On the otherhand, this breaks certain objects such as the question-mark in the
+    // mario-cube. You can always enumate the behaviour of having backface-culling off by duplicating
+    // the meshes and flipping the uvs, but you can't emulate the behaviour of backface culling with
+    // it off.
+    //
+    // Alpha blending and depth writing:
+    //
+    // For decals like bullet holes, we want depth writes with alpha blending off, so that they
+    // accumulate on a surface. However for larger meshes like club mate bottles, we want depth
+    // writes on so that the worst case scenario is a bottle erasing another one, not a bottle in
+    // the background being drawn over one in the foreground. I think the solution here would be to
+    // have a seperate pipeline with depth writes off for decals.
 
     let pipelines = RenderPipelines {
         static_opaque_render_pipeline: create_render_pipeline(PipelineParams {
@@ -1187,7 +1203,7 @@ fn render_pipelines_for_num_textures(
             colour_descriptor: alpha_blend_colour_descriptor(),
             animated: false,
             backface_culling: true,
-            depth_write: true,
+            depth_write: false,
         }),
 
         animated_opaque_render_pipeline: create_render_pipeline(PipelineParams {
@@ -1221,7 +1237,7 @@ fn render_pipelines_for_num_textures(
             colour_descriptor: alpha_blend_colour_descriptor(),
             animated: true,
             backface_culling: true,
-            depth_write: true,
+            depth_write: false,
         }),
     };
 
