@@ -734,6 +734,26 @@ impl ModelBuffers {
         }
     }
 
+    pub fn render_depth_prepass<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        renderer: &'a Renderer,
+    ) {
+        self.render_static(
+            render_pass,
+            renderer,
+            &renderer.static_depth_prepass_pipeline,
+            &self.static_model_opaque_draws,
+        );
+
+        self.render_animated(
+            render_pass,
+            renderer,
+            &renderer.animated_depth_prepass_pipeline,
+            &self.animated_model_opaque_draws,
+        );
+    }
+
     pub fn render_opaque<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,

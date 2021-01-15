@@ -563,6 +563,30 @@ async fn run() -> anyhow::Result<()> {
                                 label: Some("render encoder"),
                             });
 
+                    // Depth prepass
+                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("depth prepass render pass"),
+                        color_attachments: &[],
+                        depth_stencil_attachment: Some(
+                            wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                                attachment: &renderer.depth_texture,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(1.0),
+                                    store: true,
+                                }),
+                                stencil_ops: None,
+                            },
+                        ),
+                    });
+
+                    render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
+                    render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
+                    render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
+
+                    model_buffers.render_depth_prepass(&mut render_pass, &renderer);
+
+                    drop(render_pass);
+
                     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("main render pass"),
                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
@@ -577,7 +601,7 @@ async fn run() -> anyhow::Result<()> {
                             wgpu::RenderPassDepthStencilAttachmentDescriptor {
                                 attachment: &renderer.depth_texture,
                                 depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
+                                    load: wgpu::LoadOp::Load,
                                     store: true,
                                 }),
                                 stencil_ops: None,

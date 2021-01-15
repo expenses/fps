@@ -112,6 +112,9 @@ pub struct Renderer {
     fs_model: wgpu::ShaderModule,
     fs_alpha_clip_model: wgpu::ShaderModule,
 
+    pub static_depth_prepass_pipeline: wgpu::RenderPipeline,
+    pub animated_depth_prepass_pipeline: wgpu::RenderPipeline,
+
     pub static_opaque_render_pipeline: wgpu::RenderPipeline,
     pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
     pub static_alpha_blend_render_pipeline: wgpu::RenderPipeline,
@@ -321,6 +324,9 @@ impl Renderer {
         let (
             array_of_textures_bind_group_layout,
             RenderPipelines {
+                static_depth_prepass_pipeline,
+                animated_depth_prepass_pipeline,
+
                 static_opaque_render_pipeline,
                 static_alpha_blend_render_pipeline,
                 static_alpha_clip_render_pipeline,
@@ -587,6 +593,9 @@ impl Renderer {
             mipmap_generation_pipeline,
             linear_sampler,
 
+            static_depth_prepass_pipeline,
+            animated_depth_prepass_pipeline,
+
             static_opaque_render_pipeline,
             animated_opaque_render_pipeline,
             static_alpha_blend_render_pipeline,
@@ -679,6 +688,9 @@ impl Renderer {
         let (
             array_of_textures_bind_group_layout,
             RenderPipelines {
+                static_depth_prepass_pipeline,
+                animated_depth_prepass_pipeline,
+
                 static_opaque_render_pipeline,
                 static_alpha_blend_render_pipeline,
                 static_alpha_clip_render_pipeline,
@@ -700,6 +712,10 @@ impl Renderer {
         );
 
         self.array_of_textures_bind_group_layout = array_of_textures_bind_group_layout;
+
+        self.static_depth_prepass_pipeline = static_depth_prepass_pipeline;
+        self.animated_depth_prepass_pipeline = animated_depth_prepass_pipeline;
+
         self.static_opaque_render_pipeline = static_opaque_render_pipeline;
         self.static_alpha_blend_render_pipeline = static_alpha_blend_render_pipeline;
         self.static_alpha_clip_render_pipeline = static_alpha_clip_render_pipeline;
@@ -783,6 +799,7 @@ struct PipelineParams<'a> {
     animated: bool,
     backface_culling: bool,
     depth_write: bool,
+    depth_eq: bool,
 }
 
 fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
@@ -796,6 +813,7 @@ fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
         animated,
         backface_culling,
         depth_write,
+        depth_eq,
     } = params;
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -822,6 +840,79 @@ fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
             format: DEPTH_FORMAT,
             depth_write_enabled: depth_write,
+            depth_compare: if depth_eq {
+                wgpu::CompareFunction::Equal
+            } else {
+                wgpu::CompareFunction::Less
+            },
+            stencil: wgpu::StencilStateDescriptor::default(),
+        }),
+        vertex_state: wgpu::VertexStateDescriptor {
+            index_format: Some(INDEX_FORMAT),
+            vertex_buffers: &[
+                wgpu::VertexBufferDescriptor {
+                    stride: if animated {
+                        std::mem::size_of::<AnimatedVertex>()
+                    } else {
+                        std::mem::size_of::<Vertex>()
+                    } as u64,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: if animated {
+                        &ANIMATED_VERTEX_ATTR_ARRAY[..]
+                    } else {
+                        &STATIC_VERTEX_ATTR_ARRAY[..]
+                    },
+                },
+                wgpu::VertexBufferDescriptor {
+                    stride: if animated {
+                        std::mem::size_of::<AnimatedInstance>()
+                    } else {
+                        std::mem::size_of::<Instance>()
+                    } as u64,
+                    step_mode: wgpu::InputStepMode::Instance,
+                    attributes: if animated {
+                        &ANIMATED_INSTANCE_ATTR_ARRAY[..]
+                    } else {
+                        &STATIC_INSTANCE_ATTR_ARRAY[..]
+                    },
+                },
+            ],
+        },
+        sample_count: 1,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    })
+}
+
+fn create_depth_prepass_pipeline(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &wgpu::PipelineLayout,
+    vs_module: &wgpu::ShaderModule,
+    animated: bool,
+    backface_culling: bool,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: vs_module,
+            entry_point: "main",
+        },
+        fragment_stage: None,
+        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            cull_mode: if backface_culling {
+                wgpu::CullMode::Back
+            } else {
+                wgpu::CullMode::None
+            },
+            ..Default::default()
+        }),
+        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+        color_states: &[],
+        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilStateDescriptor::default(),
         }),
@@ -1082,6 +1173,9 @@ fn post_processing_framebuffer_and_bind_group(
 }
 
 struct RenderPipelines {
+    static_depth_prepass_pipeline: wgpu::RenderPipeline,
+    animated_depth_prepass_pipeline: wgpu::RenderPipeline,
+
     static_opaque_render_pipeline: wgpu::RenderPipeline,
     static_alpha_blend_render_pipeline: wgpu::RenderPipeline,
     static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
@@ -1116,6 +1210,16 @@ fn render_pipelines_for_num_textures(
                     multisampled: false,
                 },
                 count: Some(std::num::NonZeroU32::new(num_textures).unwrap()),
+            }],
+        });
+
+    let static_depth_prepass_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("static depth prepass pipeline layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[wgpu::PushConstantRange {
+                stages: wgpu::ShaderStage::VERTEX,
+                range: 0..std::mem::size_of::<Mat4>() as u32,
             }],
         });
 
@@ -1168,6 +1272,23 @@ fn render_pipelines_for_num_textures(
     // have a seperate pipeline with depth writes off for decals.
 
     let pipelines = RenderPipelines {
+        static_depth_prepass_pipeline: create_depth_prepass_pipeline(
+            device,
+            "static depth prepass pipeline",
+            &static_depth_prepass_pipeline_layout,
+            vs_static_model,
+            false,
+            true,
+        ),
+        animated_depth_prepass_pipeline: create_depth_prepass_pipeline(
+            device,
+            "animated depth prepass pipeline",
+            &animated_model_pipeline_layout,
+            vs_animated_model,
+            true,
+            true,
+        ),
+
         static_opaque_render_pipeline: create_render_pipeline(PipelineParams {
             device,
             label: "static opaque render pipeline",
@@ -1178,6 +1299,7 @@ fn render_pipelines_for_num_textures(
             animated: false,
             backface_culling: true,
             depth_write: true,
+            depth_eq: true,
         }),
         static_alpha_clip_render_pipeline: create_render_pipeline(PipelineParams {
             device,
@@ -1189,6 +1311,7 @@ fn render_pipelines_for_num_textures(
             animated: false,
             backface_culling: false,
             depth_write: true,
+            depth_eq: false,
         }),
         static_alpha_blend_render_pipeline: create_render_pipeline(PipelineParams {
             device,
@@ -1200,6 +1323,7 @@ fn render_pipelines_for_num_textures(
             animated: false,
             backface_culling: true,
             depth_write: false,
+            depth_eq: false,
         }),
 
         animated_opaque_render_pipeline: create_render_pipeline(PipelineParams {
@@ -1212,6 +1336,7 @@ fn render_pipelines_for_num_textures(
             animated: true,
             backface_culling: true,
             depth_write: true,
+            depth_eq: true,
         }),
         animated_alpha_clip_render_pipeline: create_render_pipeline(PipelineParams {
             device,
@@ -1223,6 +1348,7 @@ fn render_pipelines_for_num_textures(
             animated: true,
             backface_culling: false,
             depth_write: true,
+            depth_eq: false,
         }),
         animated_alpha_blend_render_pipeline: create_render_pipeline(PipelineParams {
             device,
@@ -1234,6 +1360,7 @@ fn render_pipelines_for_num_textures(
             animated: true,
             backface_culling: true,
             depth_write: false,
+            depth_eq: false,
         }),
     };
 
