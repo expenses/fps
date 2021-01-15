@@ -589,6 +589,8 @@ async fn run() -> anyhow::Result<()> {
                     render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
+                    // Render opaque and alpha-clipped things.
+
                     model_buffers.render_opaque(&mut render_pass, &renderer);
                     model_buffers.render_alpha_clip(&mut render_pass, &renderer);
 

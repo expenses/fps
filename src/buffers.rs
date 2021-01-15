@@ -577,11 +577,15 @@ impl ModelBuffers {
                 (&level.model, 1),
             ];
 
-            let models = extra_models.iter().cloned().chain(
-                self.static_models
-                    .iter()
-                    .map(|model| (&model.model, model.instances.len() as u32)),
-            );
+            let models = extra_models
+                .iter()
+                .cloned()
+                .chain(
+                    self.static_models
+                        .iter()
+                        .map(|model| (&model.model, model.instances.len() as u32)),
+                )
+                .filter(|(_, instance_count)| *instance_count > 0);
 
             for (model, instance_count) in models {
                 if model.opaque_geometry.size > 0 {
@@ -624,36 +628,40 @@ impl ModelBuffers {
         {
             let mut instance_offset = 0;
 
-            for model in &self.animated_models {
-                let instance_count = model.instances.len() as u32;
+            let models = self
+                .animated_models
+                .iter()
+                .map(|model| (&model.model, model.instances.len() as u32))
+                .filter(|(_, instance_count)| *instance_count > 0);
 
-                if model.model.opaque_geometry.size > 0 {
+            for (model, instance_count) in models {
+                if model.opaque_geometry.size > 0 {
                     self.animated_model_opaque_draws.push(DrawIndexedIndirect {
-                        vertex_count: model.model.opaque_geometry.size,
+                        vertex_count: model.opaque_geometry.size,
                         instance_count,
-                        base_index: model.model.opaque_geometry.offset,
+                        base_index: model.opaque_geometry.offset,
                         vertex_offset: 0,
                         base_instance: instance_offset,
                     });
                 }
 
-                if model.model.alpha_clip_geometry.size > 0 {
+                if model.alpha_clip_geometry.size > 0 {
                     self.animated_model_alpha_clip_draws
                         .push(DrawIndexedIndirect {
-                            vertex_count: model.model.alpha_clip_geometry.size,
+                            vertex_count: model.alpha_clip_geometry.size,
                             instance_count,
-                            base_index: model.model.alpha_clip_geometry.offset,
+                            base_index: model.alpha_clip_geometry.offset,
                             vertex_offset: 0,
                             base_instance: instance_offset,
                         });
                 }
 
-                if model.model.alpha_blend_geometry.size > 0 {
+                if model.alpha_blend_geometry.size > 0 {
                     self.animated_model_alpha_blend_draws
                         .push(DrawIndexedIndirect {
-                            vertex_count: model.model.alpha_blend_geometry.size,
+                            vertex_count: model.alpha_blend_geometry.size,
                             instance_count,
-                            base_index: model.model.alpha_blend_geometry.offset,
+                            base_index: model.alpha_blend_geometry.offset,
                             vertex_offset: 0,
                             base_instance: instance_offset,
                         });
@@ -690,16 +698,18 @@ impl ModelBuffers {
         pipeline: &'a wgpu::RenderPipeline,
         draw_buffer: &'a DrawBuffer,
     ) {
-        render_pass.set_pipeline(pipeline);
-        render_pass.set_push_constants(
-            wgpu::ShaderStage::VERTEX,
-            0,
-            bytemuck::bytes_of(&renderer.projection_view),
-        );
-        render_pass.set_vertex_buffer(0, self.static_model_vertices.slice(..));
-        render_pass.set_vertex_buffer(1, self.static_instances.slice());
-        render_pass.set_index_buffer(self.static_model_indices.slice(..), INDEX_FORMAT);
-        render_pass.multi_draw_indexed_indirect(&draw_buffer.buffer, 0, draw_buffer.uploaded);
+        if draw_buffer.uploaded > 0 {
+            render_pass.set_pipeline(pipeline);
+            render_pass.set_push_constants(
+                wgpu::ShaderStage::VERTEX,
+                0,
+                bytemuck::bytes_of(&renderer.projection_view),
+            );
+            render_pass.set_vertex_buffer(0, self.static_model_vertices.slice(..));
+            render_pass.set_vertex_buffer(1, self.static_instances.slice());
+            render_pass.set_index_buffer(self.static_model_indices.slice(..), INDEX_FORMAT);
+            render_pass.multi_draw_indexed_indirect(&draw_buffer.buffer, 0, draw_buffer.uploaded);
+        }
     }
 
     fn render_animated<'a>(
@@ -709,17 +719,19 @@ impl ModelBuffers {
         pipeline: &'a wgpu::RenderPipeline,
         draw_buffer: &'a DrawBuffer,
     ) {
-        render_pass.set_pipeline(pipeline);
-        render_pass.set_push_constants(
-            wgpu::ShaderStage::VERTEX,
-            0,
-            bytemuck::bytes_of(&renderer.projection_view),
-        );
-        render_pass.set_bind_group(3, &self.animated_models_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.animated_model_vertices.slice(..));
-        render_pass.set_vertex_buffer(1, self.animated_instances.slice());
-        render_pass.set_index_buffer(self.animated_model_indices.slice(..), INDEX_FORMAT);
-        render_pass.multi_draw_indexed_indirect(&draw_buffer.buffer, 0, draw_buffer.uploaded);
+        if draw_buffer.uploaded > 0 {
+            render_pass.set_pipeline(pipeline);
+            render_pass.set_push_constants(
+                wgpu::ShaderStage::VERTEX,
+                0,
+                bytemuck::bytes_of(&renderer.projection_view),
+            );
+            render_pass.set_bind_group(3, &self.animated_models_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.animated_model_vertices.slice(..));
+            render_pass.set_vertex_buffer(1, self.animated_instances.slice());
+            render_pass.set_index_buffer(self.animated_model_indices.slice(..), INDEX_FORMAT);
+            render_pass.multi_draw_indexed_indirect(&draw_buffer.buffer, 0, draw_buffer.uploaded);
+        }
     }
 
     pub fn render_opaque<'a>(
