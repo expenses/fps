@@ -211,10 +211,11 @@ async fn run() -> anyhow::Result<()> {
             let mut entry = world.entry(entity).unwrap();
 
             match model {
-                EitherModel::Animated(AnimatedModelType::Robot) => {
-                    entry.add_component(ecs::VisionCone::new(ncollide3d::shape::Cone::new(
-                        10.0, 10.0,
-                    )));
+                EitherModel::Animated(AnimatedModelType::Mouse) => {
+                    entry.add_component(ecs::VisionCone::new(
+                        ncollide3d::shape::Cone::new(10.0, 20.0),
+                        model_buffers.animation_info.mouse_head_node,
+                    ));
                 }
                 _ => {}
             }
@@ -290,6 +291,8 @@ async fn run() -> anyhow::Result<()> {
         })
     }
     */
+
+    resources.insert(level);
 
     debug_collision_geometry_buffer.upload(&renderer);
 
@@ -418,6 +421,8 @@ async fn run() -> anyhow::Result<()> {
             _ => {}
         },
         Event::MainEventsCleared => {
+            let level = resources.get::<assets::Level>().unwrap();
+
             player.gun_cooldown -= 1.0 / 60.0;
 
             let moved = move_player(&mut player, &control_states, &settings);
@@ -468,6 +473,8 @@ async fn run() -> anyhow::Result<()> {
                 collision_handling(&mut player, &level, &mut debug_contact_points_buffer);
             }
 
+            drop(level);
+
             resources.insert(ecs::PlayerPosition(player.position + Player::HEAD_RELATIVE));
 
             renderer.window.request_redraw();
@@ -477,6 +484,7 @@ async fn run() -> anyhow::Result<()> {
 
             let mut model_buffers = resources.get_mut::<ModelBuffers>().unwrap();
             let mut debug_vision_cones = resources.get_mut::<ecs::DebugVisionCones>().unwrap();
+            let level = resources.get::<assets::Level>().unwrap();
 
             /*
             let static_view = fps_view_rh(

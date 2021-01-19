@@ -1,6 +1,8 @@
-use crate::assets::AnimationJoints;
-use crate::{renderer, vec3_into, AnimatedModelType, ModelBuffers, StaticModelType};
-use ncollide3d::query::PointQuery;
+use crate::assets::{AnimationJoints, Level};
+use crate::{
+    renderer, vec3_into, vec3_to_ncollide_iso, AnimatedModelType, ModelBuffers, StaticModelType,
+};
+use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use renderer::{AnimatedInstance, Instance};
 use ultraviolet::{Rotor3, Vec3, Vec4};
@@ -8,23 +10,27 @@ use ultraviolet::{Rotor3, Vec3, Vec4};
 pub use ultraviolet::transform::Isometry3;
 
 pub struct VisionCone {
-    cone: ncollide3d::shape::Cone<f32>,
+    section: VisionSphereSection,
     trimesh: ncollide3d::shape::TriMesh<f32>,
+    node_index: usize,
+    half_height: f32,
+}
+
+impl VisionCone {
+    pub fn new(cone: ncollide3d::shape::Cone<f32>, node_index: usize) -> Self {
+        Self {
+            trimesh: cone.to_trimesh(8).into(),
+            section: VisionSphereSection::from_cone(&cone),
+            node_index,
+            half_height: cone.half_height,
+        }
+    }
 }
 
 pub struct AnimationState {
     pub animation: usize,
     pub time: f32,
     pub joints: AnimationJoints,
-}
-
-impl VisionCone {
-    pub fn new(cone: ncollide3d::shape::Cone<f32>) -> Self {
-        Self {
-            trimesh: cone.to_trimesh(8).into(),
-            cone,
-        }
-    }
 }
 
 pub struct DebugVisionCones(pub renderer::DynamicBuffer<renderer::debug_lines::Vertex>);
@@ -77,25 +83,39 @@ fn render_animated_models(
 fn debug_render_vision_cones(
     #[resource] buffer: &mut DebugVisionCones,
     #[resource] player_position: &PlayerPosition,
-    #[resource] model_buffers: &ModelBuffers,
+    #[resource] level: &Level,
     isometry: &Isometry3,
     vision_cone: &VisionCone,
     animation_state: &AnimationState,
 ) {
-    let base_node = model_buffers.animation_info.robot_base_node;
-    let base_joint = animation_state.joints.get_global_transform(base_node);
-    let joint_rotation = base_joint.rotation;
+    let joint_transform = animation_state
+        .joints
+        .get_global_transform(vision_cone.node_index);
 
-    let mut isometry = *isometry;
-    isometry.rotation =
-        isometry.rotation * joint_rotation * Rotor3::from_rotation_yz(-90_f32.to_radians());
-    isometry.prepend_translation(Vec3::new(0.0, -vision_cone.cone.half_height, 0.0));
+    let epsilon = 0.001;
 
-    let na_isometry = isometry3_to_na_isometry(isometry);
+    let mut origin_isometry = *isometry;
+    origin_isometry.prepend_translation(joint_transform.translation);
+    origin_isometry.rotation = origin_isometry.rotation
+        * joint_transform.rotation
+        * Rotor3::from_rotation_yz(-180_f32.to_radians());
 
-    let player_is_visible = vision_cone
-        .cone
-        .contains_point(&na_isometry, &vec3_into(player_position.0));
+    let mut player_is_visible = vision_cone
+        .section
+        .intersects(origin_isometry, player_position.0);
+
+    player_is_visible &= {
+        let origin = origin_isometry.translation;
+        let direction = player_position.0 - origin;
+        let ray = ncollide3d::query::Ray::new(vec3_into(origin), vec3_into(direction.normalized()));
+        let is_occluded = level.collision_mesh.intersects_ray(
+            &vec3_to_ncollide_iso(Vec3::zero()),
+            &ray,
+            direction.mag() + epsilon,
+        );
+
+        !is_occluded
+    };
 
     let colour = if player_is_visible {
         Vec4::new(1.0, 0.0, 0.0, 1.0)
@@ -103,7 +123,44 @@ fn debug_render_vision_cones(
         Vec4::new(0.0, 1.0, 0.0, 1.0)
     };
 
-    crate::render_debug_mesh(&vision_cone.trimesh, &isometry, &mut buffer.0, colour);
+    let mut cone_isometry = origin_isometry;
+    cone_isometry.prepend_translation(Vec3::new(0.0, -vision_cone.half_height, 0.0));
+    crate::render_debug_mesh(&vision_cone.trimesh, &cone_isometry, &mut buffer.0, colour);
+}
+
+struct VisionSphereSection {
+    vision_distance_sq: f32,
+    field_of_view_cosine: f32,
+}
+
+impl VisionSphereSection {
+    fn from_cone(cone: &ncollide3d::shape::Cone<f32>) -> Self {
+        let distance = cone.half_height * 2.0;
+        let width = cone.radius;
+
+        Self {
+            vision_distance_sq: distance * distance,
+            field_of_view_cosine: distance.atan2(width).cos(),
+        }
+    }
+
+    fn intersects(&self, isometry: Isometry3, point: Vec3) -> bool {
+        let direction_vector = point - isometry.translation;
+
+        if direction_vector.mag_sq() > self.vision_distance_sq {
+            return false;
+        }
+
+        let rotated_direction = isometry.rotation.reversed() * direction_vector;
+
+        let rotated_normal = rotated_direction.normalized();
+
+        let down = -Vec3::unit_y();
+
+        let angle_cosine = down.dot(rotated_normal);
+
+        angle_cosine > self.field_of_view_cosine
+    }
 }
 
 pub fn render_schedule() -> legion::Schedule {

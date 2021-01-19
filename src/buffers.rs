@@ -40,6 +40,7 @@ pub struct AnimationInfo {
     pub mouse_idle_animation: usize,
 
     pub robot_base_node: usize,
+    pub mouse_head_node: usize,
 
     pub tentacle_poke_animation: usize,
 }
@@ -318,7 +319,7 @@ impl ModelBuffers {
                 &renderer,
                 &mut init_encoder,
                 "mouse",
-                |animations, _| {
+                |animations, joints| {
                     let mut animations: std::collections::HashMap<_, _> = animations
                         .map(|animation| (animation.name().unwrap(), animation.index()))
                         .collect();
@@ -330,6 +331,12 @@ impl ModelBuffers {
                         log::debug!("Unhandled animations:");
                         animations.keys().for_each(|name| log::debug!("{}", name));
                     }
+
+                    animation_info.mouse_head_node = joints
+                        .unwrap()
+                        .find(|node| node.name() == Some("Head"))
+                        .map(|node| node.index())
+                        .unwrap();
                 },
                 &mut array_of_textures,
                 &mut animated_staging_buffers,
