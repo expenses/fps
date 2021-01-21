@@ -12,7 +12,5 @@ layout(push_constant) uniform ProjectionView {
 void main() {
     out_colour = colour;
     gl_Position = projection_view * vec4(position, 1.0);
-    // Put the line closer to the camera in the z buffer so that it can be drawn as an overlay on
-    // the debug geometry.
-    gl_Position.z = gl_Position.z * 0.9999;
+    gl_Position.z = 0.0;
 }

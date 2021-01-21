@@ -303,16 +303,10 @@ async fn run() -> anyhow::Result<()> {
         wgpu::BufferUsage::VERTEX,
     );
 
-    let debug_lines_always_pipeline = renderer::debug_lines::debug_lines_pipeline(
-        &renderer,
-        &settings,
-        wgpu::CompareFunction::Always,
-    );
-    let debug_lines_less_pipeline = renderer::debug_lines::debug_lines_pipeline(
-        &renderer,
-        &settings,
-        wgpu::CompareFunction::Less,
-    );
+    let debug_lines_always_pipeline =
+        renderer::debug_lines::debug_lines_pipeline(&renderer, &settings, true);
+    let debug_lines_less_pipeline =
+        renderer::debug_lines::debug_lines_pipeline(&renderer, &settings, false);
 
     let mut control_states = ControlStates::default();
 
@@ -593,6 +587,44 @@ async fn run() -> anyhow::Result<()> {
                         ),
                     });
 
+                    // Render depth compare lines here to reduce overdraw.
+
+                    if settings.draw_contact_points {
+                        render_debug_lines(
+                            &debug_contact_points_buffer,
+                            &mut render_pass,
+                            &debug_lines_always_pipeline,
+                            renderer.projection_view,
+                        );
+                    }
+
+                    if settings.draw_player_collider {
+                        render_debug_lines(
+                            &debug_player_collider_buffer,
+                            &mut render_pass,
+                            &debug_lines_always_pipeline,
+                            renderer.projection_view,
+                        );
+                    }
+
+                    if settings.draw_collision_geometry {
+                        render_debug_lines(
+                            &debug_collision_geometry_buffer,
+                            &mut render_pass,
+                            &debug_lines_less_pipeline,
+                            renderer.projection_view,
+                        );
+                    }
+
+                    render_debug_lines(
+                        &debug_vision_cones.0,
+                        &mut render_pass,
+                        &debug_lines_less_pipeline,
+                        renderer.projection_view,
+                    );
+
+                    // Main rendering
+
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
                     render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
                     render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
@@ -633,42 +665,6 @@ async fn run() -> anyhow::Result<()> {
                     }
 
                     model_buffers.render_alpha_blend(&mut render_pass, &renderer);
-
-                    // Render debug lines
-
-                    if settings.draw_collision_geometry {
-                        render_debug_lines(
-                            &debug_collision_geometry_buffer,
-                            &mut render_pass,
-                            &debug_lines_less_pipeline,
-                            renderer.projection_view,
-                        );
-                    }
-
-                    if settings.draw_contact_points {
-                        render_debug_lines(
-                            &debug_contact_points_buffer,
-                            &mut render_pass,
-                            &debug_lines_always_pipeline,
-                            renderer.projection_view,
-                        );
-                    }
-
-                    if settings.draw_player_collider {
-                        render_debug_lines(
-                            &debug_player_collider_buffer,
-                            &mut render_pass,
-                            &debug_lines_always_pipeline,
-                            renderer.projection_view,
-                        );
-                    }
-
-                    render_debug_lines(
-                        &debug_vision_cones.0,
-                        &mut render_pass,
-                        &debug_lines_less_pipeline,
-                        renderer.projection_view,
-                    );
 
                     // Render overlay
 

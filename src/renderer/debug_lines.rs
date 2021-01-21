@@ -5,7 +5,7 @@ use ultraviolet::{Mat4, Vec3, Vec4};
 pub fn debug_lines_pipeline(
     renderer: &Renderer,
     _settings: &Settings,
-    depth_compare: wgpu::CompareFunction,
+    render_always: bool,
 ) -> wgpu::RenderPipeline {
     let debug_lines_pipeline_layout =
         renderer
@@ -19,10 +19,13 @@ pub fn debug_lines_pipeline(
                 }],
             });
 
-    let vs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.vert.spv");
-    let vs_module = renderer.device.create_shader_module(&vs);
+    let vs_less = wgpu::include_spirv!("../../shaders/compiled/debug_lines_less.vert.spv");
+    let vs_less = renderer.device.create_shader_module(&vs_less);
+    let vs_always = wgpu::include_spirv!("../../shaders/compiled/debug_lines_always.vert.spv");
+    let vs_always = renderer.device.create_shader_module(&vs_always);
+
     let fs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.frag.spv");
-    let fs_module = renderer.device.create_shader_module(&fs);
+    let fs = renderer.device.create_shader_module(&fs);
 
     renderer
         .device
@@ -30,11 +33,11 @@ pub fn debug_lines_pipeline(
             label: Some("debug lines pipeline"),
             layout: Some(&debug_lines_pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_module,
+                module: if render_always { &vs_always } else { &vs_less },
                 entry_point: "main",
             },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
+                module: &fs,
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
@@ -46,7 +49,7 @@ pub fn debug_lines_pipeline(
             depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: true,
-                depth_compare,
+                depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilStateDescriptor::default(),
             }),
             vertex_state: wgpu::VertexStateDescriptor {
