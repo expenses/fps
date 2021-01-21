@@ -3,14 +3,15 @@ mod array_of_textures;
 mod assets;
 mod buffers;
 mod ecs;
+mod intersection_maths;
 mod renderer;
 
 use crate::assets::StagingModelBuffers;
 use crate::buffers::{AnimatedModelType, ModelBuffers, StaticModelType};
+use crate::intersection_maths::{ray_bounding_box_intersection, ray_triangle_intersection};
 use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
 use array_of_textures::ArrayOfTextures;
 use collision_octree::HasBoundingBox;
-use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
 use ultraviolet::{transform::Isometry3, Mat3, Mat4, Rotor3, Vec2, Vec3, Vec4};
@@ -454,14 +455,12 @@ async fn run() -> anyhow::Result<()> {
                 let max_toi = 1000.0;
                 let normal = player.facing.normal();
                 let origin = player.position + Player::HEAD_RELATIVE;
-                let ray = ncollide3d::query::Ray::new(vec3_into(origin), vec3_into(normal));
                 let line_bounding_box =
                     collision_octree::BoundingBox::from_line(origin, origin + normal * max_toi);
-                let identity_iso = ncollide_identity_iso();
 
                 let mut stack = Vec::with_capacity(8);
 
-                let mut best_intersection: Option<ncollide3d::query::RayIntersection<f32>> = None;
+                let mut best_intersection: Option<(f32, Vec3)> = None;
 
                 level.collision_octree.iterate(
                     |bounding_box| {
@@ -469,51 +468,45 @@ async fn run() -> anyhow::Result<()> {
                             return false;
                         }
 
-                        let aabb = ncollide3d::bounding_volume::AABB::new(
-                            vec3_into(bounding_box.min),
-                            vec3_into(bounding_box.max),
-                        );
-                        aabb.intersects_ray(&identity_iso, &ray, max_toi)
+                        ray_bounding_box_intersection(origin, normal, max_toi, bounding_box)
                     },
                     |triangle| {
                         if !line_bounding_box.intersects(triangle.bounding_box()) {
                             return;
                         }
 
-                        if let Some(intersection) = triangle.triangle.toi_and_normal_with_ray(
-                            &identity_iso,
-                            &ray,
+                        if let Some(time_of_impact) = ray_triangle_intersection(
+                            origin,
+                            normal,
                             max_toi,
-                            false,
+                            triangle.intersection_triangle,
                         ) {
                             match best_intersection {
-                                Some(best) => {
-                                    if intersection.toi < best.toi {
-                                        best_intersection = Some(intersection)
+                                Some((best_toi, _)) => {
+                                    if time_of_impact < best_toi {
+                                        best_intersection = Some((time_of_impact, triangle.normal));
                                     }
                                 }
-                                None => best_intersection = Some(intersection),
+                                None => best_intersection = Some((time_of_impact, triangle.normal)),
                             }
                         }
                     },
                     &mut stack,
                 );
 
-                if let Some(intersection) = best_intersection {
-                    let hit_position =
-                        player.position + Player::HEAD_RELATIVE + normal * intersection.toi;
-                    let normal = vec3_from(intersection.normal);
+                if let Some((time_of_impact, intersection_normal)) = best_intersection {
+                    let hit_position = origin + normal * time_of_impact;
 
                     renderer::debug_lines::draw_line(
                         hit_position,
-                        hit_position + normal,
+                        hit_position + intersection_normal,
                         Vec4::new(1.0, 0.0, 0.0, 1.0),
                         |vertex| debug_contact_points_buffer.push(vertex),
                     );
 
                     for vertex in renderer::decal_square(
-                        hit_position + normal * 0.01,
-                        normal,
+                        hit_position + intersection_normal * 0.01,
+                        intersection_normal,
                         Vec2::broadcast(0.5),
                         renderer::Decal::BulletImpact,
                         decals_texture_atlas_index,
@@ -843,11 +836,13 @@ fn render_debug_mesh(
     buffer: &mut DynamicBuffer<renderer::debug_lines::Vertex>,
     colour: Vec4,
 ) {
+    let rotation = isometry.rotation.into_matrix();
+
     for face in mesh.faces() {
         let points = mesh.points();
-        let a = isometry.transform_vec(vec3_from(points[face.indices.x].coords));
-        let b = isometry.transform_vec(vec3_from(points[face.indices.y].coords));
-        let c = isometry.transform_vec(vec3_from(points[face.indices.z].coords));
+        let a = rotation * vec3_from(points[face.indices.x].coords) + isometry.translation;
+        let b = rotation * vec3_from(points[face.indices.y].coords) + isometry.translation;
+        let c = rotation * vec3_from(points[face.indices.z].coords) + isometry.translation;
         renderer::debug_lines::draw_tri(a, b, c, colour, |vertex| {
             buffer.push(vertex);
         })

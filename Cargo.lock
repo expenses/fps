@@ -223,6 +223,7 @@ dependencies = [
  "approx 0.3.2",
  "num-traits",
  "rand 0.6.5",
+ "serde",
 ]
 
 [[package]]
@@ -263,6 +264,20 @@ dependencies = [
  "foreign-types",
  "libc",
  "objc",
+]
+
+[[package]]
+name = "collision"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6107f6be76c2269a9c8d89e707a66122bd3086f987fa508133a5f774e8ac4ced"
+dependencies = [
+ "approx 0.3.2",
+ "bit-set",
+ "cgmath",
+ "num",
+ "rand 0.6.5",
+ "smallvec 0.6.14",
 ]
 
 [[package]]
@@ -580,6 +595,7 @@ dependencies = [
  "base64",
  "bytemuck",
  "cgmath",
+ "collision",
  "collision_octree",
  "env_logger",
  "futures",
@@ -767,7 +783,7 @@ dependencies = [
  "parking_lot",
  "range-alloc",
  "raw-window-handle",
- "smallvec",
+ "smallvec 1.5.1",
  "spirv_cross",
  "thunderdome",
  "winapi 0.3.9",
@@ -789,7 +805,7 @@ dependencies = [
  "parking_lot",
  "range-alloc",
  "raw-window-handle",
- "smallvec",
+ "smallvec 1.5.1",
  "spirv_cross",
  "winapi 0.3.9",
 ]
@@ -821,7 +837,7 @@ dependencies = [
  "naga",
  "parking_lot",
  "raw-window-handle",
- "smallvec",
+ "smallvec 1.5.1",
  "spirv_cross",
  "wasm-bindgen",
  "web-sys",
@@ -868,7 +884,7 @@ dependencies = [
  "naga",
  "objc",
  "raw-window-handle",
- "smallvec",
+ "smallvec 1.5.1",
  "winapi 0.3.9",
 ]
 
@@ -1006,7 +1022,7 @@ dependencies = [
  "byteorder",
  "color_quant",
  "num-iter",
- "num-rational",
+ "num-rational 0.3.2",
  "num-traits",
  "png",
 ]
@@ -1135,7 +1151,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "rayon",
- "smallvec",
+ "smallvec 1.5.1",
  "thiserror",
  "uuid",
 ]
@@ -1360,8 +1376,8 @@ dependencies = [
  "approx 0.4.0",
  "generic-array",
  "matrixmultiply",
- "num-complex",
- "num-rational",
+ "num-complex 0.3.1",
+ "num-rational 0.3.2",
  "num-traits",
  "rand 0.7.3",
  "rand_distr",
@@ -1385,7 +1401,7 @@ dependencies = [
  "simba",
  "slab",
  "slotmap",
- "smallvec",
+ "smallvec 1.5.1",
 ]
 
 [[package]]
@@ -1467,6 +1483,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "num"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8536030f9fea7127f841b45bb6243b27255787fb4eb83958aa1ef9d2fdc0c36"
+dependencies = [
+ "num-bigint",
+ "num-complex 0.2.4",
+ "num-integer",
+ "num-iter",
+ "num-rational 0.2.4",
+ "num-traits",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "090c7f9998ee0ff65aa5b723e4009f7b217707f1fb5ea551329cc4d6231fb304"
+dependencies = [
+ "autocfg 1.0.1",
+ "num-integer",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
+name = "num-complex"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b19411a9719e753aff12e5187b74d60d3dc449ec3f4dc21e3989c3f554bc95"
+dependencies = [
+ "autocfg 1.0.1",
+ "num-traits",
+ "serde",
+]
+
+[[package]]
 name = "num-complex"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1494,6 +1547,19 @@ dependencies = [
  "autocfg 1.0.1",
  "num-integer",
  "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c000134b5dbf44adc5cb772486d335293351644b801551abe8f75c84cfa4aef"
+dependencies = [
+ "autocfg 1.0.1",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -1613,7 +1679,7 @@ dependencies = [
  "instant",
  "libc",
  "redox_syscall",
- "smallvec",
+ "smallvec 1.5.1",
  "winapi 0.3.9",
 ]
 
@@ -2020,6 +2086,9 @@ name = "serde"
 version = "1.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06c64263859d87aa2eb554587e2d23183398d617427327cf2b3d0ed8c69e4800"
+dependencies = [
+ "serde_derive",
+]
 
 [[package]]
 name = "serde_derive"
@@ -2059,7 +2128,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17bfe642b1728a6e89137ad428ef5d4738eca4efaba9590f9e110b8944028621"
 dependencies = [
  "approx 0.4.0",
- "num-complex",
+ "num-complex 0.3.1",
  "num-traits",
  "paste",
 ]
@@ -2075,6 +2144,15 @@ name = "slotmap"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c46a3482db8f247956e464d783693ece164ca056e6e67563ee5505bdb86452cd"
+
+[[package]]
+name = "smallvec"
+version = "0.6.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97fcaeba89edba30f044a10c6a3cc39df9c3f17d7cd829dd1446cab35f890e0"
+dependencies = [
+ "maybe-uninit",
+]
 
 [[package]]
 name = "smallvec"
@@ -2377,7 +2455,7 @@ checksum = "230b3ffeda101f877ff8ecb8573f5d26e7beb345b197807c4df34ec06879a3e6"
 dependencies = [
  "nix",
  "once_cell",
- "smallvec",
+ "smallvec 1.5.1",
  "wayland-sys",
 ]
 
@@ -2446,7 +2524,7 @@ dependencies = [
  "js-sys",
  "parking_lot",
  "raw-window-handle",
- "smallvec",
+ "smallvec 1.5.1",
  "tracing",
  "typed-arena",
  "wasm-bindgen",
@@ -2478,7 +2556,7 @@ dependencies = [
  "naga",
  "parking_lot",
  "raw-window-handle",
- "smallvec",
+ "smallvec 1.5.1",
  "thiserror",
  "tracing",
  "wgpu-types",

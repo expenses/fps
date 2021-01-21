@@ -1,9 +1,7 @@
 use crate::assets::{AnimationJoints, Level};
-use crate::{
-    ncollide_identity_iso, renderer, vec3_into, AnimatedModelType, ModelBuffers, StaticModelType,
-};
+use crate::intersection_maths::{ray_bounding_box_intersection, ray_triangle_intersection};
+use crate::{renderer, AnimatedModelType, ModelBuffers, StaticModelType};
 use collision_octree::HasBoundingBox;
-use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use renderer::{AnimatedInstance, Instance};
 use ultraviolet::{Rotor3, Vec3, Vec4};
@@ -103,13 +101,12 @@ fn debug_render_vision_cones(
         .section
         .intersects(origin_isometry, player_position.0);
 
-    let identity_iso = ncollide_identity_iso();
-
     player_is_visible &= {
         let origin = origin_isometry.translation;
         let direction = player_position.0 - origin;
         let magnitude = direction.mag();
-        let ray = ncollide3d::query::Ray::new(vec3_into(origin), vec3_into(direction / magnitude));
+        let direction = direction / magnitude;
+
         let line_bounding_box = collision_octree::BoundingBox::from_line(origin, player_position.0);
 
         let mut stack = Vec::with_capacity(8);
@@ -120,20 +117,20 @@ fn debug_render_vision_cones(
                     return false;
                 }
 
-                let aabb = ncollide3d::bounding_volume::AABB::new(
-                    vec3_into(bounding_box.min),
-                    vec3_into(bounding_box.max),
-                );
-                aabb.intersects_ray(&identity_iso, &ray, magnitude)
+                ray_bounding_box_intersection(origin, direction, magnitude, bounding_box)
             },
             |triangle| {
                 if !line_bounding_box.intersects(triangle.bounding_box()) {
                     return false;
                 }
 
-                triangle
-                    .triangle
-                    .intersects_ray(&identity_iso, &ray, magnitude)
+                ray_triangle_intersection(
+                    origin,
+                    direction,
+                    magnitude,
+                    triangle.intersection_triangle,
+                )
+                .is_some()
             },
             &mut stack,
         )
@@ -191,15 +188,4 @@ pub fn render_schedule() -> legion::Schedule {
         .add_system(render_animated_models_system())
         .add_system(debug_render_vision_cones_system())
         .build()
-}
-
-fn isometry3_to_na_isometry(isometry: Isometry3) -> ncollide3d::math::Isometry<f32> {
-    let translation: ncollide3d::math::Vector<f32> = vec3_into(isometry.translation);
-    let quaternion: ncollide3d::na::Vector4<f32> = isometry.rotation.into_quaternion_array().into();
-    ncollide3d::math::Isometry::from_parts(
-        ncollide3d::na::geometry::Translation::from(translation),
-        ncollide3d::na::geometry::UnitQuaternion::from_quaternion(
-            ncollide3d::na::geometry::Quaternion::from(quaternion),
-        ),
-    )
 }

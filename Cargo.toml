@@ -9,6 +9,7 @@ anyhow = "1.0.36"
 base64 = "0.13.0"
 bytemuck = { version = "1.4.1", features = ["derive"] }
 cgmath = "0.17.0"
+collision = "0.20.1"
 env_logger = "0.8.2"
 futures = "0.3.8"
 gltf = { version = "0.15.2", default-features = false, features = ["utils", "names", "extras", "KHR_lights_punctual"] }

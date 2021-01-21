@@ -1,4 +1,5 @@
 use crate::array_of_textures::ArrayOfTextures;
+use crate::intersection_maths::IntersectionTriangle;
 use crate::renderer::{normal_matrix, Renderer, Vertex, TEXTURE_FORMAT};
 use crate::vec3_into;
 use std::collections::HashMap;
@@ -175,14 +176,28 @@ fn load_material_properties(
 
 pub struct Triangle {
     pub triangle: ncollide3d::shape::Triangle<f32>,
+    pub intersection_triangle: IntersectionTriangle,
+    pub normal: Vec3,
     bounding_box: collision_octree::BoundingBox,
 }
 
 impl Triangle {
     fn new(a: Vec3, b: Vec3, c: Vec3) -> Self {
+        let b_neg_a = b - a;
+        let c_neg_a = c - a;
+        let crossed_normal = b_neg_a.cross(c_neg_a);
+        let normal = crossed_normal.normalized();
+
         Self {
             bounding_box: collision_octree::BoundingBox::from_triangle(a, b, c),
             triangle: ncollide3d::shape::Triangle::new(vec3_into(a), vec3_into(b), vec3_into(c)),
+            intersection_triangle: IntersectionTriangle {
+                a,
+                b_neg_a,
+                c_neg_a,
+                crossed_normal,
+            },
+            normal,
         }
     }
 }
