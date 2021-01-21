@@ -96,6 +96,10 @@ impl PlayerFacing {
     }
 }
 
+fn ncollide_identity_iso() -> ncollide3d::math::Isometry<f32> {
+    ncollide3d::math::Isometry::identity()
+}
+
 fn vec3_to_ncollide_iso(vec: Vec3) -> ncollide3d::math::Isometry<f32> {
     ncollide3d::math::Isometry::translation(vec.x, vec.y, vec.z)
 }
@@ -270,6 +274,13 @@ async fn run() -> anyhow::Result<()> {
         wgpu::BufferUsage::VERTEX,
     );
 
+    let mut debug_collision_octree_buffer = DynamicBuffer::new(
+        &renderer.device,
+        100,
+        "debug collsion octree buffer",
+        wgpu::BufferUsage::VERTEX,
+    );
+
     resources.insert(model_buffers);
     resources.insert(ecs::DebugVisionCones(debug_vision_cones_buffer));
 
@@ -292,8 +303,23 @@ async fn run() -> anyhow::Result<()> {
     }
     */
 
+    for (is_object, bounding_box) in level.collision_octree.bounding_boxes() {
+        let colour = if is_object {
+            Vec4::new(0.75, 0.0, 0.0, 1.0)
+        } else {
+            Vec4::new(0.0, 0.75, 0.0, 1.0)
+        };
+
+        for (start, end) in bounding_box.lines() {
+            renderer::debug_lines::draw_line(start, end, colour, |vertex| {
+                debug_collision_octree_buffer.push(vertex);
+            })
+        }
+    }
+
     resources.insert(level);
 
+    debug_collision_octree_buffer.upload(&renderer);
     debug_collision_geometry_buffer.upload(&renderer);
 
     let mut decal_buffer = DynamicBuffer::new(
@@ -429,7 +455,7 @@ async fn run() -> anyhow::Result<()> {
                 let ray = ncollide3d::query::Ray::new(origin, vec3_into(normal));
 
                 let intersection = level.collision_mesh.toi_and_normal_with_ray(
-                    &vec3_to_ncollide_iso(Vec3::zero()),
+                    &ncollide_identity_iso(),
                     &ray,
                     1000.0,
                     false,
@@ -609,11 +635,20 @@ async fn run() -> anyhow::Result<()> {
 
                     if settings.draw_collision_geometry {
                         render_debug_lines(
+                            &debug_collision_octree_buffer,
+                            &mut render_pass,
+                            &debug_lines_always_pipeline,
+                            renderer.projection_view,
+                        );
+
+                        /*
+                        render_debug_lines(
                             &debug_collision_geometry_buffer,
                             &mut render_pass,
                             &debug_lines_less_pipeline,
                             renderer.projection_view,
                         );
+                        */
                     }
 
                     render_debug_lines(
@@ -889,7 +924,7 @@ fn collision_handling(
             let body_contact = ncollide3d::query::contact(
                 &vec3_to_ncollide_iso(player.position + Player::BODY_RELATIVE),
                 &player.body_shape,
-                &vec3_to_ncollide_iso(Vec3::zero()),
+                &ncollide_identity_iso(),
                 &level.collision_mesh,
                 0.0,
             );
@@ -911,7 +946,7 @@ fn collision_handling(
             let body_contact = ncollide3d::query::contact(
                 &vec3_to_ncollide_iso(player.position + Player::BODY_RELATIVE),
                 &player.body_shape,
-                &vec3_to_ncollide_iso(Vec3::zero()),
+                &ncollide_identity_iso(),
                 &level.collision_mesh,
                 0.0,
             );
@@ -940,7 +975,7 @@ fn collision_handling(
         let body_contact = ncollide3d::query::contact(
             &vec3_to_ncollide_iso(player.position + Player::BODY_RELATIVE),
             &player.body_shape,
-            &vec3_to_ncollide_iso(Vec3::zero()),
+            &ncollide_identity_iso(),
             &level.collision_mesh,
             0.0,
         );
@@ -1057,7 +1092,7 @@ fn collision_handling(
     let feet_contact = ncollide3d::query::contact(
         &vec3_to_ncollide_iso(player.position + Player::FEET_RELATIVE),
         &player.feet_shape,
-        &vec3_to_ncollide_iso(Vec3::zero()),
+        &ncollide_identity_iso(),
         &level.collision_mesh,
         0.0,
     );

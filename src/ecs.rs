@@ -1,7 +1,8 @@
 use crate::assets::{AnimationJoints, Level};
 use crate::{
-    renderer, vec3_into, vec3_to_ncollide_iso, AnimatedModelType, ModelBuffers, StaticModelType,
+    renderer, vec3_into, ncollide_identity_iso, AnimatedModelType, ModelBuffers, StaticModelType,
 };
+use collision_octree::HasBoundingBox;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use renderer::{AnimatedInstance, Instance};
@@ -92,8 +93,6 @@ fn debug_render_vision_cones(
         .joints
         .get_global_transform(vision_cone.node_index);
 
-    let epsilon = 0.001;
-
     let mut origin_isometry = *isometry;
     origin_isometry.prepend_translation(joint_transform.translation);
     origin_isometry.rotation = origin_isometry.rotation
@@ -104,17 +103,37 @@ fn debug_render_vision_cones(
         .section
         .intersects(origin_isometry, player_position.0);
 
+    let identity_iso = ncollide_identity_iso();
+
     player_is_visible &= {
         let origin = origin_isometry.translation;
         let direction = player_position.0 - origin;
-        let ray = ncollide3d::query::Ray::new(vec3_into(origin), vec3_into(direction.normalized()));
-        let is_occluded = level.collision_mesh.intersects_ray(
-            &vec3_to_ncollide_iso(Vec3::zero()),
-            &ray,
-            direction.mag() + epsilon,
-        );
+        let magnitude = direction.mag();
+        let ray = ncollide3d::query::Ray::new(vec3_into(origin), vec3_into(direction / magnitude));
+        let line_bounding_box = collision_octree::BoundingBox::from_line(origin, player_position.0);
 
-        !is_occluded
+        let mut stack = Vec::with_capacity(8);
+
+        !level.collision_octree.intersects(
+            |bounding_box| {
+                if !line_bounding_box.intersects(bounding_box) {
+                    return false
+                }
+
+                let aabb = ncollide3d::bounding_volume::AABB::new(
+                    vec3_into(bounding_box.min), vec3_into(bounding_box.max)
+                );
+                aabb.intersects_ray(&identity_iso, &ray, magnitude)
+            },
+            |triangle| {
+                if !line_bounding_box.intersects(triangle.bounding_box()) {
+                    return false
+                }
+
+                triangle.triangle.intersects_ray(&identity_iso, &ray, magnitude)
+            },
+            &mut stack,
+        )
     };
 
     let colour = if player_is_visible {

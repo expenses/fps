@@ -13,7 +13,7 @@ env_logger = "0.8.2"
 futures = "0.3.8"
 gltf = { version = "0.15.2", default-features = false, features = ["utils", "names", "extras", "KHR_lights_punctual"] }
 image = { version = "0.23.12", default-features = false, features = ["png"] }
-legion = "0.3.1"
+legion = { version = "0.3.1", default-features = false, features = ["codegen", "parallel"] }
 log = "0.4.11"
 lyon_tessellation = "0.16.2"
 ncollide3d = "0.26.1"
@@ -23,11 +23,12 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu-rs" }
 winit = "0.24.0"
 num-integer = "0.1.44"
 
-animation = { path = "animation" }
+collision_octree = { path = "crates/collision_octree" }
+animation = { path = "crates/animation" }
 
 # Compile all dependencies in release mode
 [profile.dev.package."*"]
 opt-level = 3
 
 [workspace]
-members = [".", "animation"]
+members = [".", "crates/animation", "crates/collision_octree"]
