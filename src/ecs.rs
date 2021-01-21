@@ -1,6 +1,6 @@
 use crate::assets::{AnimationJoints, Level};
 use crate::{
-    renderer, vec3_into, ncollide_identity_iso, AnimatedModelType, ModelBuffers, StaticModelType,
+    ncollide_identity_iso, renderer, vec3_into, AnimatedModelType, ModelBuffers, StaticModelType,
 };
 use collision_octree::HasBoundingBox;
 use ncollide3d::query::RayCast;
@@ -117,20 +117,23 @@ fn debug_render_vision_cones(
         !level.collision_octree.intersects(
             |bounding_box| {
                 if !line_bounding_box.intersects(bounding_box) {
-                    return false
+                    return false;
                 }
 
                 let aabb = ncollide3d::bounding_volume::AABB::new(
-                    vec3_into(bounding_box.min), vec3_into(bounding_box.max)
+                    vec3_into(bounding_box.min),
+                    vec3_into(bounding_box.max),
                 );
                 aabb.intersects_ray(&identity_iso, &ray, magnitude)
             },
             |triangle| {
                 if !line_bounding_box.intersects(triangle.bounding_box()) {
-                    return false
+                    return false;
                 }
 
-                triangle.triangle.intersects_ray(&identity_iso, &ray, magnitude)
+                triangle
+                    .triangle
+                    .intersects_ray(&identity_iso, &ray, magnitude)
             },
             &mut stack,
         )

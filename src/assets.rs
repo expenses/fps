@@ -182,7 +182,7 @@ impl Triangle {
     fn new(a: Vec3, b: Vec3, c: Vec3) -> Self {
         Self {
             bounding_box: collision_octree::BoundingBox::from_triangle(a, b, c),
-            triangle: ncollide3d::shape::Triangle::new(vec3_into(a), vec3_into(b), vec3_into(c))
+            triangle: ncollide3d::shape::Triangle::new(vec3_into(a), vec3_into(b), vec3_into(c)),
         }
     }
 }

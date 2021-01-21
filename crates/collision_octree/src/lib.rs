@@ -129,6 +129,37 @@ impl<T: HasBoundingBox> Octree<T> {
         false
     }
 
+    pub fn iterate(
+        &self,
+        // You are recommended to check bounded boxes first in these checks.
+        bounding_box_intersection_check: impl Fn(BoundingBox) -> bool,
+        mut object_closure: impl FnMut(&T),
+        stack: &mut Vec<usize>,
+    ) {
+        stack.clear();
+        stack.push(0);
+
+        while let Some(index) = stack.pop() {
+            let node = &self.nodes[index];
+
+            if bounding_box_intersection_check(node.bounding_box) {
+                for object in &node.objects {
+                    object_closure(object)
+                }
+
+                if let Some(&children_offset) = node.children_offset.as_ref() {
+                    for child in children_offset..children_offset + 8 {
+                        let child_node = &self.nodes[child];
+
+                        if !child_node.objects.is_empty() || child_node.children_offset.is_some() {
+                            stack.push(child);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn bounding_boxes(&self) -> impl Iterator<Item = (bool, BoundingBox)> + '_ {
         self.nodes.iter().flat_map(|node| {
             std::iter::once((false, node.bounding_box)).chain(

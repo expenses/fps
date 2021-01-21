@@ -9,6 +9,7 @@ use crate::assets::StagingModelBuffers;
 use crate::buffers::{AnimatedModelType, ModelBuffers, StaticModelType};
 use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
 use array_of_textures::ArrayOfTextures;
+use collision_octree::HasBoundingBox;
 use ncollide3d::query::RayCast;
 use ncollide3d::transformation::ToTriMesh;
 use std::f32::consts::PI;
@@ -450,18 +451,55 @@ async fn run() -> anyhow::Result<()> {
             if control_states.mouse_held && player.gun_cooldown < 0.0 {
                 player.gun_cooldown = 0.05;
 
+                let max_toi = 1000.0;
                 let normal = player.facing.normal();
-                let origin = vec3_into(player.position + Player::HEAD_RELATIVE);
-                let ray = ncollide3d::query::Ray::new(origin, vec3_into(normal));
+                let origin = player.position + Player::HEAD_RELATIVE;
+                let ray = ncollide3d::query::Ray::new(vec3_into(origin), vec3_into(normal));
+                let line_bounding_box =
+                    collision_octree::BoundingBox::from_line(origin, origin + normal * max_toi);
+                let identity_iso = ncollide_identity_iso();
 
-                let intersection = level.collision_mesh.toi_and_normal_with_ray(
-                    &ncollide_identity_iso(),
-                    &ray,
-                    1000.0,
-                    false,
+                let mut stack = Vec::with_capacity(8);
+
+                let mut best_intersection: Option<ncollide3d::query::RayIntersection<f32>> = None;
+
+                level.collision_octree.iterate(
+                    |bounding_box| {
+                        if !line_bounding_box.intersects(bounding_box) {
+                            return false;
+                        }
+
+                        let aabb = ncollide3d::bounding_volume::AABB::new(
+                            vec3_into(bounding_box.min),
+                            vec3_into(bounding_box.max),
+                        );
+                        aabb.intersects_ray(&identity_iso, &ray, max_toi)
+                    },
+                    |triangle| {
+                        if !line_bounding_box.intersects(triangle.bounding_box()) {
+                            return;
+                        }
+
+                        if let Some(intersection) = triangle.triangle.toi_and_normal_with_ray(
+                            &identity_iso,
+                            &ray,
+                            max_toi,
+                            false,
+                        ) {
+                            match best_intersection {
+                                Some(best) => {
+                                    if intersection.toi < best.toi {
+                                        best_intersection = Some(intersection)
+                                    }
+                                }
+                                None => best_intersection = Some(intersection),
+                            }
+                        }
+                    },
+                    &mut stack,
                 );
 
-                if let Some(intersection) = intersection {
+                if let Some(intersection) = best_intersection {
                     let hit_position =
                         player.position + Player::HEAD_RELATIVE + normal * intersection.toi;
                     let normal = vec3_from(intersection.normal);
@@ -910,6 +948,50 @@ fn approach_zero(value: f32, change: f32) -> f32 {
     }
 }
 
+fn contact_point<S: ncollide3d::shape::Shape<f32>>(
+    level: &assets::Level,
+    shape: &S,
+    shape_position: Vec3,
+) -> Option<ncollide3d::query::Contact<f32>> {
+    let aabb = shape.local_aabb();
+    let shape_bounding_box = collision_octree::BoundingBox {
+        min: vec3_from(aabb.mins.coords) + shape_position,
+        max: vec3_from(aabb.maxs.coords) + shape_position,
+    };
+    let mut stack = Vec::with_capacity(8);
+
+    let mut deepest_contact: Option<ncollide3d::query::Contact<f32>> = None;
+
+    level.collision_octree.iterate(
+        |bounding_box| shape_bounding_box.intersects(bounding_box),
+        |triangle| {
+            if !shape_bounding_box.intersects(triangle.bounding_box()) {
+                return;
+            }
+
+            if let Some(contact) = ncollide3d::query::contact(
+                &vec3_to_ncollide_iso(shape_position),
+                shape,
+                &ncollide_identity_iso(),
+                &triangle.triangle,
+                0.0,
+            ) {
+                match deepest_contact {
+                    Some(deepest) => {
+                        if contact.depth > deepest.depth {
+                            deepest_contact = Some(contact);
+                        }
+                    }
+                    None => deepest_contact = Some(contact),
+                }
+            }
+        },
+        &mut stack,
+    );
+
+    deepest_contact
+}
+
 fn collision_handling(
     player: &mut Player,
     level: &assets::Level,
@@ -921,12 +1003,10 @@ fn collision_handling(
     // Falling/jumping clipping prevention
     if !player.on_ground {
         if player.velocity.y < -Player::RADIUS {
-            let body_contact = ncollide3d::query::contact(
-                &vec3_to_ncollide_iso(player.position + Player::BODY_RELATIVE),
+            let body_contact = contact_point(
+                level,
                 &player.body_shape,
-                &ncollide_identity_iso(),
-                &level.collision_mesh,
-                0.0,
+                player.position + Player::BODY_RELATIVE,
             );
 
             if let Some(contact) = body_contact {
@@ -943,12 +1023,10 @@ fn collision_handling(
                 }
             }
         } else if player.velocity.y > Player::RADIUS {
-            let body_contact = ncollide3d::query::contact(
-                &vec3_to_ncollide_iso(player.position + Player::BODY_RELATIVE),
+            let body_contact = contact_point(
+                level,
                 &player.body_shape,
-                &ncollide_identity_iso(),
-                &level.collision_mesh,
-                0.0,
+                player.position + Player::BODY_RELATIVE,
             );
 
             if let Some(contact) = body_contact {
@@ -972,12 +1050,10 @@ fn collision_handling(
     for _ in 0..10 {
         body_resolution_iterations += 1;
 
-        let body_contact = ncollide3d::query::contact(
-            &vec3_to_ncollide_iso(player.position + Player::BODY_RELATIVE),
+        let body_contact = contact_point(
+            level,
             &player.body_shape,
-            &ncollide_identity_iso(),
-            &level.collision_mesh,
-            0.0,
+            player.position + Player::BODY_RELATIVE,
         );
 
         match body_contact {
@@ -1089,12 +1165,10 @@ fn collision_handling(
         );
     }
 
-    let feet_contact = ncollide3d::query::contact(
-        &vec3_to_ncollide_iso(player.position + Player::FEET_RELATIVE),
+    let feet_contact = contact_point(
+        level,
         &player.feet_shape,
-        &ncollide_identity_iso(),
-        &level.collision_mesh,
-        0.0,
+        player.position + Player::FEET_RELATIVE,
     );
 
     match feet_contact {
