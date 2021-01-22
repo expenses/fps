@@ -63,8 +63,8 @@ struct Vertex {
 }
 
 use lyon_tessellation::{
-    basic_shapes::stroke_circle, math::Point, BasicVertexConstructor, BuffersBuilder,
-    StrokeAttributes, StrokeOptions, StrokeVertexConstructor, VertexBuffers,
+    FillVertexConstructor, BuffersBuilder, StrokeVertex, StrokeTessellator,
+    StrokeOptions, StrokeVertexConstructor, VertexBuffers, FillVertex,
 };
 
 struct Constructor {
@@ -72,18 +72,18 @@ struct Constructor {
 }
 
 impl StrokeVertexConstructor<Vertex> for Constructor {
-    fn new_vertex(&mut self, point: Point, _: StrokeAttributes) -> Vertex {
+    fn new_vertex(&mut self, vertex: StrokeVertex) -> Vertex {
         Vertex {
-            position: Vec2::new(point.x, point.y),
+            position: Vec2::new(vertex.position().x, vertex.position().y),
             colour: self.colour,
         }
     }
 }
 
-impl BasicVertexConstructor<Vertex> for Constructor {
-    fn new_vertex(&mut self, point: Point) -> Vertex {
+impl FillVertexConstructor<Vertex> for Constructor {
+    fn new_vertex(&mut self, vertex: FillVertex) -> Vertex {
         Vertex {
-            position: Vec2::new(point.x, point.y),
+            position: Vec2::new(vertex.position().x, vertex.position().y),
             colour: self.colour,
         }
     }
@@ -115,7 +115,7 @@ impl OverlayBuffers {
     }
 
     pub fn draw_circle_outline(&mut self, position: Vec2, radius: f32) {
-        stroke_circle(
+        StrokeTessellator::new().tessellate_circle(
             [position.x, position.y].into(),
             radius,
             &StrokeOptions::default().with_line_width(2.0),

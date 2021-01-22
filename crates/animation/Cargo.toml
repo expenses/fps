@@ -10,4 +10,4 @@ edition = "2018"
 gltf = { version = "0.15.2", default-features = false, features = ["utils", "names"] }
 log = "0.4.11"
 ordered-float = "2.0.1"
-ultraviolet = { git = "https://github.com/expenses/ultraviolet", branch = "quaternion-convertion" }
+ultraviolet = { git = "https://github.com/termhn/ultraviolet", features = ["bytemuck"] }

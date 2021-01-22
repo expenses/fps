@@ -8,4 +8,4 @@ edition = "2018"
 
 [dependencies]
 arrayvec = "0.5.2"
-ultraviolet = { git = "https://github.com/expenses/ultraviolet", branch = "quaternion-convertion", features = ["bytemuck"] }
+ultraviolet = { git = "https://github.com/termhn/ultraviolet", features = ["bytemuck"] }
