@@ -82,11 +82,9 @@ pub enum Property {
 
 impl Property {
     fn parse(string: &str) -> anyhow::Result<Self> {
-        if string.starts_with("spawn/") {
-            let remainder = &string["spawn/".len()..];
+        if let Some(remainder) = string.strip_prefix("spawn/") {
             Ok(Self::Spawn(remainder.to_string()))
-        } else if string.starts_with("render_order/") {
-            let remainder = &string["render_order/".len()..];
+        } else if let Some(remainder) = string.strip_prefix("render_order/") {
             let order = remainder.parse()?;
             Ok(Self::RenderOrder(order))
         } else {
@@ -177,15 +175,14 @@ fn load_material_properties(
 pub struct Triangle {
     pub triangle: ncollide3d::shape::Triangle<f32>,
     pub intersection_triangle: IntersectionTriangle,
-    pub normal: Vec3,
     bounding_box: collision_octree::BoundingBox,
 }
 
 impl Triangle {
     fn new(a: Vec3, b: Vec3, c: Vec3) -> Self {
-        let b_neg_a = b - a;
-        let c_neg_a = c - a;
-        let crossed_normal = b_neg_a.cross(c_neg_a);
+        let edge_b_a = b - a;
+        let edge_c_a = c - a;
+        let crossed_normal = edge_b_a.cross(edge_c_a);
         let normal = crossed_normal.normalized();
 
         Self {
@@ -193,11 +190,13 @@ impl Triangle {
             triangle: ncollide3d::shape::Triangle::new(vec3_into(a), vec3_into(b), vec3_into(c)),
             intersection_triangle: IntersectionTriangle {
                 a,
-                b_neg_a,
-                c_neg_a,
+                b,
+                c,
+                edge_b_a,
+                edge_c_a,
                 crossed_normal,
+                normal,
             },
-            normal,
         }
     }
 }
@@ -637,7 +636,6 @@ fn add_primitive_geometry_to_buffers(
         .zip(normals)
         .for_each(|((p, uv), n)| {
             let position = transform * Vec4::new(p[0], p[1], p[2], 1.0);
-            assert_eq!(position.w, 1.0);
             let position = position.xyz();
 
             let normal: Vec3 = n.into();

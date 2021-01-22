@@ -628,8 +628,8 @@ impl Renderer {
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
                 format: self.display_format,
-                width: width,
-                height: height,
+                width,
+                height,
                 present_mode: wgpu::PresentMode::Fifo,
             },
         );
@@ -906,8 +906,8 @@ pub fn decal_square(
         Vec3::new(offset.x, 0.0, offset.y),   // bottom right
     ];
 
-    for i in 0..4 {
-        offsets[i] = rotation * offsets[i];
+    for offset in &mut offsets {
+        *offset = rotation * *offset;
     }
 
     let (uv_offset, uv_size) = decal.uvs();

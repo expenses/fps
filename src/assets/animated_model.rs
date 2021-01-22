@@ -247,7 +247,6 @@ fn add_animated_primitive_geometry_to_buffers(
             };
 
             let position = transform * Vec4::new(p[0], p[1], p[2], 1.0);
-            assert_eq!(position.w, 1.0);
             let position = position.xyz();
 
             let normal: Vec3 = n.into();

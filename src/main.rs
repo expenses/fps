@@ -484,10 +484,18 @@ async fn run() -> anyhow::Result<()> {
                             match best_intersection {
                                 Some((best_toi, _)) => {
                                     if time_of_impact < best_toi {
-                                        best_intersection = Some((time_of_impact, triangle.normal));
+                                        best_intersection = Some((
+                                            time_of_impact,
+                                            triangle.intersection_triangle.normal,
+                                        ));
                                     }
                                 }
-                                None => best_intersection = Some((time_of_impact, triangle.normal)),
+                                None => {
+                                    best_intersection = Some((
+                                        time_of_impact,
+                                        triangle.intersection_triangle.normal,
+                                    ))
+                                }
                             }
                         }
                     },

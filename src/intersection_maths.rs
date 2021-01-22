@@ -34,9 +34,12 @@ pub fn ray_bounding_box_intersection(
 #[derive(Copy, Clone)]
 pub struct IntersectionTriangle {
     pub a: Vec3,
-    pub b_neg_a: Vec3,
-    pub c_neg_a: Vec3,
+    pub b: Vec3,
+    pub c: Vec3,
+    pub edge_b_a: Vec3,
+    pub edge_c_a: Vec3,
     pub crossed_normal: Vec3,
+    pub normal: Vec3,
 }
 
 // Adapted from https://www.iquilezles.org/www/articles/intersectors/intersectors.htm.
@@ -48,17 +51,20 @@ pub fn ray_triangle_intersection(
 ) -> Option<f32> {
     let IntersectionTriangle {
         a,
-        b_neg_a,
-        c_neg_a,
+        b: _,
+        c: _,
+        edge_b_a,
+        edge_c_a,
         crossed_normal,
+        normal: _,
     } = triangle;
 
     let ro_a = ray_origin - a;
 
     let q = ro_a.cross(ray_direction);
     let d = 1.0 / ray_direction.dot(crossed_normal);
-    let u = d * (-q).dot(c_neg_a);
-    let v = d * q.dot(b_neg_a);
+    let u = d * (-q).dot(edge_c_a);
+    let v = d * q.dot(edge_b_a);
     let t = d * (-crossed_normal).dot(ro_a);
 
     if u < 0.0 || u > 1.0 || v < 0.0 || (u + v) > 1.0 {
