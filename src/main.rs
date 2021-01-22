@@ -957,6 +957,9 @@ fn contact_point<S: ncollide3d::shape::Shape<f32>>(
 
     let mut deepest_contact: Option<ncollide3d::query::Contact<f32>> = None;
 
+    // It would be good to use `intersects` here and return after the first
+    // successful contact, but to enumate the ncollide trimesh we need to find
+    // the deepest contact, which requires iterating through all of them.
     level.collision_octree.iterate(
         |bounding_box| shape_bounding_box.intersects(bounding_box),
         |triangle| {

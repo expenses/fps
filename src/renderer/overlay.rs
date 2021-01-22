@@ -63,8 +63,8 @@ struct Vertex {
 }
 
 use lyon_tessellation::{
-    FillVertexConstructor, BuffersBuilder, StrokeVertex, StrokeTessellator,
-    StrokeOptions, StrokeVertexConstructor, VertexBuffers, FillVertex,
+    BuffersBuilder, FillVertex, FillVertexConstructor, StrokeOptions, StrokeTessellator,
+    StrokeVertex, StrokeVertexConstructor, VertexBuffers,
 };
 
 struct Constructor {
@@ -115,18 +115,19 @@ impl OverlayBuffers {
     }
 
     pub fn draw_circle_outline(&mut self, position: Vec2, radius: f32) {
-        StrokeTessellator::new().tessellate_circle(
-            [position.x, position.y].into(),
-            radius,
-            &StrokeOptions::default().with_line_width(2.0),
-            &mut BuffersBuilder::new(
-                &mut self.lyon_buffers,
-                Constructor {
-                    colour: Vec4::one(),
-                },
-            ),
-        )
-        .unwrap();
+        StrokeTessellator::new()
+            .tessellate_circle(
+                [position.x, position.y].into(),
+                radius,
+                &StrokeOptions::default().with_line_width(2.0),
+                &mut BuffersBuilder::new(
+                    &mut self.lyon_buffers,
+                    Constructor {
+                        colour: Vec4::one(),
+                    },
+                ),
+            )
+            .unwrap();
 
         self.buffer()
     }

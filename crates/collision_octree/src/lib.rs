@@ -98,7 +98,7 @@ impl<T: HasBoundingBox> Octree<T> {
         &self,
         // You are recommended to check bounded boxes first in these checks.
         bounding_box_intersection_check: impl Fn(BoundingBox) -> bool,
-        object_intersection_check: impl Fn(&T) -> bool,
+        mut object_intersection_check: impl FnMut(&T) -> bool,
         stack: &mut Vec<usize>,
     ) -> bool {
         stack.clear();
