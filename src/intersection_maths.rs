@@ -39,6 +39,7 @@ pub struct IntersectionTriangle {
     pub crossed_normal: Vec3,
 }
 
+// Adapted from https://www.iquilezles.org/www/articles/intersectors/intersectors.htm.
 pub fn ray_triangle_intersection(
     ray_origin: Vec3,
     ray_direction: Vec3,
