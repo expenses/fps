@@ -31,7 +31,7 @@ pub struct Settings {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    futures::executor::block_on(run())
+    pollster::block_on(run())
 }
 
 #[derive(Default)]

@@ -5,7 +5,6 @@ use wgpu::util::DeviceExt;
 pub mod debug_lines;
 pub mod overlay;
 
-const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
@@ -128,6 +127,8 @@ pub struct Renderer {
     post_processing_bind_group_layout: wgpu::BindGroupLayout,
     pub fxaa_pipeline: wgpu::RenderPipeline,
     pub tonemap_pipeline: wgpu::RenderPipeline,
+
+    display_format: wgpu::TextureFormat,
 }
 
 impl Renderer {
@@ -173,6 +174,8 @@ impl Renderer {
                 None,
             )
             .await?;
+
+        let display_format = device.get_swap_chain_preferred_format();
 
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
@@ -227,7 +230,7 @@ impl Renderer {
             &surface,
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-                format: DISPLAY_FORMAT,
+                format: display_format,
                 width,
                 height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -486,7 +489,7 @@ impl Renderer {
                 "tonemap",
                 &post_processing_bind_group_layout,
                 &linear_sampler,
-                DISPLAY_FORMAT,
+                display_format,
             );
 
         let (pre_fxaa_framebuffer, fxaa_bind_group) = post_processing_framebuffer_and_bind_group(
@@ -525,7 +528,7 @@ impl Renderer {
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[DISPLAY_FORMAT.into()],
+            color_states: &[display_format.into()],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: Some(INDEX_FORMAT),
@@ -552,7 +555,7 @@ impl Renderer {
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[DISPLAY_FORMAT.into()],
+            color_states: &[display_format.into()],
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: Some(INDEX_FORMAT),
@@ -608,6 +611,8 @@ impl Renderer {
             vs_static_model,
             vs_animated_model,
             fs_alpha_clip_model,
+
+            display_format,
         })
     }
 
@@ -622,7 +627,7 @@ impl Renderer {
             &self.surface,
             &wgpu::SwapChainDescriptor {
                 usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-                format: DISPLAY_FORMAT,
+                format: self.display_format,
                 width: width,
                 height: height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -648,7 +653,7 @@ impl Renderer {
             "fxaa",
             &self.post_processing_bind_group_layout,
             &self.linear_sampler,
-            DISPLAY_FORMAT,
+            self.display_format,
         );
         self.pre_fxaa_framebuffer = pre_fxaa_framebuffer;
         self.fxaa_bind_group = fxaa_bind_group;

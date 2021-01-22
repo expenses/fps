@@ -9,7 +9,6 @@ anyhow = "1.0.38"
 base64 = "0.13.0"
 bytemuck = { version = "1.5.0", features = ["derive"] }
 env_logger = "0.8.2"
-futures = "0.3.12"
 gltf = { version = "0.15.2", default-features = false, features = ["utils", "names", "extras", "KHR_lights_punctual"] }
 image = { version = "0.23.12", default-features = false, features = ["png"] }
 legion = { version = "0.3.1", default-features = false, features = ["codegen", "parallel"] }
@@ -18,9 +17,10 @@ lyon_tessellation = "0.17.3"
 ncollide3d = "0.27.0"
 serde_json = "1.0.61"
 ultraviolet = { git = "https://github.com/termhn/ultraviolet", features = ["bytemuck"] }
-wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", rev = "c0418b1b8ae22e86fd0e7a7eb486e04dcb0bd6f5" }
+wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", rev = "ab8b0e3766558d541206da2790dfd63f15b13bc4" }
 winit = "0.24.0"
 num-integer = "0.1.44"
+pollster = "0.2.0"
 
 collision_octree = { path = "crates/collision_octree" }
 animation = { path = "crates/animation" }
