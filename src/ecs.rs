@@ -3,9 +3,12 @@ use crate::intersection_maths::{ray_bounding_box_intersection, ray_triangle_inte
 use crate::{renderer, AnimatedModelType, ModelBuffers, StaticModelType};
 use collision_octree::HasBoundingBox;
 use renderer::{AnimatedInstance, Instance};
-use ultraviolet::{Rotor3, Vec3, Vec4};
+use ultraviolet::{Rotor3, Vec3, Vec4, transform::Similarity3, bivec::Bivec3};
+use legion::{Entity, systems::CommandBuffer};
 
 pub use ultraviolet::transform::Isometry3;
+
+pub struct CanSeePlayer;
 
 pub struct VisionCone {
     section: VisionSphereSection,
@@ -49,6 +52,9 @@ fn render_animated_models(
     model: &AnimatedModelType,
     isometry: &Isometry3,
     animation_state: &mut AnimationState,
+    can_see_player: Option<&CanSeePlayer>,
+    vision_cone: Option<&VisionCone>,
+    #[resource] player_position: &PlayerPosition,
 ) {
     let index = *model as u32;
 
@@ -68,6 +74,25 @@ fn render_animated_models(
         &model.depth_first_nodes,
     );
 
+    if can_see_player.is_some() {
+        let vision_cone = vision_cone.unwrap();
+
+        let mut transform = animation_state.joints.get_global_transform(vision_cone.node_index);
+
+        let vector = player_position.0 - (isometry.translation + transform.translation);
+        let facing = -vector.x.atan2(vector.z) - 90.0_f32.to_radians();
+        let x = ultraviolet::Mat3::from_rotation_y(facing) * vector;
+        println!("{:?}", x);
+        let angle = x.y.atan2(x.x) - 90.0_f32.to_radians();
+
+        // Reverse the model rotation then rotate by the facing to the player.
+        let rotation_around_y = isometry.rotation.reversed() * Rotor3::from_rotation_xz(facing);
+
+        transform.rotation = Rotor3::from_rotation_xy(angle) * rotation_around_y;
+
+        animation_state.joints.set_global_transform(vision_cone.node_index, transform);
+    }
+
     for joint_transform in animation_state.joints.iter(
         &model.joint_indices_to_node_indices,
         &model.inverse_bind_matrices,
@@ -81,9 +106,11 @@ fn debug_render_vision_cones(
     #[resource] buffer: &mut DebugVisionCones,
     #[resource] player_position: &PlayerPosition,
     #[resource] level: &Level,
+    entity: &Entity,
     isometry: &Isometry3,
     vision_cone: &VisionCone,
     animation_state: &AnimationState,
+    command_buffer: &mut CommandBuffer,
 ) {
     let joint_transform = animation_state
         .joints
@@ -139,6 +166,12 @@ fn debug_render_vision_cones(
     } else {
         Vec4::new(0.0, 1.0, 0.0, 1.0)
     };
+
+    if player_is_visible {
+        command_buffer.add_component(*entity, CanSeePlayer);
+    } else {
+        //command_buffer.remove_component::<CanSeePlayer>(*entity);
+    }
 
     crate::mesh_generation::vision_sphere_section(
         vision_cone.vision_distance, vision_cone.field_of_view,
