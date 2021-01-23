@@ -19,6 +19,8 @@ use ultraviolet::{transform::Isometry3, Mat3, Mat4, Rotor3, Vec2, Vec3, Vec4};
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
+const GREEN: Vec4 = Vec4::new(0.0, 1.0, 0.0, 1.0);
+
 pub struct Settings {
     draw_gun: bool,
     cursor_grab: bool,
@@ -533,6 +535,13 @@ async fn run() -> anyhow::Result<()> {
                 collision_handling(&mut player, &level, &mut debug_contact_points_buffer);
             }
 
+            if player.position.x.is_nan() {
+                println!("Player position is NaN! Resetting");
+                player.position = Vec3::zero();
+                player.on_ground = true;
+                player.velocity = Vec3::zero();
+            }
+
             drop(level);
 
             resources.insert(ecs::PlayerPosition(player.position + Player::HEAD_RELATIVE));
@@ -546,13 +555,11 @@ async fn run() -> anyhow::Result<()> {
             let mut debug_vision_cones = resources.get_mut::<ecs::DebugVisionCones>().unwrap();
             let level = resources.get::<assets::Level>().unwrap();
 
-            /*
             let static_view = fps_view_rh(
                 Player::HEAD_RELATIVE,
                 player.facing.vertical,
                 player.facing.horizontal,
             );
-            */
 
             let camera_view = fps_view_rh(
                 player.position + Player::HEAD_RELATIVE,
@@ -999,6 +1006,59 @@ fn contact_point<S: ncollide3d::shape::Shape<f32>>(
     deepest_contact
 }
 
+
+fn capsule_contact_point<S: ncollide3d::shape::Shape<f32>>(
+    level: &assets::Level,
+    shape: &S,
+    capsule_position: Vec3,
+) -> Option<(Vec3, Vec3, f32)> {
+    // Small optimisation to reduce `println` spam in case something bad happened.
+    if capsule_position.x.is_nan() {
+        return None;
+    }
+
+    let aabb = shape.local_aabb();
+    let shape_bounding_box = collision_octree::BoundingBox {
+        min: vec3_from(aabb.mins.coords) + capsule_position,
+        max: vec3_from(aabb.maxs.coords) + capsule_position,
+    };
+    let mut stack = Vec::with_capacity(8);
+
+    let mut deepest_contact: Option<(Vec3, Vec3, f32)> = None;
+
+    // It would be good to use `intersects` here and return after the first
+    // successful contact, but to enumate the ncollide trimesh we need to find
+    // the deepest contact, which requires iterating through all of them.
+    level.collision_octree.iterate(
+        |bounding_box| shape_bounding_box.intersects(bounding_box),
+        |triangle| {
+            if !shape_bounding_box.intersects(triangle.bounding_box()) {
+                return;
+            }
+
+            if let Some((normal, world_position, depth)) = crate::intersection_maths::capsule_triangle_intersection(
+                capsule_position,
+                Player::RADIUS,
+                Player::BODY_BASE_DEPTH,
+                triangle.intersection_triangle,
+            ) {
+                match deepest_contact {
+                    Some((_, _, deepest_depth)) => {
+                        if depth > deepest_depth {
+                            deepest_contact = Some((normal, world_position, depth));
+                        }
+                    }
+                    None => deepest_contact = Some((normal, world_position, depth)),
+                }
+            }
+        },
+        &mut stack,
+    );
+
+    deepest_contact
+}
+
+
 fn collision_handling(
     player: &mut Player,
     level: &assets::Level,
@@ -1057,25 +1117,25 @@ fn collision_handling(
     for _ in 0..10 {
         body_resolution_iterations += 1;
 
-        let body_contact = contact_point(
+        let body_contact = capsule_contact_point(
             level,
             &player.body_shape,
             player.position + Player::BODY_RELATIVE,
         );
 
         match body_contact {
-            Some(contact) => {
-                let contact_point = vec3_from(contact.world2.coords);
+            Some((normal, contact_point, contact_depth)) => {
                 let epsilon = 0.001;
 
-                if contact_point.y - player.position.y - Player::BODY_BOTTOM_DISTANCE_FROM_GROUND
-                    < Player::RADIUS
+                println!("{:?}", contact_point.y - player.position.y - Player::BODY_BOTTOM_DISTANCE_FROM_GROUND - Player::RADIUS + epsilon);
+
+                if contact_point.y - player.position.y - Player::BODY_BOTTOM_DISTANCE_FROM_GROUND - Player::RADIUS + epsilon < 0.0
                 {
-                    let normal = vec3_from(contact.normal.into_inner());
                     let slope = normal.dot(-Vec3::unit_y()).acos();
+                    println!("d: {:?}", slope.to_degrees());
 
                     if slope < 45.0_f32.to_radians() {
-                        // If the deepest(?) contact point is the bottom hemisphere
+                        // If the deepest contact point is the bottom hemisphere
                         // contacting the ground at an acceptable angle, we stop
                         // doing body contacts and 'break' to do the feet contacts.
                         break;
@@ -1096,7 +1156,7 @@ fn collision_handling(
                         renderer::debug_lines::draw_line(
                             contact_point,
                             Vec3::new(player.position.x, contact_point.y, player.position.z),
-                            Vec4::new(0.0, 1.0, 0.0, 1.0),
+                            GREEN,
                             |vertex| debug_contact_points_buffer.push(vertex),
                         );
                         player.position += push;
@@ -1114,10 +1174,10 @@ fn collision_handling(
                         (player.position + Player::HEAD_RELATIVE) - contact_point;
 
                     let push_strength = (Player::RADIUS - vector_away_from_ceiling.mag()) + epsilon;
+                    let push = vector_away_from_ceiling.normalized() * push_strength;
 
-                    player.position += vector_away_from_ceiling.normalized() * push_strength;
+                    player.position += push;
 
-                    let normal = vec3_from(contact.normal.into_inner());
                     let slope = normal.dot(Vec3::unit_y()).acos();
 
                     // Kill the velocity if jumping, but not if falling.
@@ -1145,6 +1205,7 @@ fn collision_handling(
 
                     let mut vector_away_from_wall = player.position - contact_point;
 
+                    // This is an area where a NaN could be introduced.
                     vector_away_from_wall.y = 0.0;
                     let push_strength = (Player::RADIUS - vector_away_from_wall.mag()) + epsilon;
                     let push = vector_away_from_wall.normalized() * push_strength;
@@ -1154,8 +1215,6 @@ fn collision_handling(
                         "player: {:?}\nvector_away_from_wall: {:?}\npush: {:?}\ncp {:?} ps {}\nnew: {:?}\nxxx",
                         player.position, vector_away_from_wall, push, contact_point, push_strength, player.position + push
                     );
-
-                    println!("{:?}", push.y);
                     */
 
                     player.position += push;
