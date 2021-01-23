@@ -212,7 +212,6 @@ pub struct Level {
     pub lights_bind_group: wgpu::BindGroup,
     pub properties: HashMap<usize, Property>,
     pub node_tree: NodeTree,
-    pub collision_mesh: ncollide3d::shape::TriMesh<f32>,
     pub nav_mesh: (Vec<Vec3>, Vec<u32>),
     pub collision_octree: collision_octree::Octree<Triangle>,
 }
@@ -340,20 +339,6 @@ impl Level {
             }
         }
 
-        let collision_mesh = ncollide3d::shape::TriMesh::new(
-            collision_geometry
-                .vertices
-                .iter()
-                .map(|&(position, _)| vec3_into(position))
-                .collect(),
-            collision_geometry
-                .indices
-                .chunks(3)
-                .map(|chunk| [chunk[0] as usize, chunk[1] as usize, chunk[2] as usize].into())
-                .collect(),
-            None,
-        );
-
         let collision_triangles: Vec<_> = collision_geometry
             .indices
             .chunks(3)
@@ -391,7 +376,6 @@ impl Level {
             lights_bind_group,
             properties,
             node_tree,
-            collision_mesh,
             nav_mesh: (nav_mesh.vertices, nav_mesh.indices),
             collision_octree,
         })

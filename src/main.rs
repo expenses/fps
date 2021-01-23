@@ -5,6 +5,7 @@ mod buffers;
 mod ecs;
 mod intersection_maths;
 mod renderer;
+mod mesh_generation;
 
 use crate::assets::StagingModelBuffers;
 use crate::buffers::{AnimatedModelType, ModelBuffers, StaticModelType};
@@ -219,7 +220,7 @@ async fn run() -> anyhow::Result<()> {
             match model {
                 EitherModel::Animated(AnimatedModelType::Mouse) => {
                     entry.add_component(ecs::VisionCone::new(
-                        ncollide3d::shape::Cone::new(10.0, 20.0),
+                        20.0, 45.0_f32.to_radians(),
                         model_buffers.animation_info.mouse_head_node,
                     ));
                 }
@@ -255,12 +256,12 @@ async fn run() -> anyhow::Result<()> {
         wgpu::BufferUsage::VERTEX,
     );
 
-    let mut debug_collision_geometry_buffer = DynamicBuffer::new(
+    /*let mut debug_collision_geometry_buffer = DynamicBuffer::new(
         &renderer.device,
         40,
         "debug collsion geometry buffer",
         wgpu::BufferUsage::VERTEX,
-    );
+    );*/
 
     let mut debug_player_collider_buffer = DynamicBuffer::new(
         &renderer.device,
@@ -286,12 +287,12 @@ async fn run() -> anyhow::Result<()> {
     resources.insert(model_buffers);
     resources.insert(ecs::DebugVisionCones(debug_vision_cones_buffer));
 
-    render_debug_mesh(
+    /*render_debug_mesh(
         &level.collision_mesh,
         &Isometry3::identity(),
         &mut debug_collision_geometry_buffer,
         Vec4::new(1.0, 0.5, 0.25, 1.0),
-    );
+    );*/
 
     /*
     for chunk in level.nav_mesh.1.chunks(3) {
@@ -322,7 +323,7 @@ async fn run() -> anyhow::Result<()> {
     resources.insert(level);
 
     debug_collision_octree_buffer.upload(&renderer);
-    debug_collision_geometry_buffer.upload(&renderer);
+    //debug_collision_geometry_buffer.upload(&renderer);
 
     let mut decal_buffer = DynamicBuffer::new(
         &renderer.device,

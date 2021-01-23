@@ -2,7 +2,6 @@ use crate::assets::{AnimationJoints, Level};
 use crate::intersection_maths::{ray_bounding_box_intersection, ray_triangle_intersection};
 use crate::{renderer, AnimatedModelType, ModelBuffers, StaticModelType};
 use collision_octree::HasBoundingBox;
-use ncollide3d::transformation::ToTriMesh;
 use renderer::{AnimatedInstance, Instance};
 use ultraviolet::{Rotor3, Vec3, Vec4};
 
@@ -10,18 +9,17 @@ pub use ultraviolet::transform::Isometry3;
 
 pub struct VisionCone {
     section: VisionSphereSection,
-    trimesh: ncollide3d::shape::TriMesh<f32>,
     node_index: usize,
-    half_height: f32,
+    vision_distance: f32,
+    field_of_view: f32,
 }
 
 impl VisionCone {
-    pub fn new(cone: ncollide3d::shape::Cone<f32>, node_index: usize) -> Self {
+    pub fn new(vision_distance: f32, field_of_view: f32, node_index: usize) -> Self {
         Self {
-            trimesh: cone.to_trimesh(8).into(),
-            section: VisionSphereSection::from_cone(&cone),
+            section: VisionSphereSection::new(vision_distance, field_of_view),
             node_index,
-            half_height: cone.half_height,
+            vision_distance, field_of_view,
         }
     }
 }
@@ -142,9 +140,10 @@ fn debug_render_vision_cones(
         Vec4::new(0.0, 1.0, 0.0, 1.0)
     };
 
-    let mut cone_isometry = origin_isometry;
-    cone_isometry.prepend_translation(Vec3::new(0.0, -vision_cone.half_height, 0.0));
-    crate::render_debug_mesh(&vision_cone.trimesh, &cone_isometry, &mut buffer.0, colour);
+    crate::mesh_generation::vision_sphere_section(
+        vision_cone.vision_distance, vision_cone.field_of_view,
+        origin_isometry, &mut buffer.0, colour
+    );
 }
 
 struct VisionSphereSection {
@@ -153,13 +152,10 @@ struct VisionSphereSection {
 }
 
 impl VisionSphereSection {
-    fn from_cone(cone: &ncollide3d::shape::Cone<f32>) -> Self {
-        let distance = cone.half_height * 2.0;
-        let width = cone.radius;
-
+    fn new(vision_distance: f32, field_of_view: f32) -> Self {
         Self {
-            vision_distance_sq: distance * distance,
-            field_of_view_cosine: distance.atan2(width).cos(),
+            vision_distance_sq: vision_distance * vision_distance,
+            field_of_view_cosine: field_of_view.cos(),
         }
     }
 
