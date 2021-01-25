@@ -4,11 +4,11 @@ mod assets;
 mod buffers;
 mod ecs;
 mod intersection_maths;
-mod renderer;
 mod mesh_generation;
+mod renderer;
 
 use crate::assets::StagingModelBuffers;
-use crate::buffers::{AnimatedModelType, ModelBuffers, StaticModelType};
+use crate::buffers::{ModelBuffers, ModelIndex};
 use crate::intersection_maths::{ray_bounding_box_intersection, ray_triangle_intersection};
 use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
 use array_of_textures::ArrayOfTextures;
@@ -117,11 +117,6 @@ fn vec3_into<T: From<[f32; 3]>>(vec3: Vec3) -> T {
     arr.into()
 }
 
-enum EitherModel {
-    Static(StaticModelType),
-    Animated(AnimatedModelType),
-}
-
 async fn run() -> anyhow::Result<()> {
     let level_filename = std::env::args().nth(1).unwrap();
     let level_bytes = std::fs::read(&level_filename)?;
@@ -189,51 +184,43 @@ async fn run() -> anyhow::Result<()> {
 
     for (node_index, property) in level.properties.iter() {
         if let assets::Property::Spawn(character) = property {
-            let model = match &character[..] {
-                "robot" => EitherModel::Animated(AnimatedModelType::Robot),
-                "mouse" => EitherModel::Animated(AnimatedModelType::Mouse),
-                "tentacle" => EitherModel::Animated(AnimatedModelType::Tentacle),
-                "mate_bottle" => EitherModel::Static(StaticModelType::MateBottle),
-                "bush" => EitherModel::Static(StaticModelType::Bush),
-                "mario_cube" => EitherModel::Animated(AnimatedModelType::MarioCube),
-                "juggling_balls" => EitherModel::Animated(AnimatedModelType::JugglingBalls),
-                "explosion" => EitherModel::Animated(AnimatedModelType::Explosion),
-                other => {
-                    println!("Model spawn not handled: {}", other);
+            let model_index = match model_buffers.get_index(character) {
+                Some(index) => index,
+                None => {
+                    println!("Model spawn not handled: {}", character);
                     continue;
                 }
             };
 
-            let entity = match model {
-                EitherModel::Static(model) => world.push((
-                    model,
+            let entity = match model_index {
+                ModelIndex::Static(index) => world.push((
+                    ecs::StaticModel(index),
                     level.node_tree.transform_of(*node_index).into_isometry(),
                 )),
-                EitherModel::Animated(model) => world.push((
-                    model,
+                ModelIndex::Animated(index) => world.push((
+                    ecs::AnimatedModel(index),
                     level.node_tree.transform_of(*node_index).into_isometry(),
                 )),
             };
 
             let mut entry = world.entry(entity).unwrap();
 
-            match model {
-                EitherModel::Animated(AnimatedModelType::Mouse) => {
+            match &character[..] {
+                "mouse" => {
                     entry.add_component(ecs::VisionCone::new(
-                        20.0, 45.0_f32.to_radians(),
+                        20.0,
+                        45.0_f32.to_radians(),
                         model_buffers.animation_info.mouse_head_node,
                     ));
                 }
                 _ => {}
             }
 
-            if let EitherModel::Animated(model) = model {
-                let joints = model_buffers.clone_animation_joints(&model);
-                let animation = match model {
-                    AnimatedModelType::Tentacle => {
-                        model_buffers.animation_info.tentacle_poke_animation
-                    }
-                    AnimatedModelType::Mouse => model_buffers.animation_info.mouse_idle_animation,
+            if let ModelIndex::Animated(index) = model_index {
+                let joints = model_buffers.clone_animation_joints(index);
+                let animation = match &character[..] {
+                    "tentacle" => model_buffers.animation_info.tentacle_poke_animation,
+                    "mouse" => model_buffers.animation_info.mouse_idle_animation,
                     _ => 0,
                 };
 

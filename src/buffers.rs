@@ -1,6 +1,7 @@
 use crate::array_of_textures::ArrayOfTextures;
 use crate::assets::{AnimatedModel, AnimationJoints, Level, Model, StagingModelBuffers};
 use crate::renderer::{AnimatedInstance, Instance, Renderer, Vertex, INDEX_FORMAT};
+use std::collections::HashMap;
 use ultraviolet::Mat4;
 use wgpu::util::DeviceExt;
 
@@ -10,11 +11,20 @@ struct StaticModelBuffer {
 }
 
 impl StaticModelBuffer {
-    fn load(model: Model) -> Self {
-        Self {
+    fn load(
+        model: Model,
+        model_name: &'static str,
+        static_models: &mut Vec<Self>,
+        model_name_to_index: &mut HashMap<&'static str, ModelIndex>,
+    ) {
+        let index = static_models.len();
+
+        model_name_to_index.insert(model_name, ModelIndex::Static(index));
+
+        static_models.push(Self {
             instances: Vec::new(),
             model,
-        }
+        });
     }
 }
 
@@ -25,12 +35,21 @@ struct AnimatedModelBuffer {
 }
 
 impl AnimatedModelBuffer {
-    fn load(model: AnimatedModel) -> Self {
-        Self {
+    fn load(
+        model: AnimatedModel,
+        model_name: &'static str,
+        animated_models: &mut Vec<Self>,
+        model_name_to_index: &mut HashMap<&'static str, ModelIndex>,
+    ) {
+        let index = animated_models.len();
+
+        model_name_to_index.insert(model_name, ModelIndex::Animated(index));
+
+        animated_models.push(Self {
             instances: Vec::new(),
             joints: Vec::new(),
             model,
-        }
+        });
     }
 }
 
@@ -214,23 +233,15 @@ struct Offset {
     instance_offset: u32,
 }
 
-#[derive(Copy, Clone)]
-pub enum StaticModelType {
-    MateBottle = 0,
-    Bush = 1,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum AnimatedModelType {
-    Robot = 0,
-    Mouse = 1,
-    Tentacle = 2,
-    MarioCube = 3,
-    JugglingBalls = 4,
-    Explosion = 5,
+#[derive(Clone, Copy)]
+pub enum ModelIndex {
+    Static(usize),
+    Animated(usize),
 }
 
 pub struct ModelBuffers {
+    model_name_to_index: HashMap<&'static str, ModelIndex>,
+
     static_hand_models: Vec<Model>,
 
     animated_models: Vec<AnimatedModelBuffer>,
@@ -268,6 +279,8 @@ impl ModelBuffers {
     ) -> anyhow::Result<Self> {
         let mut animation_info = AnimationInfo::default();
 
+        let mut model_name_to_index = HashMap::new();
+
         let static_hand_models = vec![Model::load_gltf(
             include_bytes!("../models/mate_gun.glb"),
             &renderer,
@@ -277,114 +290,159 @@ impl ModelBuffers {
             &mut static_staging_buffers,
         )?];
 
-        let static_models = vec![
-            StaticModelBuffer::load(Model::load_gltf(
-                include_bytes!("../models/mate.glb"),
-                &renderer,
-                &mut init_encoder,
-                "mate bottle",
-                &mut array_of_textures,
-                &mut static_staging_buffers,
-            )?),
-            StaticModelBuffer::load(Model::load_gltf(
-                include_bytes!("../models/bush.glb"),
-                &renderer,
-                &mut init_encoder,
+        let mut static_models = Vec::new();
+
+        {
+            StaticModelBuffer::load(
+                Model::load_gltf(
+                    include_bytes!("../models/mate.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "mate bottle",
+                    &mut array_of_textures,
+                    &mut static_staging_buffers,
+                )?,
+                "mate_bottle",
+                &mut static_models,
+                &mut model_name_to_index,
+            );
+
+            StaticModelBuffer::load(
+                Model::load_gltf(
+                    include_bytes!("../models/bush.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "bush",
+                    &mut array_of_textures,
+                    &mut static_staging_buffers,
+                )?,
                 "bush",
-                &mut array_of_textures,
-                &mut static_staging_buffers,
-            )?),
-        ];
+                &mut static_models,
+                &mut model_name_to_index,
+            );
+        }
 
         let mut animated_staging_buffers = StagingModelBuffers::default();
 
-        let animated_models = vec![
-            AnimatedModelBuffer::load(AnimatedModel::load_gltf(
-                include_bytes!("../models/warehouse_robot.glb"),
-                &renderer,
-                &mut init_encoder,
-                "warehouse robot",
-                |_, joints| {
-                    animation_info.robot_base_node = joints
-                        .unwrap()
-                        .find(|node| node.name() == Some("Base"))
-                        .map(|node| node.index())
-                        .unwrap();
-                },
-                &mut array_of_textures,
-                &mut animated_staging_buffers,
-            )?),
-            AnimatedModelBuffer::load(AnimatedModel::load_gltf(
-                include_bytes!("../models/mouse.glb"),
-                &renderer,
-                &mut init_encoder,
+        let mut animated_models = Vec::new();
+
+        {
+            AnimatedModelBuffer::load(
+                AnimatedModel::load_gltf(
+                    include_bytes!("../models/warehouse_robot.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "warehouse robot",
+                    |_, joints| {
+                        animation_info.robot_base_node = joints
+                            .unwrap()
+                            .find(|node| node.name() == Some("Base"))
+                            .map(|node| node.index())
+                            .unwrap();
+                    },
+                    &mut array_of_textures,
+                    &mut animated_staging_buffers,
+                )?,
+                "robot",
+                &mut animated_models,
+                &mut model_name_to_index,
+            );
+            AnimatedModelBuffer::load(
+                AnimatedModel::load_gltf(
+                    include_bytes!("../models/mouse.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "mouse",
+                    |animations, joints| {
+                        let mut animations: std::collections::HashMap<_, _> = animations
+                            .map(|animation| (animation.name().unwrap(), animation.index()))
+                            .collect();
+
+                        animation_info.mouse_idle_animation = animations.remove("Idle").unwrap();
+                        animation_info.mouse_walk_animation = animations.remove("Walk").unwrap();
+
+                        if !animations.is_empty() {
+                            log::debug!("Unhandled animations:");
+                            animations.keys().for_each(|name| log::debug!("{}", name));
+                        }
+
+                        animation_info.mouse_head_node = joints
+                            .unwrap()
+                            .find(|node| node.name() == Some("Head"))
+                            .map(|node| node.index())
+                            .unwrap();
+                    },
+                    &mut array_of_textures,
+                    &mut animated_staging_buffers,
+                )?,
                 "mouse",
-                |animations, joints| {
-                    let mut animations: std::collections::HashMap<_, _> = animations
-                        .map(|animation| (animation.name().unwrap(), animation.index()))
-                        .collect();
+                &mut animated_models,
+                &mut model_name_to_index,
+            );
+            AnimatedModelBuffer::load(
+                AnimatedModel::load_gltf(
+                    include_bytes!("../models/tentacle.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "tentacle",
+                    |mut animations, _| {
+                        assert_eq!(animations.clone().count(), 2);
 
-                    animation_info.mouse_idle_animation = animations.remove("Idle").unwrap();
-                    animation_info.mouse_walk_animation = animations.remove("Walk").unwrap();
-
-                    if !animations.is_empty() {
-                        log::debug!("Unhandled animations:");
-                        animations.keys().for_each(|name| log::debug!("{}", name));
-                    }
-
-                    animation_info.mouse_head_node = joints
-                        .unwrap()
-                        .find(|node| node.name() == Some("Head"))
-                        .map(|node| node.index())
-                        .unwrap();
-                },
-                &mut array_of_textures,
-                &mut animated_staging_buffers,
-            )?),
-            AnimatedModelBuffer::load(AnimatedModel::load_gltf(
-                include_bytes!("../models/tentacle.glb"),
-                &renderer,
-                &mut init_encoder,
+                        animation_info.tentacle_poke_animation = animations
+                            .find(|animation| animation.name() == Some("poke_baked"))
+                            .map(|animation| animation.index())
+                            .unwrap();
+                    },
+                    &mut array_of_textures,
+                    &mut animated_staging_buffers,
+                )?,
                 "tentacle",
-                |mut animations, _| {
-                    assert_eq!(animations.clone().count(), 2);
-
-                    animation_info.tentacle_poke_animation = animations
-                        .find(|animation| animation.name() == Some("poke_baked"))
-                        .map(|animation| animation.index())
-                        .unwrap();
-                },
-                &mut array_of_textures,
-                &mut animated_staging_buffers,
-            )?),
-            AnimatedModelBuffer::load(AnimatedModel::load_gltf(
-                include_bytes!("../models/mario_kart_square.glb"),
-                &renderer,
-                &mut init_encoder,
-                "mario cube",
-                |_, _| {},
-                &mut array_of_textures,
-                &mut animated_staging_buffers,
-            )?),
-            AnimatedModelBuffer::load(AnimatedModel::load_gltf(
-                include_bytes!("../models/juggling_balls.glb"),
-                &renderer,
-                &mut init_encoder,
-                "jugging balls",
-                |_, _| {},
-                &mut array_of_textures,
-                &mut animated_staging_buffers,
-            )?),
-            AnimatedModelBuffer::load(AnimatedModel::load_gltf(
-                include_bytes!("../models/explosion.glb"),
-                &renderer,
-                &mut init_encoder,
+                &mut animated_models,
+                &mut model_name_to_index,
+            );
+            AnimatedModelBuffer::load(
+                AnimatedModel::load_gltf(
+                    include_bytes!("../models/mario_kart_square.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "mario cube",
+                    |_, _| {},
+                    &mut array_of_textures,
+                    &mut animated_staging_buffers,
+                )?,
+                "mario_cube",
+                &mut animated_models,
+                &mut model_name_to_index,
+            );
+            AnimatedModelBuffer::load(
+                AnimatedModel::load_gltf(
+                    include_bytes!("../models/juggling_balls.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "jugging_balls",
+                    |_, _| {},
+                    &mut array_of_textures,
+                    &mut animated_staging_buffers,
+                )?,
+                "juggling_balls",
+                &mut animated_models,
+                &mut model_name_to_index,
+            );
+            AnimatedModelBuffer::load(
+                AnimatedModel::load_gltf(
+                    include_bytes!("../models/explosion.glb"),
+                    &renderer,
+                    &mut init_encoder,
+                    "explosion",
+                    |_, _| {},
+                    &mut array_of_textures,
+                    &mut animated_staging_buffers,
+                )?,
                 "explosion",
-                |_, _| {},
-                &mut array_of_textures,
-                &mut animated_staging_buffers,
-            )?),
-        ];
+                &mut animated_models,
+                &mut model_name_to_index,
+            );
+        }
 
         let animated_model_offsets = vec![
             Offset {
@@ -475,19 +533,23 @@ impl ModelBuffers {
                 renderer,
                 "static model alpha blend draws",
             ),
+
+            model_name_to_index,
         })
     }
 
-    pub fn get_static_buffer(&mut self, model: &StaticModelType) -> &mut Vec<Instance> {
-        &mut self.static_models[*model as usize].instances
+    pub fn get_index(&self, model_name: &str) -> Option<ModelIndex> {
+        self.model_name_to_index.get(model_name).cloned()
+    }
+
+    pub fn get_static_buffer(&mut self, index: usize) -> &mut Vec<Instance> {
+        &mut self.static_models[index].instances
     }
 
     pub fn get_animated_buffer(
         &mut self,
-        model: &AnimatedModelType,
+        index: usize,
     ) -> (&mut Vec<AnimatedInstance>, &AnimatedModel, &mut Vec<Mat4>) {
-        let index = *model as usize;
-
         let AnimatedModelBuffer {
             instances,
             model,
@@ -498,11 +560,8 @@ impl ModelBuffers {
         (instances, model, joints)
     }
 
-    pub fn clone_animation_joints(&self, model: &AnimatedModelType) -> AnimationJoints {
-        self.animated_models[*model as usize]
-            .model
-            .animation_joints
-            .clone()
+    pub fn clone_animation_joints(&self, index: usize) -> AnimationJoints {
+        self.animated_models[index].model.animation_joints.clone()
     }
 
     pub fn upload(

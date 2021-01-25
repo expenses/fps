@@ -65,10 +65,10 @@ pub struct AnimatedInstance {
 }
 
 impl AnimatedInstance {
-    pub fn new(transform: Mat4, model_index: u32, num_joints: u32) -> Self {
+    pub fn new(transform: Mat4, model_index: usize, num_joints: u32) -> Self {
         Self {
             transform,
-            model_index,
+            model_index: model_index as u32,
             num_joints,
         }
     }

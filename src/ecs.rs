@@ -1,9 +1,12 @@
 use crate::assets::{AnimationJoints, Level};
 use crate::intersection_maths::{ray_bounding_box_intersection, ray_triangle_intersection};
-use crate::{renderer, AnimatedModelType, ModelBuffers, StaticModelType};
+use crate::{renderer, ModelBuffers};
 use collision_octree::HasBoundingBox;
 use renderer::{AnimatedInstance, Instance};
 use ultraviolet::{Rotor3, Vec3, Vec4};
+
+pub struct StaticModel(pub usize);
+pub struct AnimatedModel(pub usize);
 
 pub use ultraviolet::transform::Isometry3;
 
@@ -19,7 +22,8 @@ impl VisionCone {
         Self {
             section: VisionSphereSection::new(vision_distance, field_of_view),
             node_index,
-            vision_distance, field_of_view,
+            vision_distance,
+            field_of_view,
         }
     }
 }
@@ -36,23 +40,23 @@ pub struct PlayerPosition(pub Vec3);
 #[legion::system(for_each)]
 fn render_static_models(
     #[resource] model_buffers: &mut ModelBuffers,
-    model: &StaticModelType,
+    model: &StaticModel,
     isometry: &Isometry3,
 ) {
-    let instances = model_buffers.get_static_buffer(model);
+    let instances = model_buffers.get_static_buffer(model.0);
     instances.push(Instance::new(isometry.into_homogeneous_matrix()));
 }
 
 #[legion::system(for_each)]
 fn render_animated_models(
     #[resource] model_buffers: &mut ModelBuffers,
-    model: &AnimatedModelType,
+    model: &AnimatedModel,
     isometry: &Isometry3,
     animation_state: &mut AnimationState,
 ) {
-    let index = *model as u32;
+    let &AnimatedModel(index) = model;
 
-    let (instances, model, staging_buffer) = model_buffers.get_animated_buffer(model);
+    let (instances, model, staging_buffer) = model_buffers.get_animated_buffer(index);
     instances.push(AnimatedInstance::new(
         isometry.into_homogeneous_matrix(),
         index,
@@ -141,8 +145,11 @@ fn debug_render_vision_cones(
     };
 
     crate::mesh_generation::vision_sphere_section(
-        vision_cone.vision_distance, vision_cone.field_of_view,
-        origin_isometry, &mut buffer.0, colour
+        vision_cone.vision_distance,
+        vision_cone.field_of_view,
+        origin_isometry,
+        &mut buffer.0,
+        colour,
     );
 }
 
