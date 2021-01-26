@@ -693,8 +693,11 @@ async fn run() -> anyhow::Result<()> {
 
                     // Render opaque and alpha-clipped things.
 
-                    model_buffers.render_opaque(&mut render_pass, &renderer, settings.draw_gun);
-                    model_buffers.render_alpha_clip(&mut render_pass, &renderer, settings.draw_gun);
+                    model_buffers.render_opaque_and_alpha_clip(
+                        &mut render_pass,
+                        &renderer,
+                        settings.draw_gun,
+                    );
 
                     // Render the skybox
 

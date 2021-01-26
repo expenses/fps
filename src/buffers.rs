@@ -829,6 +829,10 @@ impl ModelBuffers {
             ),
         };
 
+        if buffer_view.size == 0 {
+            return;
+        }
+
         render_pass.set_pipeline(pipeline);
         render_pass.set_push_constants(
             wgpu::ShaderStage::VERTEX,
@@ -845,7 +849,7 @@ impl ModelBuffers {
         );
     }
 
-    pub fn render_opaque<'a>(
+    pub fn render_opaque_and_alpha_clip<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
@@ -853,6 +857,7 @@ impl ModelBuffers {
     ) {
         if render_hand_model {
             self.render_static_gun(render_pass, renderer, GeometryType::Opaque);
+            self.render_static_gun(render_pass, renderer, GeometryType::AlphaClip);
         }
 
         self.render_static(
@@ -862,29 +867,18 @@ impl ModelBuffers {
             &self.static_model_opaque_draws,
         );
 
-        self.render_animated(
-            render_pass,
-            renderer,
-            &renderer.render_pipelines.animated_opaque,
-            &self.animated_model_opaque_draws,
-        );
-    }
-
-    pub fn render_alpha_clip<'a>(
-        &'a self,
-        render_pass: &mut wgpu::RenderPass<'a>,
-        renderer: &'a Renderer,
-        render_hand_model: bool,
-    ) {
-        if render_hand_model {
-            self.render_static_gun(render_pass, renderer, GeometryType::AlphaClip);
-        }
-
         self.render_static(
             render_pass,
             renderer,
             &renderer.render_pipelines.static_alpha_clip,
             &self.static_model_alpha_clip_draws,
+        );
+
+        self.render_animated(
+            render_pass,
+            renderer,
+            &renderer.render_pipelines.animated_opaque,
+            &self.animated_model_opaque_draws,
         );
 
         self.render_animated(
