@@ -107,16 +107,12 @@ pub struct Renderer {
     pub animated_models_bind_group_layout: wgpu::BindGroupLayout,
 
     vs_static_model: wgpu::ShaderModule,
+    vs_static_gun_model: wgpu::ShaderModule,
     vs_animated_model: wgpu::ShaderModule,
     fs_model: wgpu::ShaderModule,
     fs_alpha_clip_model: wgpu::ShaderModule,
 
-    pub static_opaque_render_pipeline: wgpu::RenderPipeline,
-    pub animated_opaque_render_pipeline: wgpu::RenderPipeline,
-    pub static_alpha_blend_render_pipeline: wgpu::RenderPipeline,
-    pub animated_alpha_blend_render_pipeline: wgpu::RenderPipeline,
-    pub static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
-    pub animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+    pub render_pipelines: RenderPipelines,
 
     pub skybox_render_pipeline: wgpu::RenderPipeline,
 
@@ -321,28 +317,23 @@ impl Renderer {
         let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
         let fs_skybox = device.create_shader_module(&fs_skybox);
 
-        let (
-            array_of_textures_bind_group_layout,
-            RenderPipelines {
-                static_opaque_render_pipeline,
-                static_alpha_blend_render_pipeline,
-                static_alpha_clip_render_pipeline,
+        let vs_static_gun_model =
+            wgpu::include_spirv!("../shaders/compiled/static_gun_model.vert.spv");
+        let vs_static_gun_model = device.create_shader_module(&vs_static_gun_model);
 
-                animated_opaque_render_pipeline,
-                animated_alpha_blend_render_pipeline,
-                animated_alpha_clip_render_pipeline,
-            },
-        ) = render_pipelines_for_num_textures(
-            1,
-            &device,
-            &vs_static_model,
-            &vs_animated_model,
-            &fs_model,
-            &fs_alpha_clip_model,
-            &main_bind_group_layout,
-            &lights_bind_group_layout,
-            &animated_models_bind_group_layout,
-        );
+        let (array_of_textures_bind_group_layout, render_pipelines) =
+            render_pipelines_for_num_textures(
+                1,
+                &device,
+                &vs_static_model,
+                &vs_animated_model,
+                &fs_model,
+                &fs_alpha_clip_model,
+                &vs_static_gun_model,
+                &main_bind_group_layout,
+                &lights_bind_group_layout,
+                &animated_models_bind_group_layout,
+            );
 
         let skybox_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -590,12 +581,7 @@ impl Renderer {
             mipmap_generation_pipeline,
             linear_sampler,
 
-            static_opaque_render_pipeline,
-            animated_opaque_render_pipeline,
-            static_alpha_blend_render_pipeline,
-            animated_alpha_blend_render_pipeline,
-            static_alpha_clip_render_pipeline,
-            animated_alpha_clip_render_pipeline,
+            render_pipelines,
 
             animated_models_bind_group_layout,
 
@@ -611,6 +597,7 @@ impl Renderer {
             vs_static_model,
             vs_animated_model,
             fs_alpha_clip_model,
+            vs_static_gun_model,
 
             display_format,
         })
@@ -681,37 +668,22 @@ impl Renderer {
     }
 
     pub fn rebuild_pipelines_for_textures(&mut self, num_textures: u32) {
-        let (
-            array_of_textures_bind_group_layout,
-            RenderPipelines {
-                static_opaque_render_pipeline,
-                static_alpha_blend_render_pipeline,
-                static_alpha_clip_render_pipeline,
-
-                animated_opaque_render_pipeline,
-                animated_alpha_blend_render_pipeline,
-                animated_alpha_clip_render_pipeline,
-            },
-        ) = render_pipelines_for_num_textures(
-            num_textures,
-            &self.device,
-            &self.vs_static_model,
-            &self.vs_animated_model,
-            &self.fs_model,
-            &self.fs_alpha_clip_model,
-            &self.main_bind_group_layout,
-            &self.lights_bind_group_layout,
-            &self.animated_models_bind_group_layout,
-        );
+        let (array_of_textures_bind_group_layout, render_pipelines) =
+            render_pipelines_for_num_textures(
+                num_textures,
+                &self.device,
+                &self.vs_static_model,
+                &self.vs_animated_model,
+                &self.fs_model,
+                &self.fs_alpha_clip_model,
+                &self.vs_static_gun_model,
+                &self.main_bind_group_layout,
+                &self.lights_bind_group_layout,
+                &self.animated_models_bind_group_layout,
+            );
 
         self.array_of_textures_bind_group_layout = array_of_textures_bind_group_layout;
-        self.static_opaque_render_pipeline = static_opaque_render_pipeline;
-        self.static_alpha_blend_render_pipeline = static_alpha_blend_render_pipeline;
-        self.static_alpha_clip_render_pipeline = static_alpha_clip_render_pipeline;
-
-        self.animated_opaque_render_pipeline = animated_opaque_render_pipeline;
-        self.animated_alpha_blend_render_pipeline = animated_alpha_blend_render_pipeline;
-        self.animated_alpha_clip_render_pipeline = animated_alpha_clip_render_pipeline;
+        self.render_pipelines = render_pipelines;
     }
 }
 
@@ -1086,14 +1058,18 @@ fn post_processing_framebuffer_and_bind_group(
     (framebuffer, bind_group)
 }
 
-struct RenderPipelines {
-    static_opaque_render_pipeline: wgpu::RenderPipeline,
-    static_alpha_blend_render_pipeline: wgpu::RenderPipeline,
-    static_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+pub struct RenderPipelines {
+    pub static_opaque: wgpu::RenderPipeline,
+    pub static_alpha_blend: wgpu::RenderPipeline,
+    pub static_alpha_clip: wgpu::RenderPipeline,
 
-    animated_opaque_render_pipeline: wgpu::RenderPipeline,
-    animated_alpha_blend_render_pipeline: wgpu::RenderPipeline,
-    animated_alpha_clip_render_pipeline: wgpu::RenderPipeline,
+    pub animated_opaque: wgpu::RenderPipeline,
+    pub animated_alpha_blend: wgpu::RenderPipeline,
+    pub animated_alpha_clip: wgpu::RenderPipeline,
+
+    pub static_opaque_gun: wgpu::RenderPipeline,
+    pub static_alpha_clip_gun: wgpu::RenderPipeline,
+    pub static_alpha_blend_gun: wgpu::RenderPipeline,
 }
 
 fn render_pipelines_for_num_textures(
@@ -1104,6 +1080,8 @@ fn render_pipelines_for_num_textures(
     vs_animated_model: &wgpu::ShaderModule,
     fs_model: &wgpu::ShaderModule,
     fs_alpha_clip_model: &wgpu::ShaderModule,
+
+    vs_static_gun_model: &wgpu::ShaderModule,
 
     main_bind_group_layout: &wgpu::BindGroupLayout,
     lights_bind_group_layout: &wgpu::BindGroupLayout,
@@ -1173,7 +1151,7 @@ fn render_pipelines_for_num_textures(
     // have a seperate pipeline with depth writes off for decals.
 
     let pipelines = RenderPipelines {
-        static_opaque_render_pipeline: create_render_pipeline(PipelineParams {
+        static_opaque: create_render_pipeline(PipelineParams {
             device,
             label: "static opaque render pipeline",
             layout: &static_model_pipeline_layout,
@@ -1184,7 +1162,7 @@ fn render_pipelines_for_num_textures(
             backface_culling: true,
             depth_write: true,
         }),
-        static_alpha_clip_render_pipeline: create_render_pipeline(PipelineParams {
+        static_alpha_clip: create_render_pipeline(PipelineParams {
             device,
             label: "static alpha clip render pipeline",
             layout: &static_model_pipeline_layout,
@@ -1195,7 +1173,7 @@ fn render_pipelines_for_num_textures(
             backface_culling: false,
             depth_write: true,
         }),
-        static_alpha_blend_render_pipeline: create_render_pipeline(PipelineParams {
+        static_alpha_blend: create_render_pipeline(PipelineParams {
             device,
             label: "static alpha blend render pipeline",
             layout: &static_model_pipeline_layout,
@@ -1207,7 +1185,7 @@ fn render_pipelines_for_num_textures(
             depth_write: false,
         }),
 
-        animated_opaque_render_pipeline: create_render_pipeline(PipelineParams {
+        animated_opaque: create_render_pipeline(PipelineParams {
             device,
             label: "animated opaque render pipeline",
             layout: &animated_model_pipeline_layout,
@@ -1218,7 +1196,7 @@ fn render_pipelines_for_num_textures(
             backface_culling: true,
             depth_write: true,
         }),
-        animated_alpha_clip_render_pipeline: create_render_pipeline(PipelineParams {
+        animated_alpha_clip: create_render_pipeline(PipelineParams {
             device,
             label: "animated alpha clip render pipeline",
             layout: &animated_model_pipeline_layout,
@@ -1229,7 +1207,7 @@ fn render_pipelines_for_num_textures(
             backface_culling: false,
             depth_write: true,
         }),
-        animated_alpha_blend_render_pipeline: create_render_pipeline(PipelineParams {
+        animated_alpha_blend: create_render_pipeline(PipelineParams {
             device,
             label: "animated alpha blend render pipeline",
             layout: &animated_model_pipeline_layout,
@@ -1237,6 +1215,40 @@ fn render_pipelines_for_num_textures(
             fs_module: fs_model,
             colour_descriptor: alpha_blend_colour_descriptor(),
             animated: true,
+            backface_culling: true,
+            depth_write: false,
+        }),
+
+        static_opaque_gun: create_render_pipeline(PipelineParams {
+            device,
+            label: "static opaque gun render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_static_gun_model,
+            fs_module: fs_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            animated: false,
+            backface_culling: true,
+            depth_write: true,
+        }),
+        static_alpha_clip_gun: create_render_pipeline(PipelineParams {
+            device,
+            label: "static alpha clip gun render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_static_gun_model,
+            fs_module: fs_alpha_clip_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            animated: false,
+            backface_culling: false,
+            depth_write: true,
+        }),
+        static_alpha_blend_gun: create_render_pipeline(PipelineParams {
+            device,
+            label: "static alpha blend gun render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_static_gun_model,
+            fs_module: fs_model,
+            colour_descriptor: alpha_blend_colour_descriptor(),
+            animated: false,
             backface_culling: true,
             depth_write: false,
         }),

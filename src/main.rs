@@ -605,7 +605,7 @@ async fn run() -> anyhow::Result<()> {
             debug_contact_points_buffer.upload(&renderer);
             debug_player_collider_buffer.upload(&renderer);
 
-            model_buffers.upload(&renderer, camera_view, settings.draw_gun, &level);
+            model_buffers.upload(&renderer, camera_view, &level);
             debug_vision_cones.0.upload(&renderer);
             debug_vision_cones.0.clear();
 
@@ -693,8 +693,8 @@ async fn run() -> anyhow::Result<()> {
 
                     // Render opaque and alpha-clipped things.
 
-                    model_buffers.render_opaque(&mut render_pass, &renderer);
-                    model_buffers.render_alpha_clip(&mut render_pass, &renderer);
+                    model_buffers.render_opaque(&mut render_pass, &renderer, settings.draw_gun);
+                    model_buffers.render_alpha_clip(&mut render_pass, &renderer, settings.draw_gun);
 
                     // Render the skybox
 
@@ -714,7 +714,7 @@ async fn run() -> anyhow::Result<()> {
                     // Render decals
 
                     if let Some((slice, len)) = decal_buffer.get() {
-                        render_pass.set_pipeline(&renderer.static_alpha_blend_render_pipeline);
+                        render_pass.set_pipeline(&renderer.render_pipelines.static_alpha_blend);
                         render_pass.set_push_constants(
                             wgpu::ShaderStage::VERTEX,
                             0,
@@ -726,7 +726,11 @@ async fn run() -> anyhow::Result<()> {
                         render_pass.draw(0..len, 0..1);
                     }
 
-                    model_buffers.render_alpha_blend(&mut render_pass, &renderer);
+                    model_buffers.render_alpha_blend(
+                        &mut render_pass,
+                        &renderer,
+                        settings.draw_gun,
+                    );
 
                     // Render overlay
 
