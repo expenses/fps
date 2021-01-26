@@ -319,10 +319,7 @@ async fn run() -> anyhow::Result<()> {
         wgpu::BufferUsage::VERTEX,
     );
 
-    let debug_lines_always_pipeline =
-        renderer::debug_lines::debug_lines_pipeline(&renderer, &settings, true);
-    let debug_lines_less_pipeline =
-        renderer::debug_lines::debug_lines_pipeline(&renderer, &settings, false);
+    let debug_lines_pipelines = renderer::debug_lines::DebugLinesPipelines::new(&renderer);
 
     let mut control_states = ControlStates::default();
 
@@ -646,7 +643,7 @@ async fn run() -> anyhow::Result<()> {
                         render_debug_lines(
                             &debug_contact_points_buffer,
                             &mut render_pass,
-                            &debug_lines_always_pipeline,
+                            &debug_lines_pipelines.always,
                             renderer.projection_view,
                         );
                     }
@@ -655,7 +652,7 @@ async fn run() -> anyhow::Result<()> {
                         render_debug_lines(
                             &debug_player_collider_buffer,
                             &mut render_pass,
-                            &debug_lines_always_pipeline,
+                            &debug_lines_pipelines.always,
                             renderer.projection_view,
                         );
                     }
@@ -664,7 +661,7 @@ async fn run() -> anyhow::Result<()> {
                         render_debug_lines(
                             &debug_collision_octree_buffer,
                             &mut render_pass,
-                            &debug_lines_always_pipeline,
+                            &debug_lines_pipelines.always,
                             renderer.projection_view,
                         );
 
@@ -672,7 +669,7 @@ async fn run() -> anyhow::Result<()> {
                         render_debug_lines(
                             &debug_collision_geometry_buffer,
                             &mut render_pass,
-                            &debug_lines_less_pipeline,
+                            &debug_lines_pipelines.less,
                             renderer.projection_view,
                         );
                         */
@@ -681,7 +678,7 @@ async fn run() -> anyhow::Result<()> {
                     render_debug_lines(
                         &debug_vision_cones.0,
                         &mut render_pass,
-                        &debug_lines_less_pipeline,
+                        &debug_lines_pipelines.less,
                         renderer.projection_view,
                     );
 
