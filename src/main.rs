@@ -121,6 +121,8 @@ async fn run() -> anyhow::Result<()> {
     let level_filename = std::env::args().nth(1).unwrap();
     let level_bytes = std::fs::read(&level_filename)?;
 
+    crate::assets::generate_irradience_volume(&level_bytes, &level_filename)?;
+
     let event_loop = winit::event_loop::EventLoop::new();
 
     let mut settings = Settings {

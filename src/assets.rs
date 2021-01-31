@@ -78,6 +78,11 @@ pub enum Property {
     Spawn(String),
     NoCollide,
     RenderOrder(u8),
+    Irradience {
+        probes_x: u32,
+        probes_y: u32,
+        probes_z: u32,
+    },
 }
 
 impl Property {
@@ -87,6 +92,13 @@ impl Property {
         } else if let Some(remainder) = string.strip_prefix("render_order/") {
             let order = remainder.parse()?;
             Ok(Self::RenderOrder(order))
+        } else if let Some(remainder) = string.strip_prefix("irradience/") {
+            let mut values = remainder.split("/");
+            Ok(Self::Irradience {
+                probes_x: values.next().unwrap().parse()?,
+                probes_z: values.next().unwrap().parse()?,
+                probes_y: values.next().unwrap().parse()?,
+            })
         } else {
             match string {
                 "nocollide" => Ok(Self::NoCollide),
@@ -207,6 +219,33 @@ impl collision_octree::HasBoundingBox for Triangle {
     }
 }
 
+fn load_lights(gltf: &gltf::Gltf, node_tree: &NodeTree) -> Vec<Light> {
+    gltf.nodes()
+        .filter_map(|node| node.light().map(|light| (node, light)))
+        .map(|(node, light)| {
+            assert!(matches!(
+                light.kind(),
+                gltf::khr_lights_punctual::Kind::Point
+            ));
+
+            let transform = node_tree.transform_of(node.index());
+
+            // We reduce the intensity by 4PI because of
+            // https://github.com/KhronosGroup/glTF-Blender-IO/issues/564.
+            // Reducing by 2 again seems to bring it in line with blender but idk why
+            let intensity = light.intensity() / (2.0 * 4.0 * std::f32::consts::PI);
+            let colour: Vec3 = light.color().into();
+
+            Light {
+                output: colour * intensity,
+                range: light.range().unwrap_or(std::f32::INFINITY),
+                position: transform.extract_translation(),
+                padding: 0,
+            }
+        })
+        .collect()
+}
+
 pub struct Level {
     pub model: Model,
     pub lights_bind_group: wgpu::BindGroup,
@@ -225,6 +264,9 @@ impl Level {
         array_of_textures: &mut ArrayOfTextures,
         staging_buffers: &mut StagingModelBuffers<Vertex>,
     ) -> anyhow::Result<Self> {
+        let irradience_volume_textures =
+            load_irradience_volume(&format!("{}.lighting.exr", name), renderer, encoder)?;
+
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
         let node_tree = NodeTree::new(&gltf);
@@ -249,31 +291,7 @@ impl Level {
             name,
         )?;
 
-        let lights: Vec<_> = gltf
-            .nodes()
-            .filter_map(|node| node.light().map(|light| (node, light)))
-            .map(|(node, light)| {
-                assert!(matches!(
-                    light.kind(),
-                    gltf::khr_lights_punctual::Kind::Point
-                ));
-
-                let transform = node_tree.transform_of(node.index());
-
-                // We reduce the intensity by 4PI because of
-                // https://github.com/KhronosGroup/glTF-Blender-IO/issues/564.
-                // Reducing by 2 again seems to bring it in line with blender but idk why
-                let intensity = light.intensity() / (2.0 * 4.0 * std::f32::consts::PI);
-                let colour: Vec3 = light.color().into();
-
-                Light {
-                    output: colour * intensity,
-                    range: light.range().unwrap_or(std::f32::INFINITY),
-                    position: transform.extract_translation(),
-                    padding: 0,
-                }
-            })
-            .collect();
+        let lights = load_lights(&gltf, &node_tree);
 
         let lights_buffer = renderer
             .device
@@ -283,21 +301,31 @@ impl Level {
                 usage: wgpu::BufferUsage::STORAGE,
             });
 
+        let irradience_volume_texture_refs: Vec<_> = irradience_volume_textures.iter().collect();
+
         let lights_bind_group = renderer
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(&format!("{} level bind group", name)),
                 layout: &renderer.lights_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: lights_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: lights_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureViewArray(
+                            &irradience_volume_texture_refs,
+                        ),
+                    },
+                ],
             });
 
         for (node, mesh) in ordered_mesh_nodes(&gltf, &properties) {
             let collide = match properties.get(&node.index()) {
                 Some(Property::NoCollide) => false,
-                Some(Property::Spawn(_)) => continue,
+                Some(Property::Spawn(_)) | Some(Property::Irradience { .. }) => continue,
                 Some(Property::RenderOrder(_)) => true,
                 None => true,
             };
@@ -353,7 +381,7 @@ impl Level {
 
         let collision_octree = collision_octree::Octree::construct(collision_triangles);
 
-        collision_octree.debug_print_sizes();
+        //collision_octree.debug_print_sizes();
 
         let nav_mesh = create_navmesh(&collision_geometry);
 
@@ -769,4 +797,307 @@ pub fn load_single_texture(
         image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png)?.into_rgba8();
 
     Ok(array_of_textures.add(&image, name, &renderer, encoder))
+}
+
+struct IrradienceVolumeInfo {
+    position: Vec3,
+    scale: Vec3,
+    probes_x: u32,
+    probes_y: u32,
+    probes_z: u32,
+}
+
+fn get_irradience_volume_info(
+    gltf: &gltf::Gltf,
+    properties: &HashMap<usize, Property>,
+) -> Option<IrradienceVolumeInfo> {
+    gltf.nodes()
+        .filter_map(|node| {
+            properties
+                .get(&node.index())
+                .map(|property| (property, node))
+        })
+        .filter_map(|(property, node)| {
+            match property {
+                &Property::Irradience {
+                    probes_x,
+                    probes_y,
+                    probes_z,
+                } => {
+                    let (position, _, scale) = node.transform().decomposed();
+                    // The default size of the irradience volume is 2 on each axis so we
+                    // need to account for this.
+                    let scale = Vec3::from(scale) * 2.0;
+                    Some(IrradienceVolumeInfo {
+                        position: Vec3::from(position),
+                        scale,
+                        probes_x,
+                        probes_y,
+                        probes_z,
+                    })
+                }
+                _ => None,
+            }
+        })
+        .next()
+}
+
+fn load_irradience_volume(
+    filename: &str,
+    renderer: &Renderer,
+    init_encoder: &mut wgpu::CommandEncoder,
+) -> anyhow::Result<Vec<wgpu::TextureView>> {
+    let image = exr::image::read::read_all_flat_layers_from_file(filename)?;
+
+    // We assume the order to be:
+    // x, neg_x, y, neg_y, z, neg_z
+
+    let mut textures = Vec::new();
+
+    for layer in image.layer_data {
+        let name = layer.attributes.layer_name.unwrap();
+        let width = layer.size.x();
+        let height = layer.size.y();
+        let depth = layer.channel_data.list.len() / 3;
+
+        let mut layer_rgba: Vec<f32> = Vec::with_capacity(width * height * depth * 4);
+
+        for chunk in layer.channel_data.list.chunks(3) {
+            // These are in BGR order.
+            let red = &chunk[2];
+            let green = &chunk[1];
+            let blue = &chunk[0];
+
+            red.sample_data
+                .values_as_f32()
+                .zip(green.sample_data.values_as_f32())
+                .zip(blue.sample_data.values_as_f32())
+                .for_each(|((red, green), blue)| {
+                    layer_rgba.push(red);
+                    layer_rgba.push(green);
+                    layer_rgba.push(blue);
+                    layer_rgba.push(1.0);
+                });
+        }
+
+        let staging_buffer =
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: None,
+                    contents: bytemuck::cast_slice(&layer_rgba),
+                    usage: wgpu::BufferUsage::COPY_SRC,
+                });
+
+        let extent = wgpu::Extent3d {
+            width: width as u32,
+            height: height as u32,
+            depth: depth as u32,
+        };
+
+        let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&format!("irradience layer {}", name)),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba32Float,
+            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+        });
+
+        init_encoder.copy_buffer_to_texture(
+            wgpu::BufferCopyView {
+                buffer: &staging_buffer,
+                layout: wgpu::TextureDataLayout {
+                    offset: 0,
+                    bytes_per_row: width as u32 * 4 * 4,
+                    rows_per_image: height as u32,
+                },
+            },
+            wgpu::TextureCopyView {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            extent,
+        );
+
+        textures.push(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+    }
+
+    Ok(textures)
+}
+
+pub fn generate_irradience_volume(gltf_bytes: &[u8], level_filename: &str) -> anyhow::Result<()> {
+    use exr::image::write::WritableImage;
+
+    let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
+    let node_tree = NodeTree::new(&gltf);
+    let lights = load_lights(&gltf, &node_tree);
+
+    let properties = load_properties(&gltf)?;
+
+    let IrradienceVolumeInfo {
+        position,
+        scale,
+        probes_x,
+        probes_y,
+        probes_z,
+    } = get_irradience_volume_info(&gltf, &properties).unwrap();
+
+    let min = position - scale / 2.0;
+
+    let mut d = (0, 0);
+    let mut layers = exr::image::Layers::with_capacity(6);
+
+    for axis in [Axis::X, Axis::Y, Axis::Z].iter().cloned() {
+        for flip in [false, true].iter().cloned() {
+            let (layer, dimensions) = create_exr_layer(
+                probes_x, probes_y, probes_z, axis, flip, min, scale, &lights,
+            );
+
+            d = dimensions;
+            layers.push(layer);
+
+            /*
+            exr::image::Image::new(
+                exr::meta::header::ImageAttributes::with_size(dimensions),
+                layer,
+            )
+            .write()
+            .to_file(format!("{}.lighting_{}.exr", level_filename, axis_name(axis, flip)))?;
+            */
+        }
+    }
+
+    exr::image::Image::new(exr::meta::header::ImageAttributes::with_size(d), layers)
+        .write()
+        .to_file(format!("{}.lighting.exr", level_filename))?;
+
+    Ok(())
+}
+
+fn calculate_lighting(pos: Vec3, normal: Vec3, lights: &[Light]) -> Vec3 {
+    let mut total = Vec3::zero();
+
+    for light in lights {
+        let vector = light.position - pos;
+        let distance = vector.mag();
+
+        let light_dir = vector / distance;
+        let facing = normal.dot(light_dir);
+
+        if facing <= 0.0 {
+            continue;
+        }
+
+        // This uses the following equation except without raising 'distance / light.range' to a
+        // power in order to match what blender does.
+        // https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_lights_punctual/README.md#range-property
+        let attenuation = clamp(1.0 - (distance / light.range), 0.0, 1.0) / (distance * distance);
+
+        total += (facing * attenuation) * light.output;
+    }
+
+    total
+}
+
+fn clamp(value: f32, min: f32, max: f32) -> f32 {
+    value.min(max).max(min)
+}
+
+#[derive(Copy, Clone)]
+enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+fn axis_name(axis: Axis, flip: bool) -> String {
+    format!(
+        "{}{}",
+        if flip { "neg_" } else { "" },
+        match axis {
+            Axis::X => "x",
+            Axis::Y => "y",
+            Axis::Z => "z",
+        }
+    )
+}
+
+fn create_exr_layer(
+    probes_x: u32,
+    probes_y: u32,
+    probes_z: u32,
+    axis: Axis,
+    flip: bool,
+    min: Vec3,
+    scale: Vec3,
+    lights: &[Light],
+) -> (
+    exr::image::Layer<exr::image::AnyChannels<exr::image::FlatSamples>>,
+    (usize, usize),
+) {
+    let (primary, secondary, tertiary, mut normal) = match axis {
+        Axis::X => (probes_x, probes_y, probes_z, Vec3::unit_x()),
+        Axis::Y => (probes_y, probes_x, probes_z, Vec3::unit_y()),
+        Axis::Z => (probes_z, probes_y, probes_x, -Vec3::unit_z()),
+    };
+
+    let probes_vec = Vec3::new(probes_x as f32, probes_y as f32, probes_z as f32);
+
+    if flip {
+        normal = -normal;
+    }
+
+    let mut channels = exr::prelude::SmallVec::with_capacity(primary as usize * 3);
+
+    for p in 0..primary {
+        let mut channel_r = Vec::with_capacity(secondary as usize * tertiary as usize);
+        let mut channel_g = Vec::with_capacity(secondary as usize * tertiary as usize);
+        let mut channel_b = Vec::with_capacity(secondary as usize * tertiary as usize);
+
+        for s in 0..secondary {
+            for t in 0..tertiary {
+                let (x, y, z) = match axis {
+                    Axis::X => (p, probes_y - s, t),
+                    Axis::Y => (s, p, t),
+                    Axis::Z => (t, probes_y - s, probes_z - p),
+                };
+
+                let factor = Vec3::new(x as f32, y as f32, z as f32) / probes_vec;
+
+                let position = min + factor * scale;
+                let lighting = calculate_lighting(position, normal, &lights);
+
+                channel_r.push(lighting.x);
+                channel_g.push(lighting.y);
+                channel_b.push(lighting.z);
+            }
+        }
+
+        channels.push(exr::image::AnyChannel::new(
+            &format!("{:0>2}.R", p)[..],
+            exr::image::FlatSamples::F32(channel_r),
+        ));
+        channels.push(exr::image::AnyChannel::new(
+            &format!("{:0>2}.G", p)[..],
+            exr::image::FlatSamples::F32(channel_g),
+        ));
+        channels.push(exr::image::AnyChannel::new(
+            &format!("{:0>2}.B", p)[..],
+            exr::image::FlatSamples::F32(channel_b),
+        ));
+    }
+
+    let dimensions = (tertiary as usize, secondary as usize);
+
+    let layer = exr::image::Layer::new(
+        dimensions,
+        exr::meta::header::LayerAttributes::named(&axis_name(axis, flip)[..]),
+        exr::image::Encoding::FAST_LOSSLESS,
+        exr::image::AnyChannels::sorted(channels),
+    );
+
+    (layer, dimensions)
 }
