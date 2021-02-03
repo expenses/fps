@@ -1,7 +1,7 @@
 use crate::array_of_textures::ArrayOfTextures;
 use crate::intersection_maths::IntersectionTriangle;
 use crate::renderer::{
-    normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, TEXTURE_FORMAT,
+    normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, TEXTURE_FORMAT, INDEX_FORMAT,
 };
 use crate::vec3_into;
 use std::collections::HashMap;
@@ -441,6 +441,79 @@ impl Level {
             indices,
         })
     }
+}
+
+pub fn bake_lightmap(
+    renderer: &Renderer, level: &Level, encoder: &mut wgpu::CommandEncoder,
+) -> wgpu::BindGroup {
+    let lightmap_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("lightmap texture"),
+        size: wgpu::Extent3d {
+            width: 1024,
+            height: 1024,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
+    });
+
+    let lightmap_texture_view = lightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: None,
+        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+            attachment: &lightmap_texture_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: true,
+            },
+        }],
+        depth_stencil_attachment: None,
+    });
+
+    render_pass.set_pipeline(&renderer.bake_lightmap_pipeline);
+    render_pass.set_bind_group(0, &level.lights_bind_group, &[]);
+    render_pass.set_vertex_buffer(0, level.vertices.slice(..));
+    render_pass.set_index_buffer(level.indices.slice(..), INDEX_FORMAT);
+
+    let buffer_view = &level.model.opaque_geometry;
+    render_pass.draw_indexed(
+        buffer_view.offset..buffer_view.offset + buffer_view.size,
+        0,
+        0..1,
+    );
+
+    let buffer_view = &level.model.alpha_clip_geometry;
+    render_pass.draw_indexed(
+        buffer_view.offset..buffer_view.offset + buffer_view.size,
+        0,
+        0..1,
+    );
+
+    let buffer_view = &level.model.alpha_blend_geometry;
+    render_pass.draw_indexed(
+        buffer_view.offset..buffer_view.offset + buffer_view.size,
+        0,
+        0..
+        1,
+    );
+
+    drop(render_pass);
+
+    renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("lightmap bind group"),
+        layout: &renderer.lightmap_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&lightmap_texture_view)
+            }
+        ]
+    })
 }
 
 fn create_navmesh(

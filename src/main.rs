@@ -154,6 +154,8 @@ async fn run() -> anyhow::Result<()> {
         &mut array_of_textures,
     )?;
 
+    let lightmap_bind_group = assets::bake_lightmap(&renderer, &level, &mut init_encoder);
+
     let skybox_texture = assets::load_skybox(
         include_bytes!("../textures/skybox.png"),
         &renderer,
@@ -681,12 +683,13 @@ async fn run() -> anyhow::Result<()> {
 
                     render_pass.set_bind_group(0, &renderer.main_bind_group, &[]);
                     render_pass.set_bind_group(1, &model_buffers.array_of_textures_bind_group, &[]);
-                    render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
 
                     // Render opaque and alpha-clipped things.
 
+                    render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
                     model_buffers.render_gun_opaque_and_alpha_clip(&mut render_pass, &renderer);
 
+                    render_pass.set_bind_group(2, &lightmap_bind_group, &[]);
                     render_level_geometry(
                         &level,
                         &mut render_pass,
@@ -700,6 +703,7 @@ async fn run() -> anyhow::Result<()> {
                         GeometryType::AlphaClip,
                     );
 
+                    render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
                     model_buffers.render_opaque_and_alpha_clip(&mut render_pass, &renderer);
 
                     // Render the skybox
@@ -734,6 +738,7 @@ async fn run() -> anyhow::Result<()> {
 
                     model_buffers.render_alpha_blend(&mut render_pass, &renderer);
 
+                    render_pass.set_bind_group(2, &lightmap_bind_group, &[]);
                     render_level_geometry(
                         &level,
                         &mut render_pass,
@@ -741,6 +746,7 @@ async fn run() -> anyhow::Result<()> {
                         GeometryType::AlphaBlend,
                     );
 
+                    render_pass.set_bind_group(2, &level.lights_bind_group, &[]);
                     model_buffers.render_gun_alpha_blend(&mut render_pass, &renderer);
 
                     // Render overlay
