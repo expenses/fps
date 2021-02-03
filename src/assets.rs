@@ -1,6 +1,8 @@
 use crate::array_of_textures::ArrayOfTextures;
 use crate::intersection_maths::IntersectionTriangle;
-use crate::renderer::{normal_matrix, Renderer, Vertex, TEXTURE_FORMAT};
+use crate::renderer::{
+    normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, TEXTURE_FORMAT,
+};
 use crate::vec3_into;
 use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
@@ -253,6 +255,8 @@ pub struct Level {
     pub node_tree: NodeTree,
     pub nav_mesh: (Vec<Vec3>, Vec<u32>),
     pub collision_octree: collision_octree::Octree<Triangle>,
+    pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
 }
 
 impl Level {
@@ -262,7 +266,6 @@ impl Level {
         encoder: &mut wgpu::CommandEncoder,
         name: &str,
         array_of_textures: &mut ArrayOfTextures,
-        staging_buffers: &mut StagingModelBuffers<Vertex>,
     ) -> anyhow::Result<Self> {
         let irradience_volume_textures =
             load_irradience_volume(&format!("{}.lighting.exr", name), renderer, encoder)?;
@@ -303,6 +306,24 @@ impl Level {
 
         let irradience_volume_texture_refs: Vec<_> = irradience_volume_textures.iter().collect();
 
+        let irradience_uniforms_buffer = {
+            let IrradienceVolumeInfo {
+                position, scale, ..
+            } = get_irradience_volume_info(&gltf, &properties).unwrap();
+
+            renderer
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("irradience volume uniforms"),
+                    contents: bytemuck::bytes_of(&IrradienceVolumeUniforms {
+                        position,
+                        scale,
+                        padding: 0,
+                    }),
+                    usage: wgpu::BufferUsage::UNIFORM,
+                })
+        };
+
         let lights_bind_group = renderer
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -318,6 +339,10 @@ impl Level {
                         resource: wgpu::BindingResource::TextureViewArray(
                             &irradience_volume_texture_refs,
                         ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: irradience_uniforms_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -353,7 +378,7 @@ impl Level {
                     gltf::material::AlphaMode::Mask => &mut alpha_clip_geometry,
                 };
 
-                add_primitive_geometry_to_buffers(
+                add_primitive_level_geometry_to_buffers(
                     &primitive,
                     &node,
                     transform,
@@ -395,17 +420,25 @@ impl Level {
             nav_mesh.vertices.len(), nav_mesh.indices.len(),
         );
 
+        let mut staging_buffers = StagingModelBuffers::default();
+
+        let model = Model {
+            opaque_geometry: staging_buffers.merge(opaque_geometry),
+            alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry),
+            alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry),
+        };
+
+        let (vertices, indices) = staging_buffers.upload(&renderer.device, name);
+
         Ok(Self {
-            model: Model {
-                opaque_geometry: staging_buffers.merge(opaque_geometry),
-                alpha_clip_geometry: staging_buffers.merge(alpha_clip_geometry),
-                alpha_blend_geometry: staging_buffers.merge(alpha_blend_geometry),
-            },
+            model,
             lights_bind_group,
             properties,
             node_tree,
             nav_mesh: (nav_mesh.vertices, nav_mesh.indices),
             collision_octree,
+            vertices,
+            indices,
         })
     }
 }
@@ -508,7 +541,6 @@ impl Model {
                     buffer_blob,
                     &material_properties,
                     staging_buffers,
-                    None,
                     &image_index_to_array_index,
                 )?;
             }
@@ -587,7 +619,6 @@ fn add_primitive_geometry_to_buffers(
     buffer_blob: &[u8],
     material_properties: &HashMap<Option<usize>, MaterialProperty>,
     staging_buffers: &mut StagingModelBuffers<Vertex>,
-    mut collision_buffers: Option<&mut StagingModelBuffers<(Vec3, Vec3)>>,
     image_index_to_array_index: &[usize],
 ) -> anyhow::Result<()> {
     let emission_strength = match material_properties.get(&primitive.material().index()) {
@@ -627,18 +658,6 @@ fn add_primitive_geometry_to_buffers(
             .map(|i| i + num_vertices),
     );
 
-    if let Some(collision_buffers) = collision_buffers.as_mut() {
-        let num_vertices_collision = collision_buffers.vertices.len() as u32;
-
-        collision_buffers.indices.extend(
-            reader
-                .read_indices()
-                .unwrap()
-                .into_u32()
-                .map(|i| i + num_vertices_collision),
-        );
-    }
-
     let positions = reader.read_positions().unwrap();
     let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
     let normals = reader.read_normals().unwrap();
@@ -660,10 +679,6 @@ fn add_primitive_geometry_to_buffers(
                 texture_index: array_index as u32,
                 emission_strength,
             });
-
-            if let Some(collision_buffers) = collision_buffers.as_mut() {
-                collision_buffers.vertices.push((position, normal));
-            }
         });
 
     Ok(())
@@ -943,7 +958,7 @@ pub fn generate_irradience_volume(gltf_bytes: &[u8], level_filename: &str) -> an
         probes_x,
         probes_y,
         probes_z,
-    } = get_irradience_volume_info(&gltf, &properties).unwrap();
+    } = get_irradience_volume_info(&gltf, &properties).expect("Missing irradience volume info");
 
     let min = position - scale / 2.0;
 
@@ -1077,15 +1092,15 @@ fn create_exr_layer(
         }
 
         channels.push(exr::image::AnyChannel::new(
-            &format!("{:0>2}.R", p)[..],
+            &format!("{:0>4}.R", p)[..],
             exr::image::FlatSamples::F32(channel_r),
         ));
         channels.push(exr::image::AnyChannel::new(
-            &format!("{:0>2}.G", p)[..],
+            &format!("{:0>4}.G", p)[..],
             exr::image::FlatSamples::F32(channel_g),
         ));
         channels.push(exr::image::AnyChannel::new(
-            &format!("{:0>2}.B", p)[..],
+            &format!("{:0>4}.B", p)[..],
             exr::image::FlatSamples::F32(channel_b),
         ));
     }
@@ -1100,4 +1115,101 @@ fn create_exr_layer(
     );
 
     (layer, dimensions)
+}
+
+fn add_primitive_level_geometry_to_buffers(
+    primitive: &gltf::Primitive,
+    node: &gltf::Node,
+    transform: Mat4,
+    normal_matrix: Mat3,
+    buffer_blob: &[u8],
+    material_properties: &HashMap<Option<usize>, MaterialProperty>,
+    staging_buffers: &mut StagingModelBuffers<LevelVertex>,
+    mut collision_buffers: Option<&mut StagingModelBuffers<(Vec3, Vec3)>>,
+    image_index_to_array_index: &[usize],
+) -> anyhow::Result<()> {
+    let emission_strength = match material_properties.get(&primitive.material().index()) {
+        Some(MaterialProperty::EmissionStrength(strength)) => *strength,
+        _ => 0.0,
+    };
+
+    let image_index = primitive
+        .material()
+        .pbr_metallic_roughness()
+        .base_color_texture()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No textures found for the mesh on node {:?}; primitive {}",
+                node.name(),
+                primitive.index()
+            )
+        })?
+        .texture()
+        .source()
+        .index();
+
+    let array_index = image_index_to_array_index[image_index];
+
+    let reader = primitive.reader(|buffer| {
+        assert_eq!(buffer.index(), 0);
+        Some(buffer_blob)
+    });
+
+    let num_vertices = staging_buffers.vertices.len() as u32;
+
+    staging_buffers.indices.extend(
+        reader
+            .read_indices()
+            .unwrap()
+            .into_u32()
+            .map(|i| i + num_vertices),
+    );
+
+    if let Some(collision_buffers) = collision_buffers.as_mut() {
+        let num_vertices_collision = collision_buffers.vertices.len() as u32;
+
+        collision_buffers.indices.extend(
+            reader
+                .read_indices()
+                .unwrap()
+                .into_u32()
+                .map(|i| i + num_vertices_collision),
+        );
+    }
+
+    let positions = reader.read_positions().unwrap();
+    let tex_coordinates = reader.read_tex_coords(0).unwrap().into_f32();
+    let normals = reader.read_normals().unwrap();
+
+    let lightmap_coords = reader
+        .read_tex_coords(1)
+        .ok_or_else(|| anyhow::anyhow!("Missing lightmap uvs on {:?}", node.name()))?
+        .into_f32();
+
+    positions
+        .zip(tex_coordinates)
+        .zip(normals)
+        .zip(lightmap_coords)
+        .for_each(|(((p, uv), n), lc)| {
+            let position = transform * Vec4::new(p[0], p[1], p[2], 1.0);
+            let position = position.xyz();
+
+            let normal: Vec3 = n.into();
+            let normal = (normal_matrix * normal).normalized();
+
+            staging_buffers.vertices.push(LevelVertex {
+                position,
+                normal,
+                uv: uv.into(),
+                texture_index: array_index as u32,
+                emission_strength,
+                lightmap_uv: lc.into(),
+            });
+
+            if let Some(collision_buffers) = collision_buffers.as_mut() {
+                collision_buffers.vertices.push((position, normal));
+            }
+        });
+
+    Ok(())
 }

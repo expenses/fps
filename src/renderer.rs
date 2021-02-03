@@ -22,6 +22,17 @@ pub struct Vertex {
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct LevelVertex {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub uv: Vec2,
+    pub texture_index: u32,
+    pub emission_strength: f32,
+    pub lightmap_uv: Vec2,
+}
+
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
 pub struct AnimatedVertex {
     pub position: Vec3,
     pub normal: Vec3,
@@ -31,6 +42,15 @@ pub struct AnimatedVertex {
     pub joints: [u16; 4],
     pub joint_weights: Vec4,
 }
+
+const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
+    wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float];
+const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
+
+const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Ushort4, 6 => Float4];
+const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 6] = wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4, 11 => Uint, 12 => Uint];
+
+const LEVEL_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 6] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Float2];
 
 pub fn normal_matrix(transform: Mat4) -> Mat3 {
     let inverse_transpose = transform.inversed().transposed();
@@ -74,12 +94,23 @@ impl AnimatedInstance {
     }
 }
 
-const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
-    wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float];
-const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
+#[repr(C)]
+#[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct IrradienceVolumeUniforms {
+    pub position: Vec3,
+    pub padding: u32,
+    pub scale: Vec3,
+}
 
-const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Ushort4, 6 => Float4];
-const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 6] = wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4, 11 => Uint, 12 => Uint];
+fn load_shader(filename: &str, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
+    let bytes = std::fs::read(filename)?;
+
+    Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        label: Some(filename),
+        source: wgpu::util::make_spirv(&bytes),
+        flags: wgpu::ShaderFlags::VALIDATION,
+    }))
+}
 
 pub struct Renderer {
     pub device: wgpu::Device,
@@ -109,6 +140,7 @@ pub struct Renderer {
     vs_static_model: wgpu::ShaderModule,
     vs_static_gun_model: wgpu::ShaderModule,
     vs_animated_model: wgpu::ShaderModule,
+    vs_level: wgpu::ShaderModule,
     fs_model: wgpu::ShaderModule,
     fs_alpha_clip_model: wgpu::ShaderModule,
 
@@ -202,24 +234,41 @@ impl Renderer {
         let main_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("main bind group layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler {
-                        comparison: false,
-                        filtering: false,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let main_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("main bind group"),
             layout: &main_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Sampler(&nearest_sampler),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(&nearest_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&linear_sampler),
+                },
+            ],
         });
 
         let swap_chain = device.create_swap_chain(
@@ -267,6 +316,16 @@ impl Renderer {
                         },
                         count: Some(std::num::NonZeroU32::new(6).unwrap()),
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -312,27 +371,22 @@ impl Renderer {
                 ],
             });
 
-        let vs_static_model = wgpu::include_spirv!("../shaders/compiled/static_model.vert.spv");
-        let vs_static_model = device.create_shader_module(&vs_static_model);
+        let vs_static_model = load_shader("shaders/compiled/static_model.vert.spv", &device)?;
 
-        let vs_animated_model = wgpu::include_spirv!("../shaders/compiled/animated_model.vert.spv");
-        let vs_animated_model = device.create_shader_module(&vs_animated_model);
+        let vs_animated_model = load_shader("shaders/compiled/animated_model.vert.spv", &device)?;
 
-        let fs_model = wgpu::include_spirv!("../shaders/compiled/model.frag.spv");
-        let fs_model = device.create_shader_module(&fs_model);
+        let fs_model = load_shader("shaders/compiled/model.frag.spv", &device)?;
 
         let fs_alpha_clip_model =
-            wgpu::include_spirv!("../shaders/compiled/alpha_clip_model.frag.spv");
-        let fs_alpha_clip_model = device.create_shader_module(&fs_alpha_clip_model);
+            load_shader("shaders/compiled/alpha_clip_model.frag.spv", &device)?;
 
-        let vs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.vert.spv");
-        let vs_skybox = device.create_shader_module(&vs_skybox);
-        let fs_skybox = wgpu::include_spirv!("../shaders/compiled/skybox.frag.spv");
-        let fs_skybox = device.create_shader_module(&fs_skybox);
+        let vs_skybox = load_shader("shaders/compiled/skybox.vert.spv", &device)?;
+        let fs_skybox = load_shader("shaders/compiled/skybox.frag.spv", &device)?;
 
         let vs_static_gun_model =
-            wgpu::include_spirv!("../shaders/compiled/static_gun_model.vert.spv");
-        let vs_static_gun_model = device.create_shader_module(&vs_static_gun_model);
+            load_shader("shaders/compiled/static_gun_model.vert.spv", &device)?;
+
+        let vs_level = load_shader("shaders/compiled/level.vert.spv", &device)?;
 
         let (array_of_textures_bind_group_layout, render_pipelines) =
             render_pipelines_for_num_textures(
@@ -343,6 +397,7 @@ impl Renderer {
                 &fs_model,
                 &fs_alpha_clip_model,
                 &vs_static_gun_model,
+                &vs_level,
                 &main_bind_group_layout,
                 &lights_bind_group_layout,
                 &animated_models_bind_group_layout,
@@ -427,12 +482,10 @@ impl Renderer {
                 push_constant_ranges: &[],
             });
 
-        let vs_full_screen_tri =
-            wgpu::include_spirv!("../shaders/compiled/full_screen_tri.vert.spv");
-        let vs_full_screen_tri_module = device.create_shader_module(&vs_full_screen_tri);
+        let vs_full_screen_tri_module =
+            load_shader("shaders/compiled/full_screen_tri.vert.spv", &device)?;
 
-        let fs_blit_mipmap = wgpu::include_spirv!("../shaders/compiled/blit_mipmap.frag.spv");
-        let fs_blit_mipmap_module = device.create_shader_module(&fs_blit_mipmap);
+        let fs_blit_mipmap_module = load_shader("shaders/compiled/blit_mipmap.frag.spv", &device)?;
 
         let mipmap_generation_pipeline =
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -516,8 +569,7 @@ impl Renderer {
                 }],
             });
 
-        let fs_fxaa = wgpu::include_spirv!("../shaders/compiled/fxaa.frag.spv");
-        let fs_fxaa_module = device.create_shader_module(&fs_fxaa);
+        let fs_fxaa_module = load_shader("shaders/compiled/fxaa.frag.spv", &device)?;
 
         let fxaa_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("fxaa pipeline"),
@@ -543,8 +595,7 @@ impl Renderer {
             alpha_to_coverage_enabled: false,
         });
 
-        let fs_tonemap = wgpu::include_spirv!("../shaders/compiled/tonemap.frag.spv");
-        let fs_tonemap_module = device.create_shader_module(&fs_tonemap);
+        let fs_tonemap_module = load_shader("shaders/compiled/tonemap.frag.spv", &device)?;
 
         let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("tonemap pipeline"),
@@ -611,6 +662,7 @@ impl Renderer {
             vs_animated_model,
             fs_alpha_clip_model,
             vs_static_gun_model,
+            vs_level,
 
             display_format,
         })
@@ -690,6 +742,7 @@ impl Renderer {
                 &self.fs_model,
                 &self.fs_alpha_clip_model,
                 &self.vs_static_gun_model,
+                &self.vs_level,
                 &self.main_bind_group_layout,
                 &self.lights_bind_group_layout,
                 &self.animated_models_bind_group_layout,
@@ -845,6 +898,70 @@ fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
                     },
                 },
             ],
+        },
+        sample_count: 1,
+        sample_mask: !0,
+        alpha_to_coverage_enabled: false,
+    })
+}
+
+struct LevelPipelineParams<'a> {
+    device: &'a wgpu::Device,
+    label: &'a str,
+    layout: &'a wgpu::PipelineLayout,
+    vs_module: &'a wgpu::ShaderModule,
+    fs_module: &'a wgpu::ShaderModule,
+    colour_descriptor: wgpu::ColorStateDescriptor,
+    backface_culling: bool,
+    depth_write: bool,
+}
+
+fn create_level_render_pipeline(params: LevelPipelineParams) -> wgpu::RenderPipeline {
+    let LevelPipelineParams {
+        device,
+        label,
+        layout,
+        vs_module,
+        fs_module,
+        colour_descriptor,
+        backface_culling,
+        depth_write,
+    } = params;
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex_stage: wgpu::ProgrammableStageDescriptor {
+            module: vs_module,
+            entry_point: "main",
+        },
+        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            module: fs_module,
+            entry_point: "main",
+        }),
+        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+            cull_mode: if backface_culling {
+                wgpu::CullMode::Back
+            } else {
+                wgpu::CullMode::None
+            },
+            ..Default::default()
+        }),
+        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+        color_states: &[colour_descriptor],
+        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: depth_write,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilStateDescriptor::default(),
+        }),
+        vertex_state: wgpu::VertexStateDescriptor {
+            index_format: Some(INDEX_FORMAT),
+            vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                stride: std::mem::size_of::<LevelVertex>() as u64,
+                step_mode: wgpu::InputStepMode::Vertex,
+                attributes: &LEVEL_VERTEX_ATTR_ARRAY[..],
+            }],
         },
         sample_count: 1,
         sample_mask: !0,
@@ -1083,6 +1200,10 @@ pub struct RenderPipelines {
     pub static_opaque_gun: wgpu::RenderPipeline,
     pub static_alpha_clip_gun: wgpu::RenderPipeline,
     pub static_alpha_blend_gun: wgpu::RenderPipeline,
+
+    pub level_opaque: wgpu::RenderPipeline,
+    pub level_alpha_clip: wgpu::RenderPipeline,
+    pub level_alpha_blend: wgpu::RenderPipeline,
 }
 
 fn render_pipelines_for_num_textures(
@@ -1095,6 +1216,8 @@ fn render_pipelines_for_num_textures(
     fs_alpha_clip_model: &wgpu::ShaderModule,
 
     vs_static_gun_model: &wgpu::ShaderModule,
+
+    vs_level: &wgpu::ShaderModule,
 
     main_bind_group_layout: &wgpu::BindGroupLayout,
     lights_bind_group_layout: &wgpu::BindGroupLayout,
@@ -1262,6 +1385,37 @@ fn render_pipelines_for_num_textures(
             fs_module: fs_model,
             colour_descriptor: alpha_blend_colour_descriptor(),
             animated: false,
+            backface_culling: true,
+            depth_write: false,
+        }),
+
+        level_opaque: create_level_render_pipeline(LevelPipelineParams {
+            device,
+            label: "level opaque render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_level,
+            fs_module: fs_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            backface_culling: true,
+            depth_write: true,
+        }),
+        level_alpha_clip: create_level_render_pipeline(LevelPipelineParams {
+            device,
+            label: "level alpha clip render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_level,
+            fs_module: fs_alpha_clip_model,
+            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            backface_culling: false,
+            depth_write: true,
+        }),
+        level_alpha_blend: create_level_render_pipeline(LevelPipelineParams {
+            device,
+            label: "level alpha blend render pipeline",
+            layout: &static_model_pipeline_layout,
+            vs_module: vs_level,
+            fs_module: fs_model,
+            colour_descriptor: alpha_blend_colour_descriptor(),
             backface_culling: true,
             depth_write: false,
         }),

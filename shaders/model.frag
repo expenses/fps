@@ -10,6 +10,7 @@ layout(location = 4) in float emission;
 layout(location = 0) out vec4 colour;
 
 layout(set = 0, binding = 0) uniform sampler u_nearest_sampler;
+layout(set = 0, binding = 1) uniform sampler u_linear_sampler;
 
 layout(set = 1, binding = 0) uniform texture2D u_texture[];
 
@@ -23,30 +24,62 @@ layout(set = 2, binding = 0) readonly buffer Lights {
 	Light lights[];
 };
 
+layout(set = 2, binding = 1) uniform texture3D irradience_textures[6];
+
+layout(set = 2, binding = 2) uniform IrradienceVolumeUniforms {
+    vec3 position;
+    vec3 scale;
+} irradience_volume;
+
+const uint X = 0;
+const uint NEG_X = 1;
+const uint Y = 2;
+const uint NEG_Y = 3;
+const uint Z = 4;
+const uint NEG_Z = 5;
+
+const vec3 X_NORMAL = vec3(1.0, 0.0, 0.0);
+const vec3 Y_NORMAL = vec3(0.0, 1.0, 0.0);
+const vec3 Z_NORMAL = vec3(0.0, 0.0, 1.0);
+
 const vec3 AMBIENT = vec3(0.05);
 const float MIN_LIGHT_DISTANCE = 0.5;
 
 void main() {
     vec3 norm = normalize(normal);
 
-    vec3 total = AMBIENT;
+    vec3 total = AMBIENT * 0.1;
 
-    for (int i = 0; i < lights.length(); i++) {
-        Light light = lights[i];
+    vec3 irradience_sample_index = vec3(0.5) + ((pos - irradience_volume.position) / irradience_volume.scale);
 
-        vec3 vector = light.position - pos;
+    float x_dot = dot(X_NORMAL, norm);
 
-        float distance = length(vector);
-        // This uses the following equation except without raising 'distance / light.range' to a
-        // power in order to match what blender does.
-        // https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_lights_punctual/README.md#range-property
-        float attenuation = clamp(1.0 - (distance / light.range), 0.0, 1.0) / (distance * distance);
+    vec3 x_sample_index = vec3(irradience_sample_index.z, 1.0 - irradience_sample_index.y, irradience_sample_index.x);
 
-        vec3 light_dir = vector / distance;
-        float facing = max(dot(norm, light_dir), 0.0);
+    if (x_dot > 0.0) {
+        total += texture(sampler3D(irradience_textures[X], u_linear_sampler), x_sample_index).rgb * x_dot;
+    } else {
+        total += texture(sampler3D(irradience_textures[NEG_X], u_linear_sampler), x_sample_index).rgb * -x_dot;
+    }
 
-        // Multiplying the `floats` first results in one less `OpVectorTimesScalar` in the spirv
-        total += (facing * attenuation) * light.colour_output;
+    float y_dot = dot(Y_NORMAL, norm);
+
+    vec3 y_sample_index = vec3(irradience_sample_index.z, irradience_sample_index.x, irradience_sample_index.y);
+
+    if (y_dot > 0.0) {
+        total += texture(sampler3D(irradience_textures[Y], u_linear_sampler), y_sample_index).rgb * y_dot;
+    } else {
+        total += texture(sampler3D(irradience_textures[NEG_Y], u_linear_sampler), y_sample_index).rgb * -y_dot;
+    }
+
+    vec3 z_sample_index = vec3(irradience_sample_index.x, 1.0 - irradience_sample_index.y, 1.0 - irradience_sample_index.z);
+
+    float z_dot = dot(Z_NORMAL, norm);
+
+    if (z_dot > 0.0) {
+        total += texture(sampler3D(irradience_textures[NEG_Z], u_linear_sampler), z_sample_index).rgb * z_dot;
+    } else {
+        total += texture(sampler3D(irradience_textures[Z], u_linear_sampler), z_sample_index).rgb * -z_dot;
     }
 
     vec4 sampled = texture(sampler2D(u_texture[texture_index], u_nearest_sampler), uv);

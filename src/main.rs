@@ -7,7 +7,7 @@ mod intersection_maths;
 mod mesh_generation;
 mod renderer;
 
-use crate::assets::StagingModelBuffers;
+use crate::assets::Level;
 use crate::buffers::{ModelBuffers, ModelIndex};
 use crate::intersection_maths::{ray_bounding_box_intersection, ray_triangle_intersection};
 use crate::renderer::{DynamicBuffer, Renderer, INDEX_FORMAT};
@@ -145,15 +145,13 @@ async fn run() -> anyhow::Result<()> {
             });
 
     let mut array_of_textures = ArrayOfTextures::default();
-    let mut static_staging_buffers = StagingModelBuffers::default();
 
-    let level = assets::Level::load_gltf(
+    let level = Level::load_gltf(
         &level_bytes,
         &renderer,
         &mut init_encoder,
         &level_filename,
         &mut array_of_textures,
-        &mut static_staging_buffers,
     )?;
 
     let skybox_texture = assets::load_skybox(
@@ -171,12 +169,7 @@ async fn run() -> anyhow::Result<()> {
         &mut array_of_textures,
     )?;
 
-    let model_buffers = ModelBuffers::new(
-        &mut renderer,
-        &mut init_encoder,
-        array_of_textures,
-        static_staging_buffers,
-    )?;
+    let model_buffers = ModelBuffers::new(&mut renderer, &mut init_encoder, array_of_textures)?;
 
     renderer.queue.submit(Some(init_encoder.finish()));
 
@@ -430,7 +423,7 @@ async fn run() -> anyhow::Result<()> {
             _ => {}
         },
         Event::MainEventsCleared => {
-            let level = resources.get::<assets::Level>().unwrap();
+            let level = resources.get::<Level>().unwrap();
 
             player.gun_cooldown -= 1.0 / 60.0;
 
@@ -530,7 +523,7 @@ async fn run() -> anyhow::Result<()> {
 
             let mut model_buffers = resources.get_mut::<ModelBuffers>().unwrap();
             let mut debug_vision_cones = resources.get_mut::<ecs::DebugVisionCones>().unwrap();
-            let level = resources.get::<assets::Level>().unwrap();
+            let level = resources.get::<Level>().unwrap();
 
             /*
             let static_view = fps_view_rh(
@@ -604,7 +597,7 @@ async fn run() -> anyhow::Result<()> {
             debug_contact_points_buffer.upload(&renderer);
             debug_player_collider_buffer.upload(&renderer);
 
-            model_buffers.upload(&renderer, camera_view, &level);
+            model_buffers.upload(&renderer, camera_view);
             debug_vision_cones.0.upload(&renderer);
             debug_vision_cones.0.clear();
 
@@ -692,11 +685,22 @@ async fn run() -> anyhow::Result<()> {
 
                     // Render opaque and alpha-clipped things.
 
-                    model_buffers.render_opaque_and_alpha_clip(
+                    model_buffers.render_gun_opaque_and_alpha_clip(&mut render_pass, &renderer);
+
+                    render_level_geometry(
+                        &level,
                         &mut render_pass,
                         &renderer,
-                        settings.draw_gun,
+                        GeometryType::Opaque,
                     );
+                    render_level_geometry(
+                        &level,
+                        &mut render_pass,
+                        &renderer,
+                        GeometryType::AlphaClip,
+                    );
+
+                    model_buffers.render_opaque_and_alpha_clip(&mut render_pass, &renderer);
 
                     // Render the skybox
 
@@ -728,11 +732,16 @@ async fn run() -> anyhow::Result<()> {
                         render_pass.draw(0..len, 0..1);
                     }
 
-                    model_buffers.render_alpha_blend(
+                    model_buffers.render_alpha_blend(&mut render_pass, &renderer);
+
+                    render_level_geometry(
+                        &level,
                         &mut render_pass,
                         &renderer,
-                        settings.draw_gun,
+                        GeometryType::AlphaBlend,
                     );
+
+                    model_buffers.render_gun_alpha_blend(&mut render_pass, &renderer);
 
                     // Render overlay
 
@@ -946,7 +955,7 @@ fn approach_zero(value: f32, change: f32) -> f32 {
 }
 
 fn contact_point<S: ncollide3d::shape::Shape<f32>>(
-    level: &assets::Level,
+    level: &Level,
     shape: &S,
     shape_position: Vec3,
 ) -> Option<ncollide3d::query::Contact<f32>> {
@@ -994,7 +1003,7 @@ fn contact_point<S: ncollide3d::shape::Shape<f32>>(
 
 fn collision_handling(
     player: &mut Player,
-    level: &assets::Level,
+    level: &Level,
     debug_contact_points_buffer: &mut DynamicBuffer<renderer::debug_lines::Vertex>,
 ) {
     const HORIZONTAL_COLOUR: Vec4 = Vec4::new(0.75, 0.75, 0.0, 1.0);
@@ -1198,4 +1207,50 @@ fn render_debug_lines<'a>(
         render_pass.set_vertex_buffer(0, slice);
         render_pass.draw(0..len, 0..1);
     }
+}
+
+pub enum GeometryType {
+    Opaque,
+    AlphaClip,
+    AlphaBlend,
+}
+
+fn render_level_geometry<'a>(
+    level: &'a Level,
+    render_pass: &mut wgpu::RenderPass<'a>,
+    renderer: &'a Renderer,
+    geometry_type: GeometryType,
+) {
+    let (pipeline, buffer_view) = match geometry_type {
+        GeometryType::Opaque => (
+            &renderer.render_pipelines.level_opaque,
+            &level.model.opaque_geometry,
+        ),
+        GeometryType::AlphaClip => (
+            &renderer.render_pipelines.level_alpha_clip,
+            &level.model.alpha_clip_geometry,
+        ),
+        GeometryType::AlphaBlend => (
+            &renderer.render_pipelines.level_alpha_blend,
+            &level.model.alpha_blend_geometry,
+        ),
+    };
+
+    if buffer_view.size == 0 {
+        return;
+    }
+
+    render_pass.set_pipeline(pipeline);
+    render_pass.set_push_constants(
+        wgpu::ShaderStage::VERTEX,
+        0,
+        bytemuck::bytes_of(&renderer.projection_view),
+    );
+    render_pass.set_vertex_buffer(0, level.vertices.slice(..));
+    render_pass.set_index_buffer(level.indices.slice(..), INDEX_FORMAT);
+    render_pass.draw_indexed(
+        buffer_view.offset..buffer_view.offset + buffer_view.size,
+        0,
+        0..1,
+    );
 }

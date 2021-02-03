@@ -1,15 +1,10 @@
 use crate::array_of_textures::ArrayOfTextures;
-use crate::assets::{AnimatedModel, AnimationJoints, Level, Model, StagingModelBuffers};
-use crate::renderer::{AnimatedInstance, Instance, Renderer, Vertex, INDEX_FORMAT};
+use crate::assets::{AnimatedModel, AnimationJoints, Model, StagingModelBuffers};
+use crate::renderer::{AnimatedInstance, Instance, Renderer, INDEX_FORMAT};
+use crate::GeometryType;
 use std::collections::HashMap;
 use ultraviolet::Mat4;
 use wgpu::util::DeviceExt;
-
-enum GeometryType {
-    Opaque,
-    AlphaClip,
-    AlphaBlend,
-}
 
 struct StaticModelBuffer {
     model: Model,
@@ -283,10 +278,9 @@ impl ModelBuffers {
         renderer: &mut Renderer,
         mut init_encoder: &mut wgpu::CommandEncoder,
         mut array_of_textures: ArrayOfTextures,
-        mut static_staging_buffers: StagingModelBuffers<Vertex>,
     ) -> anyhow::Result<Self> {
         let mut animation_info = AnimationInfo::default();
-
+        let mut static_staging_buffers = StagingModelBuffers::default();
         let mut model_name_to_index = HashMap::new();
 
         let static_hand_models = vec![Model::load_gltf(
@@ -580,7 +574,7 @@ impl ModelBuffers {
         self.animated_models[index].model.animation_joints.clone()
     }
 
-    pub fn upload(&mut self, renderer: &Renderer, camera_view: Mat4, level: &Level) {
+    pub fn upload(&mut self, renderer: &Renderer, camera_view: Mat4) {
         renderer.queue.write_buffer(
             &self.hand_model_instance_buffer,
             0,
@@ -630,10 +624,7 @@ impl ModelBuffers {
         // Instances
 
         self.static_instances.upload(
-            [&[Instance::new(Mat4::identity())][..]]
-                .iter()
-                .cloned()
-                .chain(self.static_models.iter().map(|model| &model.instances[..])),
+            self.static_models.iter().map(|model| &model.instances[..]),
             renderer,
         );
 
@@ -650,14 +641,11 @@ impl ModelBuffers {
         {
             let mut instance_offset = 0;
 
-            let extra_models = [(&level.model, 1)];
-
-            let models = extra_models.iter().cloned().chain(
-                self.static_models
-                    .iter()
-                    .map(|model| (&model.model, model.instances.len() as u32))
-                    .filter(|(_, instance_count)| *instance_count > 0),
-            );
+            let models = self
+                .static_models
+                .iter()
+                .map(|model| (&model.model, model.instances.len() as u32))
+                .filter(|(_, instance_count)| *instance_count > 0);
 
             for (model, instance_count) in models {
                 if model.opaque_geometry.size > 0 {
@@ -849,17 +837,20 @@ impl ModelBuffers {
         );
     }
 
+    pub fn render_gun_opaque_and_alpha_clip<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        renderer: &'a Renderer,
+    ) {
+        self.render_static_gun(render_pass, renderer, GeometryType::Opaque);
+        self.render_static_gun(render_pass, renderer, GeometryType::AlphaClip);
+    }
+
     pub fn render_opaque_and_alpha_clip<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
-        render_hand_model: bool,
     ) {
-        if render_hand_model {
-            self.render_static_gun(render_pass, renderer, GeometryType::Opaque);
-            self.render_static_gun(render_pass, renderer, GeometryType::AlphaClip);
-        }
-
         self.render_static(
             render_pass,
             renderer,
@@ -889,11 +880,18 @@ impl ModelBuffers {
         );
     }
 
+    pub fn render_gun_alpha_blend<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        renderer: &'a Renderer,
+    ) {
+        self.render_static_gun(render_pass, renderer, GeometryType::AlphaBlend);
+    }
+
     pub fn render_alpha_blend<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         renderer: &'a Renderer,
-        render_hand_model: bool,
     ) {
         self.render_animated(
             render_pass,
@@ -908,9 +906,5 @@ impl ModelBuffers {
             &renderer.render_pipelines.static_alpha_blend,
             &self.static_model_alpha_blend_draws,
         );
-
-        if render_hand_model {
-            self.render_static_gun(render_pass, renderer, GeometryType::AlphaBlend);
-        }
     }
 }
