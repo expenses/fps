@@ -137,13 +137,17 @@ pub struct Renderer {
 
     pub animated_models_bind_group_layout: wgpu::BindGroupLayout,
 
-    vs_static_model: wgpu::ShaderModule,
-    vs_static_gun_model: wgpu::ShaderModule,
-    vs_animated_model: wgpu::ShaderModule,
-    vs_level: wgpu::ShaderModule,
+    vs_model_static: wgpu::ShaderModule,
+    vs_model_static_gun: wgpu::ShaderModule,
+    vs_model_animated: wgpu::ShaderModule,
+
     fs_model: wgpu::ShaderModule,
-    fs_alpha_clip_model: wgpu::ShaderModule,
+    fs_model_alpha_clip: wgpu::ShaderModule,
+
+    vs_level: wgpu::ShaderModule,
+
     fs_level: wgpu::ShaderModule,
+    fs_level_alpha_clip: wgpu::ShaderModule,
 
     pub render_pipelines: RenderPipelines,
 
@@ -375,10 +379,10 @@ impl Renderer {
                 ],
             });
 
-        let lightmap_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("lightmap bind group layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
+        let lightmap_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("lightmap bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
@@ -387,39 +391,41 @@ impl Renderer {
                         multisampled: false,
                     },
                     count: None,
-                },
-            ],
-        });
+                }],
+            });
 
-        let vs_static_model = load_shader("shaders/compiled/static_model.vert.spv", &device)?;
-
-        let vs_animated_model = load_shader("shaders/compiled/animated_model.vert.spv", &device)?;
+        let vs_model_static = load_shader("shaders/compiled/model_static.vert.spv", &device)?;
+        let vs_model_animated = load_shader("shaders/compiled/model_animated.vert.spv", &device)?;
 
         let fs_model = load_shader("shaders/compiled/model.frag.spv", &device)?;
 
-        let fs_alpha_clip_model =
-            load_shader("shaders/compiled/alpha_clip_model.frag.spv", &device)?;
+        let fs_model_alpha_clip =
+            load_shader("shaders/compiled/model_alpha_clip.frag.spv", &device)?;
 
         let vs_skybox = load_shader("shaders/compiled/skybox.vert.spv", &device)?;
         let fs_skybox = load_shader("shaders/compiled/skybox.frag.spv", &device)?;
 
-        let vs_static_gun_model =
-            load_shader("shaders/compiled/static_gun_model.vert.spv", &device)?;
+        let vs_model_static_gun =
+            load_shader("shaders/compiled/model_static_gun.vert.spv", &device)?;
 
         let vs_level = load_shader("shaders/compiled/level.vert.spv", &device)?;
+
         let fs_level = load_shader("shaders/compiled/level.frag.spv", &device)?;
+        let fs_level_alpha_clip =
+            load_shader("shaders/compiled/level_alpha_clip.frag.spv", &device)?;
 
         let (array_of_textures_bind_group_layout, render_pipelines) =
             render_pipelines_for_num_textures(
                 1,
                 &device,
-                &vs_static_model,
-                &vs_animated_model,
+                &vs_model_static,
+                &vs_model_animated,
                 &fs_model,
-                &fs_alpha_clip_model,
-                &vs_static_gun_model,
+                &fs_model_alpha_clip,
+                &vs_model_static_gun,
                 &vs_level,
                 &fs_level,
+                &fs_level_alpha_clip,
                 &main_bind_group_layout,
                 &lights_bind_group_layout,
                 &animated_models_bind_group_layout,
@@ -654,33 +660,34 @@ impl Renderer {
                 push_constant_ranges: &[],
             });
 
-        let bake_lightmap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("bake lightmap pipeline"),
-            layout: Some(&bake_lightmap_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_bake_lightmap,
-                entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_bake_lightmap,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[wgpu::TextureFormat::Rgba32Float.into()],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: Some(INDEX_FORMAT),
-                vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: std::mem::size_of::<LevelVertex>() as u64,
-                    step_mode: wgpu::InputStepMode::Vertex,
-                    attributes: &LEVEL_VERTEX_ATTR_ARRAY[..],
-                }],
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
-        });
+        let bake_lightmap_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("bake lightmap pipeline"),
+                layout: Some(&bake_lightmap_pipeline_layout),
+                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &vs_bake_lightmap,
+                    entry_point: "main",
+                },
+                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                    module: &fs_bake_lightmap,
+                    entry_point: "main",
+                }),
+                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+                color_states: &[wgpu::TextureFormat::Rgba32Float.into()],
+                depth_stencil_state: None,
+                vertex_state: wgpu::VertexStateDescriptor {
+                    index_format: Some(INDEX_FORMAT),
+                    vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                        stride: std::mem::size_of::<LevelVertex>() as u64,
+                        step_mode: wgpu::InputStepMode::Vertex,
+                        attributes: &LEVEL_VERTEX_ATTR_ARRAY[..],
+                    }],
+                },
+                sample_count: 1,
+                sample_mask: !0,
+                alpha_to_coverage_enabled: false,
+            });
 
         Ok(Self {
             device,
@@ -719,12 +726,13 @@ impl Renderer {
             tonemap_pipeline,
 
             fs_model,
-            vs_static_model,
-            vs_animated_model,
-            fs_alpha_clip_model,
-            vs_static_gun_model,
+            vs_model_static,
+            vs_model_animated,
+            fs_model_alpha_clip,
+            vs_model_static_gun,
             vs_level,
             fs_level,
+            fs_level_alpha_clip,
 
             display_format,
 
@@ -802,13 +810,14 @@ impl Renderer {
             render_pipelines_for_num_textures(
                 num_textures,
                 &self.device,
-                &self.vs_static_model,
-                &self.vs_animated_model,
+                &self.vs_model_static,
+                &self.vs_model_animated,
                 &self.fs_model,
-                &self.fs_alpha_clip_model,
-                &self.vs_static_gun_model,
+                &self.fs_model_alpha_clip,
+                &self.vs_model_static_gun,
                 &self.vs_level,
                 &self.fs_level,
+                &self.fs_level_alpha_clip,
                 &self.main_bind_group_layout,
                 &self.lights_bind_group_layout,
                 &self.animated_models_bind_group_layout,
@@ -1277,15 +1286,16 @@ fn render_pipelines_for_num_textures(
     num_textures: u32,
     device: &wgpu::Device,
 
-    vs_static_model: &wgpu::ShaderModule,
-    vs_animated_model: &wgpu::ShaderModule,
+    vs_model_static: &wgpu::ShaderModule,
+    vs_model_animated: &wgpu::ShaderModule,
     fs_model: &wgpu::ShaderModule,
-    fs_alpha_clip_model: &wgpu::ShaderModule,
+    fs_model_alpha_clip: &wgpu::ShaderModule,
 
-    vs_static_gun_model: &wgpu::ShaderModule,
+    vs_model_static_gun: &wgpu::ShaderModule,
 
     vs_level: &wgpu::ShaderModule,
     fs_level: &wgpu::ShaderModule,
+    fs_level_alpha_clip: &wgpu::ShaderModule,
 
     main_bind_group_layout: &wgpu::BindGroupLayout,
     lights_bind_group_layout: &wgpu::BindGroupLayout,
@@ -1336,19 +1346,18 @@ fn render_pipelines_for_num_textures(
             }],
         });
 
-    let level_pipeline_layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("level pipeline layout"),
-            bind_group_layouts: &[
-                main_bind_group_layout,
-                &array_of_textures_bind_group_layout,
-                lightmap_bind_group_layout,
-            ],
-            push_constant_ranges: &[wgpu::PushConstantRange {
-                stages: wgpu::ShaderStage::VERTEX,
-                range: 0..std::mem::size_of::<Mat4>() as u32,
-            }],
-        });
+    let level_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("level pipeline layout"),
+        bind_group_layouts: &[
+            main_bind_group_layout,
+            &array_of_textures_bind_group_layout,
+            lightmap_bind_group_layout,
+        ],
+        push_constant_ranges: &[wgpu::PushConstantRange {
+            stages: wgpu::ShaderStage::VERTEX,
+            range: 0..std::mem::size_of::<Mat4>() as u32,
+        }],
+    });
 
     // Decisions:
     //
@@ -1374,7 +1383,7 @@ fn render_pipelines_for_num_textures(
             device,
             label: "static opaque render pipeline",
             layout: &static_model_pipeline_layout,
-            vs_module: vs_static_model,
+            vs_module: vs_model_static,
             fs_module: fs_model,
             colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
@@ -1385,8 +1394,8 @@ fn render_pipelines_for_num_textures(
             device,
             label: "static alpha clip render pipeline",
             layout: &static_model_pipeline_layout,
-            vs_module: vs_static_model,
-            fs_module: fs_alpha_clip_model,
+            vs_module: vs_model_static,
+            fs_module: fs_model_alpha_clip,
             colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
             backface_culling: false,
@@ -1396,7 +1405,7 @@ fn render_pipelines_for_num_textures(
             device,
             label: "static alpha blend render pipeline",
             layout: &static_model_pipeline_layout,
-            vs_module: vs_static_model,
+            vs_module: vs_model_static,
             fs_module: fs_model,
             colour_descriptor: alpha_blend_colour_descriptor(),
             animated: false,
@@ -1408,7 +1417,7 @@ fn render_pipelines_for_num_textures(
             device,
             label: "animated opaque render pipeline",
             layout: &animated_model_pipeline_layout,
-            vs_module: vs_animated_model,
+            vs_module: vs_model_animated,
             fs_module: fs_model,
             colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: true,
@@ -1419,8 +1428,8 @@ fn render_pipelines_for_num_textures(
             device,
             label: "animated alpha clip render pipeline",
             layout: &animated_model_pipeline_layout,
-            vs_module: vs_animated_model,
-            fs_module: fs_alpha_clip_model,
+            vs_module: vs_model_animated,
+            fs_module: fs_model_alpha_clip,
             colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: true,
             backface_culling: false,
@@ -1430,7 +1439,7 @@ fn render_pipelines_for_num_textures(
             device,
             label: "animated alpha blend render pipeline",
             layout: &animated_model_pipeline_layout,
-            vs_module: vs_animated_model,
+            vs_module: vs_model_animated,
             fs_module: fs_model,
             colour_descriptor: alpha_blend_colour_descriptor(),
             animated: true,
@@ -1442,7 +1451,7 @@ fn render_pipelines_for_num_textures(
             device,
             label: "static opaque gun render pipeline",
             layout: &static_model_pipeline_layout,
-            vs_module: vs_static_gun_model,
+            vs_module: vs_model_static_gun,
             fs_module: fs_model,
             colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
@@ -1453,8 +1462,8 @@ fn render_pipelines_for_num_textures(
             device,
             label: "static alpha clip gun render pipeline",
             layout: &static_model_pipeline_layout,
-            vs_module: vs_static_gun_model,
-            fs_module: fs_alpha_clip_model,
+            vs_module: vs_model_static_gun,
+            fs_module: fs_model_alpha_clip,
             colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
             backface_culling: false,
@@ -1464,7 +1473,7 @@ fn render_pipelines_for_num_textures(
             device,
             label: "static alpha blend gun render pipeline",
             layout: &static_model_pipeline_layout,
-            vs_module: vs_static_gun_model,
+            vs_module: vs_model_static_gun,
             fs_module: fs_model,
             colour_descriptor: alpha_blend_colour_descriptor(),
             animated: false,
@@ -1487,7 +1496,7 @@ fn render_pipelines_for_num_textures(
             label: "level alpha clip render pipeline",
             layout: &level_pipeline_layout,
             vs_module: vs_level,
-            fs_module: fs_level,
+            fs_module: fs_level_alpha_clip,
             colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             backface_culling: false,
             depth_write: true,

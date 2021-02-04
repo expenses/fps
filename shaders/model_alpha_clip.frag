@@ -47,6 +47,11 @@ const float MIN_LIGHT_DISTANCE = 0.5;
 
 void main() {
     vec4 sampled = texture(sampler2D(u_texture[texture_index], u_nearest_sampler), uv);
+
+    if (sampled.a < 0.5) {
+        discard;
+    }
+
     vec3 norm = normalize(normal);
 
     vec3 total_lighting = AMBIENT + emission;

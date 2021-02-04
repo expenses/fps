@@ -15,6 +15,8 @@ layout(set = 1, binding = 0) uniform texture2D u_texture[];
 
 layout(set = 2, binding = 0) uniform texture2D lightmap_texture;
 
+const vec3 AMBIENT = vec3(0.05);
+
 void main() {
     vec4 sampled = texture(sampler2D(u_texture[texture_index], u_nearest_sampler), uv);
 
@@ -22,7 +24,9 @@ void main() {
         discard;
     }
 
-    vec3 lighting = texture(sampler2D(lightmap_texture, u_linear_sampler), lightmap_uv).rgb;
+    vec3 total_lighting = AMBIENT + emission;
 
-    colour = vec4(sampled.rgb * (lighting + emission), sampled.a);
+    total_lighting += texture(sampler2D(lightmap_texture, u_linear_sampler), lightmap_uv).rgb;
+
+    colour = vec4(sampled.rgb * total_lighting, sampled.a);
 }

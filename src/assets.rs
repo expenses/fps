@@ -1,7 +1,8 @@
 use crate::array_of_textures::ArrayOfTextures;
 use crate::intersection_maths::IntersectionTriangle;
 use crate::renderer::{
-    normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, TEXTURE_FORMAT, INDEX_FORMAT,
+    normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, INDEX_FORMAT,
+    TEXTURE_FORMAT,
 };
 use crate::vec3_into;
 use std::collections::HashMap;
@@ -444,7 +445,9 @@ impl Level {
 }
 
 pub fn bake_lightmap(
-    renderer: &Renderer, level: &Level, encoder: &mut wgpu::CommandEncoder,
+    renderer: &Renderer,
+    level: &Level,
+    encoder: &mut wgpu::CommandEncoder,
 ) -> wgpu::BindGroup {
     let lightmap_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("lightmap texture"),
@@ -460,7 +463,8 @@ pub fn bake_lightmap(
         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
     });
 
-    let lightmap_texture_view = lightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let lightmap_texture_view =
+        lightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
@@ -498,22 +502,21 @@ pub fn bake_lightmap(
     render_pass.draw_indexed(
         buffer_view.offset..buffer_view.offset + buffer_view.size,
         0,
-        0..
-        1,
+        0..1,
     );
 
     drop(render_pass);
 
-    renderer.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("lightmap bind group"),
-        layout: &renderer.lightmap_bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
+    renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lightmap bind group"),
+            layout: &renderer.lightmap_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&lightmap_texture_view)
-            }
-        ]
-    })
+                resource: wgpu::BindingResource::TextureView(&lightmap_texture_view),
+            }],
+        })
 }
 
 fn create_navmesh(
