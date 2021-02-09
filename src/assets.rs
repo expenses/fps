@@ -2,7 +2,7 @@ use crate::array_of_textures::ArrayOfTextures;
 use crate::intersection_maths::IntersectionTriangle;
 use crate::renderer::{
     normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, INDEX_FORMAT,
-    LIGHTMAP_FORMAT, TEXTURE_FORMAT,
+    LIGHTMAP_FORMAT, LIGHTVOL_FORMAT, TEXTURE_FORMAT,
 };
 use crate::vec3_into;
 use std::collections::HashMap;
@@ -335,7 +335,7 @@ impl Level {
                             mip_level_count: 1,
                             sample_count: 1,
                             dimension: wgpu::TextureDimension::D3,
-                            format: wgpu::TextureFormat::Rgba32Float,
+                            format: LIGHTVOL_FORMAT,
                             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::STORAGE,
                         })
                         .create_view(&wgpu::TextureViewDescriptor::default()),
@@ -390,9 +390,9 @@ impl Level {
             compute_pass.set_pipeline(&renderer.bake_lightvol_pipeline);
             compute_pass.set_bind_group(0, &bake_lightvol_bind_group, &[]);
             compute_pass.dispatch(
-                irradience_volume_info.probes_x / 4,
-                irradience_volume_info.probes_y / 4,
-                irradience_volume_info.probes_z / 4,
+                irradience_volume_info.probes_x / 8,
+                irradience_volume_info.probes_y / 8,
+                irradience_volume_info.probes_z / 8,
             );
 
             drop(compute_pass);

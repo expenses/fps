@@ -10,6 +10,7 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
 const PRE_TONEMAP_FRAMEBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 pub const LIGHTMAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+pub const LIGHTVOL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -725,12 +726,12 @@ impl Renderer {
 
         let comp_bake_lightvol = load_shader("shaders/compiled/bake_lightvol.comp.spv", &device)?;
 
-        let write_only_storage_texture = |binding| wgpu::BindGroupLayoutEntry {
+        let lightvol_texture = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStage::COMPUTE,
             ty: wgpu::BindingType::StorageTexture {
                 access: wgpu::StorageTextureAccess::WriteOnly,
-                format: wgpu::TextureFormat::Rgba32Float,
+                format: LIGHTVOL_FORMAT,
                 view_dimension: wgpu::TextureViewDimension::D3,
             },
             count: None,
@@ -761,12 +762,12 @@ impl Renderer {
                         count: None,
                     },
                     // 6 lightvol storage textures
-                    write_only_storage_texture(2),
-                    write_only_storage_texture(3),
-                    write_only_storage_texture(4),
-                    write_only_storage_texture(5),
-                    write_only_storage_texture(6),
-                    write_only_storage_texture(7),
+                    lightvol_texture(2),
+                    lightvol_texture(3),
+                    lightvol_texture(4),
+                    lightvol_texture(5),
+                    lightvol_texture(6),
+                    lightvol_texture(7),
                 ],
             });
 
