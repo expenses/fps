@@ -230,7 +230,7 @@ async fn run() -> anyhow::Result<()> {
         }
     }
 
-    let overlay_pipeline = renderer::overlay::overlay_pipeline(&renderer, &settings);
+    let overlay_pipeline = renderer::overlay::overlay_pipeline(&renderer, &settings)?;
     let mut overlay_buffers = renderer::overlay::OverlayBuffers::new(&renderer.device);
 
     let mut debug_contact_points_buffer = DynamicBuffer::new(
@@ -316,7 +316,7 @@ async fn run() -> anyhow::Result<()> {
         wgpu::BufferUsage::VERTEX,
     );
 
-    let debug_lines_pipelines = renderer::debug_lines::DebugLinesPipelines::new(&renderer);
+    let debug_lines_pipelines = renderer::debug_lines::DebugLinesPipelines::new(&renderer)?;
 
     let mut control_states = ControlStates::default();
 

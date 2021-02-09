@@ -44,14 +44,14 @@ pub struct AnimatedVertex {
     pub joint_weights: Vec4,
 }
 
-const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 5] =
+const STATIC_VERTEX_ATTR_ARRAY: [wgpu::VertexAttribute; 5] =
     wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float];
-const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
+const STATIC_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![5 => Float4, 6 => Float4, 7 => Float4, 8 => Float4, 9 => Float3, 10 => Float3, 11 => Float3];
 
-const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Ushort4, 6 => Float4];
-const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 6] = wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4, 11 => Uint, 12 => Uint];
+const ANIMATED_VERTEX_ATTR_ARRAY: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Ushort4, 6 => Float4];
+const ANIMATED_INSTANCE_ATTR_ARRAY: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![7 => Float4, 8 => Float4, 9 => Float4, 10 => Float4, 11 => Uint, 12 => Uint];
 
-const LEVEL_VERTEX_ATTR_ARRAY: [wgpu::VertexAttributeDescriptor; 6] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Float2];
+const LEVEL_VERTEX_ATTR_ARRAY: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![0 => Float3, 1 => Float3, 2 => Float2, 3 => Uint, 4 => Float, 5 => Float2];
 
 pub fn normal_matrix(transform: Mat4) -> Mat3 {
     let inverse_transpose = transform.inversed().transposed();
@@ -103,13 +103,14 @@ pub struct IrradienceVolumeUniforms {
     pub scale: Vec3,
 }
 
-fn load_shader(filename: &str, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
+pub fn load_shader(filename: &str, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
     let bytes = std::fs::read(filename)?;
 
     Ok(device.create_shader_module(&wgpu::ShaderModuleDescriptor {
         label: Some(filename),
         source: wgpu::util::make_spirv(&bytes),
-        flags: wgpu::ShaderFlags::VALIDATION,
+        // Waiting for https://github.com/gfx-rs/naga/pull/429 to reach wgpu to enable validation.
+        flags: wgpu::ShaderFlags::empty(),
     }))
 }
 
@@ -213,7 +214,7 @@ impl Renderer {
             )
             .await?;
 
-        let display_format = device.get_swap_chain_preferred_format();
+        let display_format = adapter.get_swap_chain_preferred_format(&surface);
 
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Nearest,
@@ -448,30 +449,26 @@ impl Renderer {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("skybox render pipeline"),
                 layout: Some(&skybox_render_pipeline_layout),
-                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                vertex: wgpu::VertexState {
                     module: &vs_skybox,
                     entry_point: "main",
+                    buffers: &[],
                 },
-                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                fragment: Some(wgpu::FragmentState {
                     module: &fs_skybox,
                     entry_point: "main",
+                    targets: &[PRE_TONEMAP_FRAMEBUFFER_FORMAT.into()],
                 }),
-                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[PRE_TONEMAP_FRAMEBUFFER_FORMAT.into()],
-                depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: false,
                     depth_compare: wgpu::CompareFunction::Equal,
-                    stencil: wgpu::StencilStateDescriptor::default(),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                    clamp_depth: false,
                 }),
-                vertex_state: wgpu::VertexStateDescriptor {
-                    index_format: None,
-                    vertex_buffers: &[],
-                },
-                sample_count: 1,
-                sample_mask: !0,
-                alpha_to_coverage_enabled: false,
+                multisample: wgpu::MultisampleState::default(),
             });
 
         let identity_instance_buffer = single_instance_buffer(
@@ -522,25 +519,19 @@ impl Renderer {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("mipmap generation pipeline"),
                 layout: Some(&mipmap_generation_pipeline_layout),
-                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                vertex: wgpu::VertexState {
                     module: &vs_full_screen_tri_module,
                     entry_point: "main",
+                    buffers: &[],
                 },
-                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                fragment: Some(wgpu::FragmentState {
                     module: &fs_blit_mipmap_module,
                     entry_point: "main",
+                    targets: &[TEXTURE_FORMAT.into()],
                 }),
-                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[TEXTURE_FORMAT.into()],
-                depth_stencil_state: None,
-                vertex_state: wgpu::VertexStateDescriptor {
-                    index_format: Some(INDEX_FORMAT),
-                    vertex_buffers: &[],
-                },
-                sample_count: 1,
-                sample_mask: !0,
-                alpha_to_coverage_enabled: false,
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
             });
 
         let post_processing_bind_group_layout =
@@ -605,25 +596,19 @@ impl Renderer {
         let fxaa_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("fxaa pipeline"),
             layout: Some(&post_processing_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &vs_full_screen_tri_module,
                 entry_point: "main",
+                buffers: &[],
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            fragment: Some(wgpu::FragmentState {
                 module: &fs_fxaa_module,
                 entry_point: "main",
+                targets: &[display_format.into()],
             }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[display_format.into()],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: Some(INDEX_FORMAT),
-                vertex_buffers: &[],
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
         });
 
         let fs_tonemap_module = load_shader("shaders/compiled/tonemap.frag.spv", &device)?;
@@ -631,25 +616,19 @@ impl Renderer {
         let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("tonemap pipeline"),
             layout: Some(&post_processing_pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
+            vertex: wgpu::VertexState {
                 module: &vs_full_screen_tri_module,
                 entry_point: "main",
+                buffers: &[],
             },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+            fragment: Some(wgpu::FragmentState {
                 module: &fs_tonemap_module,
                 entry_point: "main",
+                targets: &[display_format.into()],
             }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[display_format.into()],
-            depth_stencil_state: None,
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: Some(INDEX_FORMAT),
-                vertex_buffers: &[],
-            },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
         });
 
         let fs_texture_dilation =
@@ -659,25 +638,19 @@ impl Renderer {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("texture dilation pipeline"),
                 layout: Some(&post_processing_pipeline_layout),
-                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                vertex: wgpu::VertexState {
                     module: &vs_full_screen_tri_module,
                     entry_point: "main",
+                    buffers: &[],
                 },
-                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                fragment: Some(wgpu::FragmentState {
                     module: &fs_texture_dilation,
                     entry_point: "main",
+                    targets: &[LIGHTMAP_FORMAT.into()],
                 }),
-                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[LIGHTMAP_FORMAT.into()],
-                depth_stencil_state: None,
-                vertex_state: wgpu::VertexStateDescriptor {
-                    index_format: Some(INDEX_FORMAT),
-                    vertex_buffers: &[],
-                },
-                sample_count: 1,
-                sample_mask: !0,
-                alpha_to_coverage_enabled: false,
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
             });
 
         let vs_bake_lightmap = load_shader("shaders/compiled/bake_lightmap.vert.spv", &device)?;
@@ -694,29 +667,23 @@ impl Renderer {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("bake lightmap pipeline"),
                 layout: Some(&bake_lightmap_pipeline_layout),
-                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                vertex: wgpu::VertexState {
                     module: &vs_bake_lightmap,
                     entry_point: "main",
-                },
-                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                    module: &fs_bake_lightmap,
-                    entry_point: "main",
-                }),
-                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[LIGHTMAP_FORMAT.into()],
-                depth_stencil_state: None,
-                vertex_state: wgpu::VertexStateDescriptor {
-                    index_format: Some(INDEX_FORMAT),
-                    vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                        stride: std::mem::size_of::<LevelVertex>() as u64,
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<LevelVertex>() as u64,
                         step_mode: wgpu::InputStepMode::Vertex,
                         attributes: &LEVEL_VERTEX_ATTR_ARRAY[..],
                     }],
                 },
-                sample_count: 1,
-                sample_mask: !0,
-                alpha_to_coverage_enabled: false,
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs_bake_lightmap,
+                    entry_point: "main",
+                    targets: &[LIGHTMAP_FORMAT.into()],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
             });
 
         Ok(Self {
@@ -907,19 +874,15 @@ pub fn single_instance_buffer(
     })
 }
 
-pub fn alpha_blend_colour_descriptor() -> wgpu::ColorStateDescriptor {
-    wgpu::ColorStateDescriptor {
+pub fn alpha_blend_colour_target_state() -> wgpu::ColorTargetState {
+    wgpu::ColorTargetState {
         format: PRE_TONEMAP_FRAMEBUFFER_FORMAT,
-        color_blend: wgpu::BlendDescriptor {
+        color_blend: wgpu::BlendState {
             src_factor: wgpu::BlendFactor::SrcAlpha,
             dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
             operation: wgpu::BlendOperation::Add,
         },
-        alpha_blend: wgpu::BlendDescriptor {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::Zero,
-            operation: wgpu::BlendOperation::Add,
-        },
+        alpha_blend: wgpu::BlendState::REPLACE,
         write_mask: wgpu::ColorWrite::ALL,
     }
 }
@@ -930,7 +893,7 @@ struct PipelineParams<'a> {
     layout: &'a wgpu::PipelineLayout,
     vs_module: &'a wgpu::ShaderModule,
     fs_module: &'a wgpu::ShaderModule,
-    colour_descriptor: wgpu::ColorStateDescriptor,
+    colour_target_state: wgpu::ColorTargetState,
     animated: bool,
     backface_culling: bool,
     depth_write: bool,
@@ -943,7 +906,7 @@ fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
         layout,
         vs_module,
         fs_module,
-        colour_descriptor,
+        colour_target_state,
         animated,
         backface_culling,
         depth_write,
@@ -952,35 +915,12 @@ fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
-        vertex_stage: wgpu::ProgrammableStageDescriptor {
+        vertex: wgpu::VertexState {
             module: vs_module,
             entry_point: "main",
-        },
-        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-            module: fs_module,
-            entry_point: "main",
-        }),
-        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-            cull_mode: if backface_culling {
-                wgpu::CullMode::Back
-            } else {
-                wgpu::CullMode::None
-            },
-            ..Default::default()
-        }),
-        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-        color_states: &[colour_descriptor],
-        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: depth_write,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilStateDescriptor::default(),
-        }),
-        vertex_state: wgpu::VertexStateDescriptor {
-            index_format: Some(INDEX_FORMAT),
-            vertex_buffers: &[
-                wgpu::VertexBufferDescriptor {
-                    stride: if animated {
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: if animated {
                         std::mem::size_of::<AnimatedVertex>()
                     } else {
                         std::mem::size_of::<Vertex>()
@@ -992,8 +932,8 @@ fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
                         &STATIC_VERTEX_ATTR_ARRAY[..]
                     },
                 },
-                wgpu::VertexBufferDescriptor {
-                    stride: if animated {
+                wgpu::VertexBufferLayout {
+                    array_stride: if animated {
                         std::mem::size_of::<AnimatedInstance>()
                     } else {
                         std::mem::size_of::<Instance>()
@@ -1007,9 +947,28 @@ fn create_render_pipeline(params: PipelineParams) -> wgpu::RenderPipeline {
                 },
             ],
         },
-        sample_count: 1,
-        sample_mask: !0,
-        alpha_to_coverage_enabled: false,
+        fragment: Some(wgpu::FragmentState {
+            module: fs_module,
+            entry_point: "main",
+            targets: &[colour_target_state],
+        }),
+        primitive: wgpu::PrimitiveState {
+            cull_mode: if backface_culling {
+                wgpu::CullMode::Back
+            } else {
+                wgpu::CullMode::None
+            },
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: depth_write,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+            clamp_depth: false,
+        }),
+        multisample: wgpu::MultisampleState::default(),
     })
 }
 
@@ -1019,7 +978,7 @@ struct LevelPipelineParams<'a> {
     layout: &'a wgpu::PipelineLayout,
     vs_module: &'a wgpu::ShaderModule,
     fs_module: &'a wgpu::ShaderModule,
-    colour_descriptor: wgpu::ColorStateDescriptor,
+    colour_target_state: wgpu::ColorTargetState,
     backface_culling: bool,
     depth_write: bool,
 }
@@ -1031,7 +990,7 @@ fn create_level_render_pipeline(params: LevelPipelineParams) -> wgpu::RenderPipe
         layout,
         vs_module,
         fs_module,
-        colour_descriptor,
+        colour_target_state,
         backface_culling,
         depth_write,
     } = params;
@@ -1039,41 +998,37 @@ fn create_level_render_pipeline(params: LevelPipelineParams) -> wgpu::RenderPipe
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
-        vertex_stage: wgpu::ProgrammableStageDescriptor {
+        vertex: wgpu::VertexState {
             module: vs_module,
             entry_point: "main",
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<LevelVertex>() as u64,
+                step_mode: wgpu::InputStepMode::Vertex,
+                attributes: &LEVEL_VERTEX_ATTR_ARRAY[..],
+            }],
         },
-        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+        fragment: Some(wgpu::FragmentState {
             module: fs_module,
             entry_point: "main",
+            targets: &[colour_target_state],
         }),
-        rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+        primitive: wgpu::PrimitiveState {
             cull_mode: if backface_culling {
                 wgpu::CullMode::Back
             } else {
                 wgpu::CullMode::None
             },
             ..Default::default()
-        }),
-        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-        color_states: &[colour_descriptor],
-        depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: depth_write,
             depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilStateDescriptor::default(),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+            clamp_depth: false,
         }),
-        vertex_state: wgpu::VertexStateDescriptor {
-            index_format: Some(INDEX_FORMAT),
-            vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                stride: std::mem::size_of::<LevelVertex>() as u64,
-                step_mode: wgpu::InputStepMode::Vertex,
-                attributes: &LEVEL_VERTEX_ATTR_ARRAY[..],
-            }],
-        },
-        sample_count: 1,
-        sample_mask: !0,
-        alpha_to_coverage_enabled: false,
+        multisample: wgpu::MultisampleState::default(),
     })
 }
 
@@ -1417,7 +1372,7 @@ fn render_pipelines_for_num_textures(
             layout: &static_model_pipeline_layout,
             vs_module: vs_model_static,
             fs_module: fs_model,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
             backface_culling: true,
             depth_write: true,
@@ -1428,7 +1383,7 @@ fn render_pipelines_for_num_textures(
             layout: &static_model_pipeline_layout,
             vs_module: vs_model_static,
             fs_module: fs_model_alpha_clip,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
             backface_culling: false,
             depth_write: true,
@@ -1439,7 +1394,7 @@ fn render_pipelines_for_num_textures(
             layout: &static_model_pipeline_layout,
             vs_module: vs_model_static,
             fs_module: fs_model,
-            colour_descriptor: alpha_blend_colour_descriptor(),
+            colour_target_state: alpha_blend_colour_target_state(),
             animated: false,
             backface_culling: true,
             depth_write: false,
@@ -1451,7 +1406,7 @@ fn render_pipelines_for_num_textures(
             layout: &animated_model_pipeline_layout,
             vs_module: vs_model_animated,
             fs_module: fs_model,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: true,
             backface_culling: true,
             depth_write: true,
@@ -1462,7 +1417,7 @@ fn render_pipelines_for_num_textures(
             layout: &animated_model_pipeline_layout,
             vs_module: vs_model_animated,
             fs_module: fs_model_alpha_clip,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: true,
             backface_culling: false,
             depth_write: true,
@@ -1473,7 +1428,7 @@ fn render_pipelines_for_num_textures(
             layout: &animated_model_pipeline_layout,
             vs_module: vs_model_animated,
             fs_module: fs_model,
-            colour_descriptor: alpha_blend_colour_descriptor(),
+            colour_target_state: alpha_blend_colour_target_state(),
             animated: true,
             backface_culling: true,
             depth_write: false,
@@ -1485,7 +1440,7 @@ fn render_pipelines_for_num_textures(
             layout: &static_model_pipeline_layout,
             vs_module: vs_model_static_gun,
             fs_module: fs_model,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
             backface_culling: true,
             depth_write: true,
@@ -1496,7 +1451,7 @@ fn render_pipelines_for_num_textures(
             layout: &static_model_pipeline_layout,
             vs_module: vs_model_static_gun,
             fs_module: fs_model_alpha_clip,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             animated: false,
             backface_culling: false,
             depth_write: true,
@@ -1507,7 +1462,7 @@ fn render_pipelines_for_num_textures(
             layout: &static_model_pipeline_layout,
             vs_module: vs_model_static_gun,
             fs_module: fs_model,
-            colour_descriptor: alpha_blend_colour_descriptor(),
+            colour_target_state: alpha_blend_colour_target_state(),
             animated: false,
             backface_culling: true,
             depth_write: false,
@@ -1519,7 +1474,7 @@ fn render_pipelines_for_num_textures(
             layout: &level_pipeline_layout,
             vs_module: vs_level,
             fs_module: fs_level,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             backface_culling: true,
             depth_write: true,
         }),
@@ -1529,7 +1484,7 @@ fn render_pipelines_for_num_textures(
             layout: &level_pipeline_layout,
             vs_module: vs_level,
             fs_module: fs_level_alpha_clip,
-            colour_descriptor: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
+            colour_target_state: PRE_TONEMAP_FRAMEBUFFER_FORMAT.into(),
             backface_culling: false,
             depth_write: true,
         }),
@@ -1539,7 +1494,7 @@ fn render_pipelines_for_num_textures(
             layout: &level_pipeline_layout,
             vs_module: vs_level,
             fs_module: fs_level,
-            colour_descriptor: alpha_blend_colour_descriptor(),
+            colour_target_state: alpha_blend_colour_target_state(),
             backface_culling: true,
             depth_write: false,
         }),

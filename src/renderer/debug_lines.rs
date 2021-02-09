@@ -1,4 +1,4 @@
-use super::{alpha_blend_colour_descriptor, Renderer, DEPTH_FORMAT, INDEX_FORMAT};
+use super::{alpha_blend_colour_target_state, load_shader, Renderer, DEPTH_FORMAT};
 use ultraviolet::{Mat4, Vec3, Vec4};
 
 pub struct DebugLinesPipelines {
@@ -7,7 +7,7 @@ pub struct DebugLinesPipelines {
 }
 
 impl DebugLinesPipelines {
-    pub fn new(renderer: &Renderer) -> Self {
+    pub fn new(renderer: &Renderer) -> anyhow::Result<Self> {
         let debug_lines_pipeline_layout =
             renderer
                 .device
@@ -20,90 +20,84 @@ impl DebugLinesPipelines {
                     }],
                 });
 
-        let vs_less = wgpu::include_spirv!("../../shaders/compiled/debug_lines_less.vert.spv");
-        let vs_less = renderer.device.create_shader_module(&vs_less);
-        let vs_always = wgpu::include_spirv!("../../shaders/compiled/debug_lines_always.vert.spv");
-        let vs_always = renderer.device.create_shader_module(&vs_always);
+        let vs_less = load_shader(
+            "shaders/compiled/debug_lines_less.vert.spv",
+            &renderer.device,
+        )?;
+        let vs_always = load_shader(
+            "shaders/compiled/debug_lines_always.vert.spv",
+            &renderer.device,
+        )?;
+        let fs = load_shader("shaders/compiled/debug_lines.frag.spv", &renderer.device)?;
 
-        let fs = wgpu::include_spirv!("../../shaders/compiled/debug_lines.frag.spv");
-        let fs = renderer.device.create_shader_module(&fs);
-
-        Self {
+        Ok(Self {
             always: renderer
                 .device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("debug lines always pipeline"),
                     layout: Some(&debug_lines_pipeline_layout),
-                    vertex_stage: wgpu::ProgrammableStageDescriptor {
+                    vertex: wgpu::VertexState {
                         module: &vs_always,
                         entry_point: "main",
-                    },
-                    fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                        module: &fs,
-                        entry_point: "main",
-                    }),
-                    rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                        cull_mode: wgpu::CullMode::Back,
-                        ..Default::default()
-                    }),
-                    primitive_topology: wgpu::PrimitiveTopology::LineList,
-                    color_states: &[alpha_blend_colour_descriptor()],
-                    depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilStateDescriptor::default(),
-                    }),
-                    vertex_state: wgpu::VertexStateDescriptor {
-                        index_format: Some(INDEX_FORMAT),
-                        vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                            stride: std::mem::size_of::<Vertex>() as u64,
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<Vertex>() as u64,
                             step_mode: wgpu::InputStepMode::Vertex,
                             attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float4],
                         }],
                     },
-                    sample_count: 1,
-                    sample_mask: !0,
-                    alpha_to_coverage_enabled: false,
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs,
+                        entry_point: "main",
+                        targets: &[alpha_blend_colour_target_state()],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::LineList,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                        clamp_depth: false,
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
                 }),
             less: renderer
                 .device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("debug lines less pipeline"),
                     layout: Some(&debug_lines_pipeline_layout),
-                    vertex_stage: wgpu::ProgrammableStageDescriptor {
+                    vertex: wgpu::VertexState {
                         module: &vs_less,
                         entry_point: "main",
-                    },
-                    fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                        module: &fs,
-                        entry_point: "main",
-                    }),
-                    rasterization_state: Some(wgpu::RasterizationStateDescriptor {
-                        cull_mode: wgpu::CullMode::Back,
-                        ..Default::default()
-                    }),
-                    primitive_topology: wgpu::PrimitiveTopology::LineList,
-                    color_states: &[alpha_blend_colour_descriptor()],
-                    depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                        format: DEPTH_FORMAT,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilStateDescriptor::default(),
-                    }),
-                    vertex_state: wgpu::VertexStateDescriptor {
-                        index_format: Some(INDEX_FORMAT),
-                        vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                            stride: std::mem::size_of::<Vertex>() as u64,
+                        buffers: &[wgpu::VertexBufferLayout {
+                            array_stride: std::mem::size_of::<Vertex>() as u64,
                             step_mode: wgpu::InputStepMode::Vertex,
                             attributes: &wgpu::vertex_attr_array![0 => Float3, 1 => Float4],
                         }],
                     },
-                    sample_count: 1,
-                    sample_mask: !0,
-                    alpha_to_coverage_enabled: false,
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs,
+                        entry_point: "main",
+                        targets: &[alpha_blend_colour_target_state()],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::LineList,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                        clamp_depth: false,
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
                 }),
-        }
+        })
     }
 }
 

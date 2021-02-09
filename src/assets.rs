@@ -1242,7 +1242,7 @@ fn create_exr_layer(
         dimensions,
         exr::meta::header::LayerAttributes::named(&axis_name(axis, flip)[..]),
         exr::image::Encoding::FAST_LOSSLESS,
-        exr::image::AnyChannels::sorted(channels),
+        exr::image::AnyChannels::sort(channels),
     );
 
     (layer, dimensions)

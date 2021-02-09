@@ -1,8 +1,11 @@
-use super::{alpha_blend_colour_descriptor, DynamicBuffer, Renderer, DEPTH_FORMAT, INDEX_FORMAT};
+use super::{alpha_blend_colour_target_state, load_shader, DynamicBuffer, Renderer, DEPTH_FORMAT};
 use crate::Settings;
 use ultraviolet::{Vec2, Vec4};
 
-pub fn overlay_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::RenderPipeline {
+pub fn overlay_pipeline(
+    renderer: &Renderer,
+    _settings: &Settings,
+) -> anyhow::Result<wgpu::RenderPipeline> {
     let pipeline_layout = renderer
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -14,45 +17,39 @@ pub fn overlay_pipeline(renderer: &Renderer, _settings: &Settings) -> wgpu::Rend
             }],
         });
 
-    let vs = wgpu::include_spirv!("../../shaders/compiled/overlay.vert.spv");
-    let vs_module = renderer.device.create_shader_module(&vs);
-    let fs = wgpu::include_spirv!("../../shaders/compiled/overlay.frag.spv");
-    let fs_module = renderer.device.create_shader_module(&fs);
+    let vs = load_shader("shaders/compiled/overlay.vert.spv", &renderer.device)?;
+    let fs = load_shader("shaders/compiled/overlay.frag.spv", &renderer.device)?;
 
-    renderer
+    Ok(renderer
         .device
         .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("overlay pipeline"),
             layout: Some(&pipeline_layout),
-            vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &vs_module,
+            vertex: wgpu::VertexState {
+                module: &vs,
                 entry_point: "main",
-            },
-            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &fs_module,
-                entry_point: "main",
-            }),
-            rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            color_states: &[alpha_blend_colour_descriptor()],
-            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilStateDescriptor::default(),
-            }),
-            vertex_state: wgpu::VertexStateDescriptor {
-                index_format: Some(INDEX_FORMAT),
-                vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: std::mem::size_of::<Vertex>() as u64,
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
                     step_mode: wgpu::InputStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![0 => Float2, 1 => Float4],
                 }],
             },
-            sample_count: 1,
-            sample_mask: !0,
-            alpha_to_coverage_enabled: false,
-        })
+            fragment: Some(wgpu::FragmentState {
+                module: &fs,
+                entry_point: "main",
+                targets: &[alpha_blend_colour_target_state()],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+                clamp_depth: false,
+            }),
+            multisample: wgpu::MultisampleState::default(),
+        }))
 }
 
 #[repr(C)]
