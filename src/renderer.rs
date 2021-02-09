@@ -166,6 +166,9 @@ pub struct Renderer {
     pub bake_lightmap_pipeline: wgpu::RenderPipeline,
     pub lightmap_bind_group_layout: wgpu::BindGroupLayout,
 
+    pub bake_lightvol_bind_group_layout: wgpu::BindGroupLayout,
+    pub bake_lightvol_pipeline: wgpu::ComputePipeline,
+
     display_format: wgpu::TextureFormat,
 }
 
@@ -206,6 +209,7 @@ impl Renderer {
                         max_push_constant_size: std::mem::size_of::<[Mat4; 2]>() as u32,
                         // todo: set this to something crazy high.
                         max_sampled_textures_per_shader_stage: 32,
+                        max_storage_textures_per_shader_stage: 6,
                         ..Default::default()
                     },
                 },
@@ -719,6 +723,70 @@ impl Renderer {
                 alpha_to_coverage_enabled: false,
             });
 
+        let comp_bake_lightvol = load_shader("shaders/compiled/bake_lightvol.comp.spv", &device)?;
+
+        let write_only_storage_texture = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStage::COMPUTE,
+            ty: wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba32Float,
+                view_dimension: wgpu::TextureViewDimension::D3,
+            },
+            count: None,
+        };
+
+        let bake_lightvol_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("bake light vol bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 6 lightvol storage textures
+                    write_only_storage_texture(2),
+                    write_only_storage_texture(3),
+                    write_only_storage_texture(4),
+                    write_only_storage_texture(5),
+                    write_only_storage_texture(6),
+                    write_only_storage_texture(7),
+                ],
+            });
+
+        let bake_lightvol_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bake lightmap pipeline layout"),
+                bind_group_layouts: &[&bake_lightvol_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let bake_lightvol_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("bake lightvol compute pipeline"),
+                layout: Some(&bake_lightvol_pipeline_layout),
+                compute_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &comp_bake_lightvol,
+                    entry_point: "main",
+                },
+            });
+
         Ok(Self {
             device,
             queue,
@@ -768,8 +836,10 @@ impl Renderer {
 
             bake_lightmap_pipeline,
             lightmap_bind_group_layout,
-
             texture_dilation_pipeline,
+
+            bake_lightvol_bind_group_layout,
+            bake_lightvol_pipeline,
         })
     }
 

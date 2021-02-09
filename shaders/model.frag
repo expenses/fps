@@ -51,36 +51,30 @@ void main() {
 
     vec3 total_lighting = AMBIENT + emission;
 
-    vec3 irradience_sample_index = vec3(0.5) + ((pos - irradience_volume.position) / irradience_volume.scale);
+    vec3 sample_index = vec3(0.5) + ((pos - irradience_volume.position) / irradience_volume.scale);
 
     float x_dot = dot(X_NORMAL, norm);
 
-    vec3 x_sample_index = vec3(irradience_sample_index.z, 1.0 - irradience_sample_index.y, irradience_sample_index.x);
-
     if (x_dot > 0.0) {
-        total_lighting += texture(sampler3D(irradience_textures[X], u_linear_sampler), x_sample_index).rgb * x_dot;
+        total_lighting += texture(sampler3D(irradience_textures[X], u_linear_sampler), sample_index).rgb * x_dot;
     } else {
-        total_lighting += texture(sampler3D(irradience_textures[NEG_X], u_linear_sampler), x_sample_index).rgb * -x_dot;
+        total_lighting += texture(sampler3D(irradience_textures[NEG_X], u_linear_sampler), sample_index).rgb * -x_dot;
     }
 
     float y_dot = dot(Y_NORMAL, norm);
 
-    vec3 y_sample_index = vec3(irradience_sample_index.z, irradience_sample_index.x, irradience_sample_index.y);
-
     if (y_dot > 0.0) {
-        total_lighting += texture(sampler3D(irradience_textures[Y], u_linear_sampler), y_sample_index).rgb * y_dot;
+        total_lighting += texture(sampler3D(irradience_textures[Y], u_linear_sampler), sample_index).rgb * y_dot;
     } else {
-        total_lighting += texture(sampler3D(irradience_textures[NEG_Y], u_linear_sampler), y_sample_index).rgb * -y_dot;
+        total_lighting += texture(sampler3D(irradience_textures[NEG_Y], u_linear_sampler), sample_index).rgb * -y_dot;
     }
-
-    vec3 z_sample_index = vec3(irradience_sample_index.x, 1.0 - irradience_sample_index.y, 1.0 - irradience_sample_index.z);
 
     float z_dot = dot(Z_NORMAL, norm);
 
     if (z_dot > 0.0) {
-        total_lighting += texture(sampler3D(irradience_textures[NEG_Z], u_linear_sampler), z_sample_index).rgb * z_dot;
+        total_lighting += texture(sampler3D(irradience_textures[Z], u_linear_sampler), sample_index).rgb * z_dot;
     } else {
-        total_lighting += texture(sampler3D(irradience_textures[Z], u_linear_sampler), z_sample_index).rgb * -z_dot;
+        total_lighting += texture(sampler3D(irradience_textures[NEG_Z], u_linear_sampler), sample_index).rgb * -z_dot;
     }
 
     colour = vec4(sampled.rgb * total_lighting, sampled.a);

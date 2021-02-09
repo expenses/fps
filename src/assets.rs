@@ -268,9 +268,6 @@ impl Level {
         name: &str,
         array_of_textures: &mut ArrayOfTextures,
     ) -> anyhow::Result<Self> {
-        let irradience_volume_textures =
-            load_irradience_volume(&format!("{}.lighting.exr", name), renderer, encoder)?;
-
         let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
 
         let node_tree = NodeTree::new(&gltf);
@@ -305,25 +302,105 @@ impl Level {
                 usage: wgpu::BufferUsage::STORAGE,
             });
 
-        let irradience_volume_texture_refs: Vec<_> = irradience_volume_textures.iter().collect();
+        let irradience_volume_info = get_irradience_volume_info(&gltf, &properties).unwrap();
 
         let irradience_uniforms_buffer = {
-            let IrradienceVolumeInfo {
-                position, scale, ..
-            } = get_irradience_volume_info(&gltf, &properties).unwrap();
-
             renderer
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("irradience volume uniforms"),
                     contents: bytemuck::bytes_of(&IrradienceVolumeUniforms {
-                        position,
-                        scale,
+                        position: irradience_volume_info.position,
+                        scale: irradience_volume_info.scale,
                         padding: 0,
                     }),
                     usage: wgpu::BufferUsage::UNIFORM,
                 })
         };
+
+        let irradience_volume_textures = {
+            let mut textures = Vec::with_capacity(6);
+
+            for i in 0..6 {
+                textures.push(
+                    renderer
+                        .device
+                        .create_texture(&wgpu::TextureDescriptor {
+                            label: Some(&format!("light vol {}", i)),
+                            size: wgpu::Extent3d {
+                                width: irradience_volume_info.probes_x,
+                                height: irradience_volume_info.probes_y,
+                                depth: irradience_volume_info.probes_z,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D3,
+                            format: wgpu::TextureFormat::Rgba32Float,
+                            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::STORAGE,
+                        })
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                );
+            }
+
+            let bake_lightvol_bind_group =
+                renderer
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: None,
+                        layout: &renderer.bake_lightvol_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: lights_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: irradience_uniforms_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&textures[0]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&textures[1]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(&textures[2]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(&textures[3]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::TextureView(&textures[4]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 7,
+                                resource: wgpu::BindingResource::TextureView(&textures[5]),
+                            },
+                        ],
+                    });
+
+            let mut compute_pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+
+            compute_pass.set_pipeline(&renderer.bake_lightvol_pipeline);
+            compute_pass.set_bind_group(0, &bake_lightvol_bind_group, &[]);
+            compute_pass.dispatch(
+                irradience_volume_info.probes_x / 4,
+                irradience_volume_info.probes_y / 4,
+                irradience_volume_info.probes_z / 4,
+            );
+
+            drop(compute_pass);
+
+            textures
+        };
+
+        let irradience_volume_texture_refs: Vec<_> = irradience_volume_textures.iter().collect();
 
         let lights_bind_group = renderer
             .device
@@ -986,266 +1063,6 @@ fn get_irradience_volume_info(
             }
         })
         .next()
-}
-
-fn load_irradience_volume(
-    filename: &str,
-    renderer: &Renderer,
-    init_encoder: &mut wgpu::CommandEncoder,
-) -> anyhow::Result<Vec<wgpu::TextureView>> {
-    let image = exr::image::read::read_all_flat_layers_from_file(filename)?;
-
-    // We assume the order to be:
-    // x, neg_x, y, neg_y, z, neg_z
-
-    let mut textures = Vec::new();
-
-    for layer in image.layer_data {
-        let name = layer.attributes.layer_name.unwrap();
-        let width = layer.size.x();
-        let height = layer.size.y();
-        let depth = layer.channel_data.list.len() / 3;
-
-        let mut layer_rgba: Vec<f32> = Vec::with_capacity(width * height * depth * 4);
-
-        for chunk in layer.channel_data.list.chunks(3) {
-            // These are in BGR order.
-            let red = &chunk[2];
-            let green = &chunk[1];
-            let blue = &chunk[0];
-
-            red.sample_data
-                .values_as_f32()
-                .zip(green.sample_data.values_as_f32())
-                .zip(blue.sample_data.values_as_f32())
-                .for_each(|((red, green), blue)| {
-                    layer_rgba.push(red);
-                    layer_rgba.push(green);
-                    layer_rgba.push(blue);
-                    layer_rgba.push(1.0);
-                });
-        }
-
-        let staging_buffer =
-            renderer
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: None,
-                    contents: bytemuck::cast_slice(&layer_rgba),
-                    usage: wgpu::BufferUsage::COPY_SRC,
-                });
-
-        let extent = wgpu::Extent3d {
-            width: width as u32,
-            height: height as u32,
-            depth: depth as u32,
-        };
-
-        let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&format!("irradience layer {}", name)),
-            size: extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D3,
-            format: wgpu::TextureFormat::Rgba32Float,
-            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-        });
-
-        init_encoder.copy_buffer_to_texture(
-            wgpu::BufferCopyView {
-                buffer: &staging_buffer,
-                layout: wgpu::TextureDataLayout {
-                    offset: 0,
-                    bytes_per_row: width as u32 * 4 * 4,
-                    rows_per_image: height as u32,
-                },
-            },
-            wgpu::TextureCopyView {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            extent,
-        );
-
-        textures.push(texture.create_view(&wgpu::TextureViewDescriptor::default()));
-    }
-
-    Ok(textures)
-}
-
-pub fn generate_irradience_volume(gltf_bytes: &[u8], level_filename: &str) -> anyhow::Result<()> {
-    use exr::image::write::WritableImage;
-
-    let gltf = gltf::Gltf::from_slice(gltf_bytes)?;
-    let node_tree = NodeTree::new(&gltf);
-    let lights = load_lights(&gltf, &node_tree);
-
-    let properties = load_properties(&gltf)?;
-
-    let IrradienceVolumeInfo {
-        position,
-        scale,
-        probes_x,
-        probes_y,
-        probes_z,
-    } = get_irradience_volume_info(&gltf, &properties).expect("Missing irradience volume info");
-
-    let min = position - scale / 2.0;
-
-    let mut d = (0, 0);
-    let mut layers = exr::image::Layers::with_capacity(6);
-
-    for axis in [Axis::X, Axis::Y, Axis::Z].iter().cloned() {
-        for flip in [false, true].iter().cloned() {
-            let (layer, dimensions) = create_exr_layer(
-                probes_x, probes_y, probes_z, axis, flip, min, scale, &lights,
-            );
-
-            d = dimensions;
-            layers.push(layer);
-
-            /*
-            exr::image::Image::new(
-                exr::meta::header::ImageAttributes::with_size(dimensions),
-                layer,
-            )
-            .write()
-            .to_file(format!("{}.lighting_{}.exr", level_filename, axis_name(axis, flip)))?;
-            */
-        }
-    }
-
-    exr::image::Image::new(exr::meta::header::ImageAttributes::with_size(d), layers)
-        .write()
-        .to_file(format!("{}.lighting.exr", level_filename))?;
-
-    Ok(())
-}
-
-fn calculate_lighting(pos: Vec3, normal: Vec3, lights: &[Light]) -> Vec3 {
-    let mut total = Vec3::zero();
-
-    for light in lights {
-        let vector = light.position - pos;
-        let distance = vector.mag();
-
-        let light_dir = vector / distance;
-        let facing = normal.dot(light_dir);
-
-        if facing <= 0.0 {
-            continue;
-        }
-
-        // This uses the following equation except without raising 'distance / light.range' to a
-        // power in order to match what blender does.
-        // https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_lights_punctual/README.md#range-property
-        let attenuation = clamp(1.0 - (distance / light.range), 0.0, 1.0) / (distance * distance);
-
-        total += (facing * attenuation) * light.output;
-    }
-
-    total
-}
-
-fn clamp(value: f32, min: f32, max: f32) -> f32 {
-    value.min(max).max(min)
-}
-
-#[derive(Copy, Clone)]
-enum Axis {
-    X,
-    Y,
-    Z,
-}
-
-fn axis_name(axis: Axis, flip: bool) -> String {
-    format!(
-        "{}{}",
-        if flip { "neg_" } else { "" },
-        match axis {
-            Axis::X => "x",
-            Axis::Y => "y",
-            Axis::Z => "z",
-        }
-    )
-}
-
-fn create_exr_layer(
-    probes_x: u32,
-    probes_y: u32,
-    probes_z: u32,
-    axis: Axis,
-    flip: bool,
-    min: Vec3,
-    scale: Vec3,
-    lights: &[Light],
-) -> (
-    exr::image::Layer<exr::image::AnyChannels<exr::image::FlatSamples>>,
-    (usize, usize),
-) {
-    let (primary, secondary, tertiary, mut normal) = match axis {
-        Axis::X => (probes_x, probes_y, probes_z, Vec3::unit_x()),
-        Axis::Y => (probes_y, probes_x, probes_z, Vec3::unit_y()),
-        Axis::Z => (probes_z, probes_y, probes_x, -Vec3::unit_z()),
-    };
-
-    let probes_vec = Vec3::new(probes_x as f32, probes_y as f32, probes_z as f32);
-
-    if flip {
-        normal = -normal;
-    }
-
-    let mut channels = exr::prelude::SmallVec::with_capacity(primary as usize * 3);
-
-    for p in 0..primary {
-        let mut channel_r = Vec::with_capacity(secondary as usize * tertiary as usize);
-        let mut channel_g = Vec::with_capacity(secondary as usize * tertiary as usize);
-        let mut channel_b = Vec::with_capacity(secondary as usize * tertiary as usize);
-
-        for s in 0..secondary {
-            for t in 0..tertiary {
-                let (x, y, z) = match axis {
-                    Axis::X => (p, probes_y - s, t),
-                    Axis::Y => (s, p, t),
-                    Axis::Z => (t, probes_y - s, probes_z - p),
-                };
-
-                let factor = Vec3::new(x as f32, y as f32, z as f32) / probes_vec;
-
-                let position = min + factor * scale;
-                let lighting = calculate_lighting(position, normal, &lights);
-
-                channel_r.push(lighting.x);
-                channel_g.push(lighting.y);
-                channel_b.push(lighting.z);
-            }
-        }
-
-        channels.push(exr::image::AnyChannel::new(
-            &format!("{:0>4}.R", p)[..],
-            exr::image::FlatSamples::F32(channel_r),
-        ));
-        channels.push(exr::image::AnyChannel::new(
-            &format!("{:0>4}.G", p)[..],
-            exr::image::FlatSamples::F32(channel_g),
-        ));
-        channels.push(exr::image::AnyChannel::new(
-            &format!("{:0>4}.B", p)[..],
-            exr::image::FlatSamples::F32(channel_b),
-        ));
-    }
-
-    let dimensions = (tertiary as usize, secondary as usize);
-
-    let layer = exr::image::Layer::new(
-        dimensions,
-        exr::meta::header::LayerAttributes::named(&axis_name(axis, flip)[..]),
-        exr::image::Encoding::FAST_LOSSLESS,
-        exr::image::AnyChannels::sorted(channels),
-    );
-
-    (layer, dimensions)
 }
 
 fn add_primitive_level_geometry_to_buffers(

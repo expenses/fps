@@ -1,0 +1,64 @@
+
+#version 450
+
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+struct Light {
+    vec3 colour_output;
+    float range;
+    vec3 position;
+};
+
+layout(set = 0, binding = 0) readonly buffer Lights {
+	Light lights[];
+};
+
+layout(set = 0, binding = 1) uniform IrradienceVolumeUniforms {
+    vec3 position;
+    vec3 scale;
+} irradience_volume;
+
+layout(set = 0, binding = 2, rgba32f) uniform writeonly image3D light_vol_x;
+layout(set = 0, binding = 3, rgba32f) uniform writeonly image3D light_vol_neg_x;
+layout(set = 0, binding = 4, rgba32f) uniform writeonly image3D light_vol_y;
+layout(set = 0, binding = 5, rgba32f) uniform writeonly image3D light_vol_neg_y;
+layout(set = 0, binding = 6, rgba32f) uniform writeonly image3D light_vol_z;
+layout(set = 0, binding = 7, rgba32f) uniform writeonly image3D light_vol_neg_z;
+
+vec4 calculate_lighting(vec3 position, vec3 normal) {
+    vec3 total = vec3(0.0);
+
+    for (int i = 0; i < lights.length(); i++) {
+        Light light = lights[i];
+
+        vec3 vector = light.position - position;
+
+        float distance = length(vector);
+        // This uses the following equation except without raising 'distance / light.range' to a
+        // power in order to match what blender does.
+        // https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Khronos/KHR_lights_punctual/README.md#range-property
+        float attenuation = clamp(1.0 - (distance / light.range), 0.0, 1.0) / (distance * distance);
+
+        vec3 light_dir = vector / distance;
+        float facing = max(dot(normal, light_dir), 0.0);
+
+        // Multiplying the `floats` first results in one less `OpVectorTimesScalar` in the spirv
+        total += (facing * attenuation) * light.colour_output;
+    }
+
+    return vec4(total, 1.0);
+}
+
+void main() {
+    vec3 factor = (vec3(gl_GlobalInvocationID) / (gl_NumWorkGroups * gl_WorkGroupSize)) - vec3(0.5);
+    vec3 position = irradience_volume.position + factor * irradience_volume.scale;
+
+    ivec3 location = ivec3(gl_GlobalInvocationID);
+
+    imageStore(light_vol_x, location, calculate_lighting(position, vec3(1.0, 0.0, 0.0)));
+    imageStore(light_vol_neg_x, location, calculate_lighting(position, vec3(-1.0, 0.0, 0.0)));
+    imageStore(light_vol_y, location, calculate_lighting(position, vec3(0.0, 1.0, 0.0)));
+    imageStore(light_vol_neg_y, location, calculate_lighting(position, vec3(0.0, -1.0, 0.0)));
+    imageStore(light_vol_z, location, calculate_lighting(position, vec3(0.0, 0.0, 1.0)));
+    imageStore(light_vol_neg_z, location, calculate_lighting(position, vec3(0.0, 0.0, -1.0)));
+}
