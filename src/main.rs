@@ -154,7 +154,7 @@ async fn run() -> anyhow::Result<()> {
         &mut array_of_textures,
     )?;
 
-    let lightmap_bind_group = assets::bake_lightmap(&renderer, &level, &mut init_encoder);
+    let lightmap_bind_group = assets::bake_lightmap(&renderer, &level, &mut init_encoder, 1024);
 
     let skybox_texture = assets::load_skybox(
         include_bytes!("../textures/skybox.png"),

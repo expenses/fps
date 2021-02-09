@@ -9,6 +9,7 @@ pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormS
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
 const PRE_TONEMAP_FRAMEBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+pub const LIGHTMAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -157,9 +158,10 @@ pub struct Renderer {
     pub fxaa_bind_group: wgpu::BindGroup,
     pub pre_tonemap_framebuffer: wgpu::TextureView,
     pub tonemap_bind_group: wgpu::BindGroup,
-    post_processing_bind_group_layout: wgpu::BindGroupLayout,
+    pub post_processing_bind_group_layout: wgpu::BindGroupLayout,
     pub fxaa_pipeline: wgpu::RenderPipeline,
     pub tonemap_pipeline: wgpu::RenderPipeline,
+    pub texture_dilation_pipeline: wgpu::RenderPipeline,
 
     pub bake_lightmap_pipeline: wgpu::RenderPipeline,
     pub lightmap_bind_group_layout: wgpu::BindGroupLayout,
@@ -650,6 +652,34 @@ impl Renderer {
             alpha_to_coverage_enabled: false,
         });
 
+        let fs_texture_dilation =
+            load_shader("shaders/compiled/texture_dilation.frag.spv", &device)?;
+
+        let texture_dilation_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("texture dilation pipeline"),
+                layout: Some(&post_processing_pipeline_layout),
+                vertex_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &vs_full_screen_tri_module,
+                    entry_point: "main",
+                },
+                fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                    module: &fs_texture_dilation,
+                    entry_point: "main",
+                }),
+                rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
+                primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+                color_states: &[LIGHTMAP_FORMAT.into()],
+                depth_stencil_state: None,
+                vertex_state: wgpu::VertexStateDescriptor {
+                    index_format: Some(INDEX_FORMAT),
+                    vertex_buffers: &[],
+                },
+                sample_count: 1,
+                sample_mask: !0,
+                alpha_to_coverage_enabled: false,
+            });
+
         let vs_bake_lightmap = load_shader("shaders/compiled/bake_lightmap.vert.spv", &device)?;
         let fs_bake_lightmap = load_shader("shaders/compiled/bake_lightmap.frag.spv", &device)?;
 
@@ -674,7 +704,7 @@ impl Renderer {
                 }),
                 rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
                 primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[wgpu::TextureFormat::Rgba32Float.into()],
+                color_states: &[LIGHTMAP_FORMAT.into()],
                 depth_stencil_state: None,
                 vertex_state: wgpu::VertexStateDescriptor {
                     index_format: Some(INDEX_FORMAT),
@@ -738,6 +768,8 @@ impl Renderer {
 
             bake_lightmap_pipeline,
             lightmap_bind_group_layout,
+
+            texture_dilation_pipeline,
         })
     }
 

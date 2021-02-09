@@ -2,7 +2,7 @@ use crate::array_of_textures::ArrayOfTextures;
 use crate::intersection_maths::IntersectionTriangle;
 use crate::renderer::{
     normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, INDEX_FORMAT,
-    TEXTURE_FORMAT,
+    LIGHTMAP_FORMAT, TEXTURE_FORMAT,
 };
 use crate::vec3_into;
 use std::collections::HashMap;
@@ -448,20 +448,37 @@ pub fn bake_lightmap(
     renderer: &Renderer,
     level: &Level,
     encoder: &mut wgpu::CommandEncoder,
+    dimension: u32,
 ) -> wgpu::BindGroup {
-    let lightmap_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("lightmap texture"),
+    let staging_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
         size: wgpu::Extent3d {
-            width: 1024,
-            height: 1024,
+            width: dimension,
+            height: dimension,
             depth: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba32Float,
+        format: LIGHTMAP_FORMAT,
         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
     });
+
+    let lightmap_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("lightmap texture"),
+        size: wgpu::Extent3d {
+            width: dimension,
+            height: dimension,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: LIGHTMAP_FORMAT,
+        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
+    });
+
+    let staging_texture_view = staging_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     let lightmap_texture_view =
         lightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -469,7 +486,7 @@ pub fn bake_lightmap(
     let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-            attachment: &lightmap_texture_view,
+            attachment: &staging_texture_view,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -504,6 +521,44 @@ pub fn bake_lightmap(
         0,
         0..1,
     );
+
+    drop(render_pass);
+
+    let bind_group = renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &renderer.post_processing_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&staging_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
+                },
+            ],
+        });
+
+    // Texture dilation.
+
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: None,
+        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+            attachment: &lightmap_texture_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: true,
+            },
+        }],
+        depth_stencil_attachment: None,
+    });
+
+    render_pass.set_pipeline(&renderer.texture_dilation_pipeline);
+    render_pass.set_bind_group(0, &bind_group, &[]);
+    render_pass.draw(0..3, 0..1);
 
     drop(render_pass);
 
