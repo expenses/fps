@@ -170,6 +170,9 @@ pub struct Renderer {
     pub bake_lightvol_bind_group_layout: wgpu::BindGroupLayout,
     pub bake_lightvol_pipeline: wgpu::ComputePipeline,
 
+    pub bc6h_compression_bind_group_layout: wgpu::BindGroupLayout,
+    pub bc6h_compression_pipeline: wgpu::ComputePipeline,
+
     display_format: wgpu::TextureFormat,
 }
 
@@ -205,7 +208,8 @@ impl Renderer {
                     features: wgpu::Features::SAMPLED_TEXTURE_BINDING_ARRAY
                         | wgpu::Features::UNSIZED_BINDING_ARRAY
                         | wgpu::Features::PUSH_CONSTANTS
-                        | wgpu::Features::MULTI_DRAW_INDIRECT,
+                        | wgpu::Features::MULTI_DRAW_INDIRECT
+                        | wgpu::Features::TEXTURE_COMPRESSION_BC,
                     limits: wgpu::Limits {
                         max_push_constant_size: std::mem::size_of::<[Mat4; 2]>() as u32,
                         // todo: set this to something crazy high.
@@ -788,6 +792,65 @@ impl Renderer {
                 },
             });
 
+        let comp_bc6h_compression =
+            load_shader("shaders/compiled/bc6h_compression.comp.spv", &device)?;
+
+        let bc6h_compression_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("bc6h compression bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D3,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba32Uint,
+                            view_dimension: wgpu::TextureViewDimension::D3,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let bc6h_compression_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bc6h compression pipeline layout"),
+                bind_group_layouts: &[&bc6h_compression_bind_group_layout],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::COMPUTE,
+                    range: 0..std::mem::size_of::<([u32; 2], Vec4)>() as u32,
+                }],
+            });
+
+        let bc6h_compression_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("bc6h compression pipeline"),
+                layout: Some(&bc6h_compression_pipeline_layout),
+                compute_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &comp_bc6h_compression,
+                    entry_point: "main",
+                },
+            });
+
         Ok(Self {
             device,
             queue,
@@ -841,6 +904,9 @@ impl Renderer {
 
             bake_lightvol_bind_group_layout,
             bake_lightvol_pipeline,
+
+            bc6h_compression_bind_group_layout,
+            bc6h_compression_pipeline,
         })
     }
 

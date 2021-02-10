@@ -17,20 +17,14 @@
 static const float HALF_MAX = 65504.0f;
 static const uint PATTERN_NUM = 32;
 
-Texture2D SrcTexture : register(t0);
-RWTexture2D<uint4> OutputTexture : register(u0);
-SamplerState PointSampler : register(s0);
-
-cbuffer MainCB : register(b0)
-{
-	float2 ScreenSizeRcp;
+[[vk::binding(0, 0)]] Texture2D SrcTexture;
+[[vk::binding(1, 0)]] RWTexture2D<uint4> OutputTexture;
+[[vk::binding(2, 0)]] SamplerState PointSampler;
+struct PushConstants {
 	uint2 TextureSizeInBlocks;
-	float2 TextureSizeRcp;
-	float2 TexelBias;
-	float TexelScale;
-	float Exposure;
-	uint BlitMode;
+	float3 TextureSizeRcp;
 };
+[[vk::push_constant]] PushConstants push_constants;
 
 float CalcMSLE(float3 a, float3 b)
 {
@@ -703,25 +697,28 @@ void EncodeP2Pattern(inout uint4 block, inout float blockMSLE, int pattern, floa
 	}
 }
 
-[numthreads(8, 8, 1)]
-void CSMain(uint3 groupID : SV_GroupID,
+[numthreads(8, 8, 8)]
+void main(uint3 groupID : SV_GroupID,
 	uint3 dispatchThreadID : SV_DispatchThreadID,
 	uint3 groupThreadID : SV_GroupThreadID)
 {
-	uint2 blockCoord = dispatchThreadID.xy;
+	uint3 blockCoord = dispatchThreadID;
 
-	if (all(blockCoord < TextureSizeInBlocks))
+	if (all(blockCoord < push_constants.TextureSizeInBlocks))
 	{
+		float3 TextureSizeRcp = push_constants.TextureSizeRcp;
+
 		// Gather texels for current 4x4 block
 		// 0 1 2 3
 		// 4 5 6 7
 		// 8 9 10 11
 		// 12 13 14 15
-		float2 uv = blockCoord * TextureSizeRcp * 4.0f + TextureSizeRcp;
-		float2 block0UV = uv;
-		float2 block1UV = uv + float2(2.0f * TextureSizeRcp.x, 0.0f);
-		float2 block2UV = uv + float2(0.0f, 2.0f * TextureSizeRcp.y);
-		float2 block3UV = uv + float2(2.0f * TextureSizeRcp.x, 2.0f * TextureSizeRcp.y);
+		float3 uv = blockCoord * TextureSizeRcp * 4.0f + TextureSizeRcp;
+		float3 block0UV = uv;
+		float3 block1UV = uv + float3(2.0f * TextureSizeRcp.x, 0.0f, 0.0f);
+		float3 block2UV = uv + float3(0.0f, 2.0f * TextureSizeRcp.y, 0.0f);
+		float3 block3UV = uv + float3(2.0f * TextureSizeRcp.x, 2.0f * TextureSizeRcp.y, 0.0f);
+
 		float4 block0X = SrcTexture.GatherRed(PointSampler, block0UV);
 		float4 block1X = SrcTexture.GatherRed(PointSampler, block1UV);
 		float4 block2X = SrcTexture.GatherRed(PointSampler, block2UV);
