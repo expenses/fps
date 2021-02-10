@@ -21,7 +21,6 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", rev = "ab8b0e3766558d541206d
 winit = "0.24.0"
 num-integer = "0.1.44"
 pollster = "0.2.0"
-exr = "1.0.0"
 
 collision_octree = { path = "crates/collision_octree" }
 animation = { path = "crates/animation" }

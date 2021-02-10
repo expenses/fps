@@ -318,89 +318,13 @@ impl Level {
                 })
         };
 
-        let irradience_volume_textures = {
-            let mut textures = Vec::with_capacity(6);
-
-            for i in 0..6 {
-                textures.push(
-                    renderer
-                        .device
-                        .create_texture(&wgpu::TextureDescriptor {
-                            label: Some(&format!("light vol {}", i)),
-                            size: wgpu::Extent3d {
-                                width: irradience_volume_info.probes_x,
-                                height: irradience_volume_info.probes_y,
-                                depth: irradience_volume_info.probes_z,
-                            },
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D3,
-                            format: LIGHTVOL_FORMAT,
-                            usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::STORAGE,
-                        })
-                        .create_view(&wgpu::TextureViewDescriptor::default()),
-                );
-            }
-
-            let bake_lightvol_bind_group =
-                renderer
-                    .device
-                    .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: None,
-                        layout: &renderer.bake_lightvol_bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: lights_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: irradience_uniforms_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(&textures[0]),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::TextureView(&textures[1]),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::TextureView(&textures[2]),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::TextureView(&textures[3]),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 6,
-                                resource: wgpu::BindingResource::TextureView(&textures[4]),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 7,
-                                resource: wgpu::BindingResource::TextureView(&textures[5]),
-                            },
-                        ],
-                    });
-
-            let mut compute_pass =
-                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-
-            compute_pass.set_pipeline(&renderer.bake_lightvol_pipeline);
-            compute_pass.set_bind_group(0, &bake_lightvol_bind_group, &[]);
-            compute_pass.dispatch(
-                irradience_volume_info.probes_x / 8,
-                irradience_volume_info.probes_y / 8,
-                irradience_volume_info.probes_z / 8,
-            );
-
-            drop(compute_pass);
-
-            textures
-        };
-
-        let irradience_volume_texture_refs: Vec<_> = irradience_volume_textures.iter().collect();
+        let lightvol_textures = bake_lightvol(
+            irradience_volume_info,
+            &lights_buffer,
+            &irradience_uniforms_buffer,
+            renderer,
+            encoder,
+        );
 
         let lights_bind_group = renderer
             .device
@@ -414,9 +338,14 @@ impl Level {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureViewArray(
-                            &irradience_volume_texture_refs,
-                        ),
+                        resource: wgpu::BindingResource::TextureViewArray(&[
+                            &lightvol_textures[0],
+                            &lightvol_textures[1],
+                            &lightvol_textures[2],
+                            &lightvol_textures[3],
+                            &lightvol_textures[4],
+                            &lightvol_textures[5],
+                        ]),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -519,6 +448,99 @@ impl Level {
             indices,
         })
     }
+}
+
+fn bake_lightvol<'a>(
+    irradience_info: IrradienceVolumeInfo,
+    lights_buffer: &wgpu::Buffer,
+    irradience_uniforms_buffer: &wgpu::Buffer,
+    renderer: &'a Renderer,
+    encoder: &mut wgpu::CommandEncoder,
+) -> [wgpu::TextureView; 6] {
+    let extent = wgpu::Extent3d {
+        width: irradience_info.probes_x,
+        height: irradience_info.probes_y,
+        depth: irradience_info.probes_z,
+    };
+
+    let create_texture = |label| {
+        renderer.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: LIGHTVOL_FORMAT,
+            usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::SAMPLED,
+        })
+    };
+
+    let texture_views = [
+        create_texture("lightvol texture x").create_view(&wgpu::TextureViewDescriptor::default()),
+        create_texture("lightvol texture neg x")
+            .create_view(&wgpu::TextureViewDescriptor::default()),
+        create_texture("lightvol texture y").create_view(&wgpu::TextureViewDescriptor::default()),
+        create_texture("lightvol texture neg y")
+            .create_view(&wgpu::TextureViewDescriptor::default()),
+        create_texture("lightvol texture z").create_view(&wgpu::TextureViewDescriptor::default()),
+        create_texture("lightvol texture neg z")
+            .create_view(&wgpu::TextureViewDescriptor::default()),
+    ];
+
+    let bake_lightvol_bind_group = renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &renderer.bake_lightvol_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lights_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: irradience_uniforms_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&texture_views[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&texture_views[1]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&texture_views[2]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(&texture_views[3]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&texture_views[4]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&texture_views[5]),
+                },
+            ],
+        });
+
+    let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+
+    compute_pass.set_pipeline(&renderer.bake_lightvol_pipeline);
+    compute_pass.set_bind_group(0, &bake_lightvol_bind_group, &[]);
+    compute_pass.dispatch(
+        irradience_info.probes_x / 8,
+        irradience_info.probes_y / 8,
+        irradience_info.probes_z / 8,
+    );
+
+    drop(compute_pass);
+
+    texture_views
 }
 
 pub fn bake_lightmap(
