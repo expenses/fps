@@ -8,6 +8,7 @@ use crate::vec3_into;
 use std::collections::HashMap;
 use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
+use arrayvec::ArrayVec;
 
 mod animated_model;
 
@@ -258,6 +259,9 @@ pub struct Level {
     pub collision_octree: collision_octree::Octree<Triangle>,
     pub vertices: wgpu::Buffer,
     pub indices: wgpu::Buffer,
+
+    pub lightvol_textures: ArrayVec<[wgpu::Texture; 6]>,
+    pub irradience_volume_info: IrradienceVolumeInfo,
 }
 
 impl Level {
@@ -318,7 +322,7 @@ impl Level {
                 })
         };
 
-        let lightvol_textures = bake_lightvol(
+        let (lightvol_textures, lightvol_texture_views) = bake_lightvol(
             irradience_volume_info,
             &lights_buffer,
             &irradience_uniforms_buffer,
@@ -339,12 +343,12 @@ impl Level {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::TextureViewArray(&[
-                            &lightvol_textures[0],
-                            &lightvol_textures[1],
-                            &lightvol_textures[2],
-                            &lightvol_textures[3],
-                            &lightvol_textures[4],
-                            &lightvol_textures[5],
+                            &lightvol_texture_views[0],
+                            &lightvol_texture_views[1],
+                            &lightvol_texture_views[2],
+                            &lightvol_texture_views[3],
+                            &lightvol_texture_views[4],
+                            &lightvol_texture_views[5],
                         ]),
                     },
                     wgpu::BindGroupEntry {
@@ -446,6 +450,9 @@ impl Level {
             collision_octree,
             vertices,
             indices,
+
+            lightvol_textures,
+            irradience_volume_info,
         })
     }
 }
@@ -456,12 +463,15 @@ fn bake_lightvol<'a>(
     irradience_uniforms_buffer: &wgpu::Buffer,
     renderer: &'a Renderer,
     encoder: &mut wgpu::CommandEncoder,
-) -> [wgpu::TextureView; 6] {
+) -> (ArrayVec<[wgpu::Texture; 6]>, ArrayVec<[wgpu::TextureView; 6]>) {
     let extent = wgpu::Extent3d {
         width: irradience_info.probes_x,
         height: irradience_info.probes_y,
-        depth: irradience_info.probes_z,
+        depth: irradience_info.probes_z, //* irradience_info.probes_y * irradience_info.probes_x,
     };
+
+    let total_size = extent.width * extent.height * extent.depth;
+    let mut x = 0;
 
     let create_texture = |label| {
         renderer.device.create_texture(&wgpu::TextureDescriptor {
@@ -471,21 +481,36 @@ fn bake_lightvol<'a>(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D3,
             format: LIGHTVOL_FORMAT,
-            usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::SAMPLED,
+            usage: wgpu::TextureUsage::STORAGE
+                | wgpu::TextureUsage::SAMPLED
+                | wgpu::TextureUsage::COPY_SRC,
         })
     };
 
-    let texture_views = [
-        create_texture("lightvol texture x").create_view(&wgpu::TextureViewDescriptor::default()),
-        create_texture("lightvol texture neg x")
-            .create_view(&wgpu::TextureViewDescriptor::default()),
-        create_texture("lightvol texture y").create_view(&wgpu::TextureViewDescriptor::default()),
-        create_texture("lightvol texture neg y")
-            .create_view(&wgpu::TextureViewDescriptor::default()),
-        create_texture("lightvol texture z").create_view(&wgpu::TextureViewDescriptor::default()),
-        create_texture("lightvol texture neg z")
-            .create_view(&wgpu::TextureViewDescriptor::default()),
+    let texture_names = [
+        "lightvol texture x",
+        "lightvol texture neg x",
+        "lightvol texture y",
+        "lightvol texture neg y",
+        "lightvol texture z",
+        "lightvol texture neg z",
     ];
+
+    let mut textures = ArrayVec::new();
+    let mut texture_views = ArrayVec::new();
+
+    for i in 0 .. 6 {
+        println!("{} {}", i, total_size);
+        x += total_size;
+        let texture = create_texture(texture_names[i]);
+
+
+
+        texture_views.push(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        textures.push(texture);
+    }
+
+    println!("{:?}", x);
 
     let bake_lightvol_bind_group = renderer
         .device
@@ -540,7 +565,7 @@ fn bake_lightvol<'a>(
 
     drop(compute_pass);
 
-    texture_views
+    (textures, texture_views)
 }
 
 pub fn bake_lightmap(
@@ -548,7 +573,7 @@ pub fn bake_lightmap(
     level: &Level,
     encoder: &mut wgpu::CommandEncoder,
     dimension: u32,
-) -> wgpu::BindGroup {
+) -> (wgpu::BindGroup, wgpu::Texture) {
     let staging_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -574,7 +599,9 @@ pub fn bake_lightmap(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: LIGHTMAP_FORMAT,
-        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
+        usage: wgpu::TextureUsage::SAMPLED
+            | wgpu::TextureUsage::RENDER_ATTACHMENT
+            | wgpu::TextureUsage::COPY_SRC,
     });
 
     let staging_texture_view = staging_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -661,7 +688,7 @@ pub fn bake_lightmap(
 
     drop(render_pass);
 
-    renderer
+    let bind_group = renderer
         .device
         .create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lightmap bind group"),
@@ -670,7 +697,9 @@ pub fn bake_lightmap(
                 binding: 0,
                 resource: wgpu::BindingResource::TextureView(&lightmap_texture_view),
             }],
-        })
+        });
+
+    (bind_group, lightmap_texture)
 }
 
 fn create_navmesh(
@@ -1044,12 +1073,13 @@ pub fn load_single_texture(
     Ok(array_of_textures.add(&image, name, &renderer, encoder))
 }
 
-struct IrradienceVolumeInfo {
+#[derive(Clone, Copy)]
+pub struct IrradienceVolumeInfo {
     position: Vec3,
     scale: Vec3,
-    probes_x: u32,
-    probes_y: u32,
-    probes_z: u32,
+    pub probes_x: u32,
+    pub probes_y: u32,
+    pub probes_z: u32,
 }
 
 fn get_irradience_volume_info(
@@ -1180,6 +1210,97 @@ fn add_primitive_level_geometry_to_buffers(
                 collision_buffers.vertices.push((position, normal));
             }
         });
+
+    Ok(())
+}
+
+pub async fn float_texture_to_dds(
+    texture: &wgpu::Texture,
+    width: usize,
+    height: usize,
+    depth: usize,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    mut encoder: wgpu::CommandEncoder,
+    filename: &str,
+) -> anyhow::Result<()> {
+    let bytes_per_pixel = std::mem::size_of::<[f32; 4]>();
+    let unpadded_bytes_per_row = width * bytes_per_pixel;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+    let padded_bytes_per_row_padding = (align - unpadded_bytes_per_row % align) % align;
+    let padded_bytes_per_row = unpadded_bytes_per_row + padded_bytes_per_row_padding;
+
+    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (padded_bytes_per_row * height * depth) as u64,
+        usage: wgpu::BufferUsage::MAP_READ | wgpu::BufferUsage::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Copy the data from the texture to the buffer
+    encoder.copy_texture_to_buffer(
+        wgpu::TextureCopyView {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+        },
+        wgpu::BufferCopyView {
+            buffer: &output_buffer,
+            layout: wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: padded_bytes_per_row as u32,
+                rows_per_image: height as u32,
+            },
+        },
+        wgpu::Extent3d {
+            width: width as u32,
+            height: height as u32,
+            depth: depth as u32,
+        },
+    );
+
+    queue.submit(Some(encoder.finish()));
+
+    let mut dds = ddsfile::Dds::new_dxgi(
+        height as u32,
+        width as u32,
+        Some(depth as u32),
+        ddsfile::DxgiFormat::R32G32B32A32_Float,
+        None,
+        None,
+        None,
+        false,
+        if depth == 1 {
+            ddsfile::D3D10ResourceDimension::Texture2D
+        } else {
+            ddsfile::D3D10ResourceDimension::Texture3D
+        },
+        ddsfile::AlphaMode::Straight,
+    )?;
+
+    let slice = output_buffer.slice(..);
+
+    let future = slice.map_async(wgpu::MapMode::Read);
+
+    device.poll(wgpu::Maintain::Wait);
+
+    future.await?;
+
+    let padded_buffer = slice.get_mapped_range();
+
+    let dds_data = dds.get_mut_data(0).unwrap();
+
+    let mut index = 0;
+
+    for chunk in padded_buffer.chunks(padded_bytes_per_row) {
+        let chunk = &chunk[..unpadded_bytes_per_row];
+        dds_data[index..index + unpadded_bytes_per_row].copy_from_slice(chunk);
+        index += unpadded_bytes_per_row;
+    }
+
+    assert_eq!(index, dds_data.len());
+
+    dds.write(&mut std::fs::File::create(filename)?)?;
 
     Ok(())
 }

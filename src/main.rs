@@ -152,7 +152,27 @@ async fn run() -> anyhow::Result<()> {
         &mut array_of_textures,
     )?;
 
-    let lightmap_bind_group = assets::bake_lightmap(&renderer, &level, &mut init_encoder, 1024);
+    let (lightmap_bind_group, lightmap_texture) =
+        assets::bake_lightmap(&renderer, &level, &mut init_encoder, 1024);
+
+    crate::assets::float_texture_to_dds(
+        &level.lightvol_textures[2],
+        level.irradience_volume_info.probes_x as usize,
+        level.irradience_volume_info.probes_y as usize,
+        level.irradience_volume_info.probes_z as usize,
+        &renderer.device,
+        &renderer.queue,
+        init_encoder,
+        "lightmap_y.dds",
+    )
+    .await?;
+
+    let mut init_encoder =
+        renderer
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("init encoder"),
+            });
 
     let skybox_texture = assets::load_skybox(
         include_bytes!("../textures/skybox.png"),
