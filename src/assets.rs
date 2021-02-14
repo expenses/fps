@@ -1,8 +1,8 @@
 use crate::array_of_textures::ArrayOfTextures;
 use crate::intersection_maths::IntersectionTriangle;
 use crate::renderer::{
-    normal_matrix, IrradienceVolumeUniforms, LevelVertex, Renderer, Vertex, INDEX_FORMAT,
-    LIGHTMAP_FORMAT, LIGHTVOL_FORMAT, TEXTURE_FORMAT,
+    normal_matrix, LevelVertex, LightVolUniforms, Renderer, Vertex, INDEX_FORMAT, LIGHTMAP_FORMAT,
+    LIGHTVOL_FORMAT, TEXTURE_FORMAT,
 };
 use crate::vec3_into;
 use std::collections::HashMap;
@@ -302,29 +302,22 @@ impl Level {
                 usage: wgpu::BufferUsage::STORAGE,
             });
 
-        let irradience_volume_info = get_irradience_volume_info(&gltf, &properties).unwrap();
+        let irradience_info = get_irradience_volume_info(&gltf, &properties).unwrap();
+
+        let lightvol_textures = bake_lightvol(irradience_info, &lights_buffer, renderer, encoder);
 
         let irradience_uniforms_buffer = {
             renderer
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("irradience volume uniforms"),
-                    contents: bytemuck::bytes_of(&IrradienceVolumeUniforms {
-                        position: irradience_volume_info.position,
-                        scale: irradience_volume_info.scale,
-                        padding: 0,
-                    }),
+                    contents: bytemuck::bytes_of(&LightVolUniforms::new(
+                        irradience_info.position,
+                        irradience_info.scale,
+                    )),
                     usage: wgpu::BufferUsage::UNIFORM,
                 })
         };
-
-        let lightvol_textures = bake_lightvol(
-            irradience_volume_info,
-            &lights_buffer,
-            &irradience_uniforms_buffer,
-            renderer,
-            encoder,
-        );
 
         let lights_bind_group = renderer
             .device
@@ -453,7 +446,6 @@ impl Level {
 fn bake_lightvol<'a>(
     irradience_info: IrradienceVolumeInfo,
     lights_buffer: &wgpu::Buffer,
-    irradience_uniforms_buffer: &wgpu::Buffer,
     renderer: &'a Renderer,
     encoder: &mut wgpu::CommandEncoder,
 ) -> [wgpu::TextureView; 6] {
@@ -499,30 +491,26 @@ fn bake_lightvol<'a>(
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: irradience_uniforms_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
                     resource: wgpu::BindingResource::TextureView(&texture_views[0]),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 3,
+                    binding: 2,
                     resource: wgpu::BindingResource::TextureView(&texture_views[1]),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 3,
                     resource: wgpu::BindingResource::TextureView(&texture_views[2]),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 4,
                     resource: wgpu::BindingResource::TextureView(&texture_views[3]),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 6,
+                    binding: 5,
                     resource: wgpu::BindingResource::TextureView(&texture_views[4]),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 7,
+                    binding: 6,
                     resource: wgpu::BindingResource::TextureView(&texture_views[5]),
                 },
             ],
@@ -532,6 +520,13 @@ fn bake_lightvol<'a>(
 
     compute_pass.set_pipeline(&renderer.bake_lightvol_pipeline);
     compute_pass.set_bind_group(0, &bake_lightvol_bind_group, &[]);
+    compute_pass.set_push_constants(
+        0,
+        bytemuck::bytes_of(&LightVolUniforms::new(
+            irradience_info.position,
+            irradience_info.scale,
+        )),
+    );
     compute_pass.dispatch(
         irradience_info.probes_x / 8,
         irradience_info.probes_y / 8,
@@ -1044,6 +1039,7 @@ pub fn load_single_texture(
     Ok(array_of_textures.add(&image, name, &renderer, encoder))
 }
 
+#[derive(Copy, Clone)]
 struct IrradienceVolumeInfo {
     position: Vec3,
     scale: Vec3,

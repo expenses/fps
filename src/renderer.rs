@@ -98,10 +98,20 @@ impl AnimatedInstance {
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-pub struct IrradienceVolumeUniforms {
-    pub position: Vec3,
-    pub padding: u32,
-    pub scale: Vec3,
+pub struct LightVolUniforms {
+    position: Vec3,
+    padding: u32,
+    scale: Vec3,
+}
+
+impl LightVolUniforms {
+    pub fn new(position: Vec3, scale: Vec3) -> Self {
+        Self {
+            position,
+            scale,
+            padding: 0,
+        }
+    }
 }
 
 fn load_shader(filename: &str, device: &wgpu::Device) -> anyhow::Result<wgpu::ShaderModule> {
@@ -324,7 +334,7 @@ impl Renderer {
                         },
                         count: None,
                     },
-                    // Irradience volume consisting of 6 textures
+                    // light vol consisting of 6 textures
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStage::FRAGMENT,
@@ -755,23 +765,13 @@ impl Renderer {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
                     // 6 lightvol storage textures
+                    lightvol_texture(1),
                     lightvol_texture(2),
                     lightvol_texture(3),
                     lightvol_texture(4),
                     lightvol_texture(5),
                     lightvol_texture(6),
-                    lightvol_texture(7),
                 ],
             });
 
@@ -779,7 +779,10 @@ impl Renderer {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("bake lightmap pipeline layout"),
                 bind_group_layouts: &[&bake_lightvol_bind_group_layout],
-                push_constant_ranges: &[],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::COMPUTE,
+                    range: 0..std::mem::size_of::<LightVolUniforms>() as u32,
+                }],
             });
 
         let bake_lightvol_pipeline =

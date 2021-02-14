@@ -9,31 +9,37 @@ struct Light {
     vec3 position;
 };
 
+layout(push_constant) uniform LightVolConstants {
+    vec3 position;
+    vec3 scale;
+} light_vol;
+
 layout(set = 0, binding = 0) readonly buffer Lights {
 	Light lights[];
 };
 
-layout(set = 0, binding = 1) uniform IrradienceVolumeUniforms {
-    vec3 position;
-    vec3 scale;
-} irradience_volume;
-
-layout(set = 0, binding = 2, rgba32f) uniform writeonly image3D light_vol_x;
-layout(set = 0, binding = 3, rgba32f) uniform writeonly image3D light_vol_neg_x;
-layout(set = 0, binding = 4, rgba32f) uniform writeonly image3D light_vol_y;
-layout(set = 0, binding = 5, rgba32f) uniform writeonly image3D light_vol_neg_y;
-layout(set = 0, binding = 6, rgba32f) uniform writeonly image3D light_vol_z;
-layout(set = 0, binding = 7, rgba32f) uniform writeonly image3D light_vol_neg_z;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image3D light_vol_x;
+layout(set = 0, binding = 2, rgba32f) uniform writeonly image3D light_vol_neg_x;
+layout(set = 0, binding = 3, rgba32f) uniform writeonly image3D light_vol_y;
+layout(set = 0, binding = 4, rgba32f) uniform writeonly image3D light_vol_neg_y;
+layout(set = 0, binding = 5, rgba32f) uniform writeonly image3D light_vol_z;
+layout(set = 0, binding = 6, rgba32f) uniform writeonly image3D light_vol_neg_z;
 
 const vec3 X = vec3(1.0, 0.0, 0.0);
 const vec3 Y = vec3(0.0, 1.0, 0.0);
 const vec3 Z = vec3(0.0, 0.0, 1.0);
 
 void main() {
-    vec3 factor = (vec3(gl_GlobalInvocationID) / (gl_NumWorkGroups * gl_WorkGroupSize)) - vec3(0.5);
-    vec3 position = irradience_volume.position + factor * irradience_volume.scale;
+    ivec3 image_size = imageSize(light_vol_x);
 
     ivec3 location = ivec3(gl_GlobalInvocationID);
+
+    if (any(greaterThanEqual(location, image_size))) {
+        return;
+    }
+
+    vec3 factor = (vec3(gl_GlobalInvocationID) / image_size) - vec3(0.5);
+    vec3 position = light_vol.position + factor * light_vol.scale;
 
     vec3 total_x = vec3(0.0);
     vec3 total_neg_x = vec3(0.0);
