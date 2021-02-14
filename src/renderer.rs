@@ -11,6 +11,7 @@ pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
 const PRE_TONEMAP_FRAMEBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 pub const LIGHTMAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 pub const LIGHTVOL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+pub const COMPRESSED_LIGHTVOL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bc6hRgbUfloat;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -746,7 +747,7 @@ impl Renderer {
             ty: wgpu::BindingType::StorageTexture {
                 access: wgpu::StorageTextureAccess::WriteOnly,
                 format: LIGHTVOL_FORMAT,
-                view_dimension: wgpu::TextureViewDimension::D3,
+                view_dimension: wgpu::TextureViewDimension::D2Array,
             },
             count: None,
         };
@@ -807,7 +808,7 @@ impl Renderer {
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D3,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
                             multisampled: false,
                         },
                         count: None,
@@ -840,7 +841,7 @@ impl Renderer {
                 bind_group_layouts: &[&bc6h_compression_bind_group_layout],
                 push_constant_ranges: &[wgpu::PushConstantRange {
                     stages: wgpu::ShaderStage::COMPUTE,
-                    range: 0..std::mem::size_of::<([u32; 2], Vec4)>() as u32,
+                    range: 0..std::mem::size_of::<([u32; 4], Vec3)>() as u32,
                 }],
             });
 

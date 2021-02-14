@@ -16,15 +16,17 @@
 
 static const float HALF_MAX = 65504.0f;
 static const uint PATTERN_NUM = 32;
-
-[[vk::binding(0, 0)]] Texture2D SrcTexture;
-[[vk::binding(1, 0)]] RWTexture2D<uint4> OutputTexture;
-[[vk::binding(2, 0)]] SamplerState PointSampler;
 struct PushConstants {
-	uint2 TextureSizeInBlocks;
+	uint3 TextureSizeInBlocks;
 	float3 TextureSizeRcp;
 };
-[[vk::push_constant]] PushConstants push_constants;
+// We need a ConstantBuffer here as a workaround for
+// https://github.com/KhronosGroup/glslang/issues/1629.
+[[vk::push_constant]] ConstantBuffer<PushConstants> push_constants;
+
+[[vk::binding(0, 0)]] Texture2DArray SrcTexture;
+[[vk::binding(1, 0)]] RWTexture3D<uint4> OutputTexture;
+[[vk::binding(2, 0)]] SamplerState PointSampler;
 
 float CalcMSLE(float3 a, float3 b)
 {
