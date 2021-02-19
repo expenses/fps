@@ -475,52 +475,16 @@ fn bake_lightvol<'a>(
     };
 
     let compressed_textures = [
-        create_compressed_texture("lightvol texture x"),
-        create_compressed_texture("lightvol texture neg x"),
-        create_compressed_texture("lightvol texture y"),
-        create_compressed_texture("lightvol texture neg y"),
-        create_compressed_texture("lightvol texture z"),
-        create_compressed_texture("lightvol texture neg z"),
+        create_compressed_texture("compressed lightvol texture x"),
+        create_compressed_texture("compressed lightvol texture neg x"),
+        create_compressed_texture("compressed lightvol texture y"),
+        create_compressed_texture("compressed lightvol texture neg y"),
+        create_compressed_texture("compressed lightvol texture z"),
+        create_compressed_texture("compressed lightvol texture neg z"),
     ];
 
     let compressed_texture_views =
         create_6_texture_views(&compressed_textures, wgpu::TextureViewDescriptor::default());
-
-    let staging_extent = wgpu::Extent3d {
-        width: probes_x / 4,
-        height: probes_y / 4,
-        depth: probes_z,
-    };
-
-    let create_staging_texture = |label| {
-        renderer.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: staging_extent,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D3,
-            format: wgpu::TextureFormat::Rgba32Uint,
-            usage: wgpu::TextureUsage::STORAGE
-                | wgpu::TextureUsage::COPY_SRC
-                | wgpu::TextureUsage::SAMPLED,
-        })
-    };
-
-    let staging_textures = [
-        create_staging_texture("staging x"),
-        create_staging_texture("staging neg x"),
-        create_staging_texture("staging y"),
-        create_staging_texture("staging neg y"),
-        create_staging_texture("staging z"),
-        create_staging_texture("staging neg z"),
-    ];
-
-    let staging_texture_views = create_6_texture_views(
-        &staging_textures,
-        wgpu::TextureViewDescriptor {
-            ..Default::default()
-        },
-    );
 
     let create_float_texture = |label| {
         renderer.device.create_texture(&wgpu::TextureDescriptor {
@@ -528,7 +492,7 @@ fn bake_lightvol<'a>(
             size: extent,
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D3,
+            dimension: wgpu::TextureDimension::D2,
             format: LIGHTVOL_FORMAT,
             usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::SAMPLED,
         })
@@ -543,8 +507,13 @@ fn bake_lightvol<'a>(
         create_float_texture("lightvol texture neg z"),
     ];
 
-    let float_texture_views =
-        create_6_texture_views(&float_textures, wgpu::TextureViewDescriptor::default());
+    let float_texture_views = create_6_texture_views(
+        &float_textures,
+        wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        },
+    );
 
     let bake_lightvol_bind_group = renderer
         .device
@@ -598,15 +567,19 @@ fn bake_lightvol<'a>(
 
     drop(compute_pass);
 
-    float_texture_views
+    let compressed_staging_buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (probes_x * probes_y * probes_z) as u64,
+        usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_SRC,
+        mapped_at_creation: false,
+    });
 
-    /*
     for i in 0..6 {
         let bind_group = renderer
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
-                layout: &renderer.bc6h_compression_bind_group_layout,
+                layout: &renderer.bc6h_compression_3d_bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -614,18 +587,22 @@ fn bake_lightvol<'a>(
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&staging_texture_views[i]),
+                        resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
+                        resource: wgpu::BindingResource::Buffer {
+                            buffer: &compressed_staging_buffer,
+                            offset: 0,
+                            size: None,
+                        },
                     },
                 ],
             });
 
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
 
-        compute_pass.set_pipeline(&renderer.bc6h_compression_pipeline);
+        compute_pass.set_pipeline(&renderer.bc6h_compression_3d_pipeline);
         compute_pass.set_bind_group(0, &bind_group, &[]);
 
         #[repr(C)]
@@ -633,59 +610,27 @@ fn bake_lightvol<'a>(
         struct PushConstants {
             texture_size_in_blocks: [u32; 3],
             padding: u32,
-            texture_size_rcp: Vec3,
+            texture_size_rcp: Vec2,
         }
 
         compute_pass.set_push_constants(
             0,
             bytemuck::bytes_of(&PushConstants {
-                texture_size_in_blocks: [staging_extent.width, staging_extent.height, staging_extent.depth],
-                texture_size_rcp: Vec3::broadcast(1.0)
-                    / Vec3::new(probes_x as f32, probes_y as f32, probes_z as f32),
+                texture_size_in_blocks: [probes_x / 4, probes_y / 4, probes_z],
+                texture_size_rcp: Vec2::new(1.0 / probes_x as f32, 1.0 / probes_y as f32),
                 padding: 0,
             }),
         );
-        compute_pass.dispatch(probes_x / 8, probes_y / 8, probes_z / 8);
+        compute_pass.dispatch(probes_x / 4 / 8, probes_y / 4 / 8, probes_z / 8);
 
         drop(compute_pass);
 
-        let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: (probes_x * probes_y * probes_z) as u64,
-            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        println!("{:?}", (probes_x * probes_y * probes_z));
-
-        //let block_size = 16;
-        //let block_width = 1;
-        //bytes_in_a_complete_row = block_size * staging_extent.width / block_width;
-
-        encoder.copy_texture_to_buffer(
-            wgpu::TextureCopyView {
-                texture: &staging_textures[i],
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            wgpu::BufferCopyView {
-                buffer: &buffer,
-                layout: wgpu::TextureDataLayout {
-                    offset: 0,
-                    // width in blocks: probes_x / 4
-                    bytes_per_row: probes_x * 16 / 4,
-                    rows_per_image: probes_y / 4,
-                },
-            },
-            staging_extent,
-        );
-
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
-                buffer: &buffer,
+                buffer: &compressed_staging_buffer,
                 layout: wgpu::TextureDataLayout {
                     offset: 0,
-                    bytes_per_row: probes_x,
+                    bytes_per_row: probes_x * 16 / 4,
                     rows_per_image: probes_y,
                 },
             },
@@ -694,11 +639,11 @@ fn bake_lightvol<'a>(
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
-            staging_extent,
+            extent,
         );
     }
 
-    staging_texture_views*/
+    compressed_texture_views
 }
 
 pub fn bake_lightmap(

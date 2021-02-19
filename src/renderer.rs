@@ -184,6 +184,9 @@ pub struct Renderer {
     pub bc6h_compression_bind_group_layout: wgpu::BindGroupLayout,
     pub bc6h_compression_pipeline: wgpu::ComputePipeline,
 
+    pub bc6h_compression_3d_bind_group_layout: wgpu::BindGroupLayout,
+    pub bc6h_compression_3d_pipeline: wgpu::ComputePipeline,
+
     display_format: wgpu::TextureFormat,
 }
 
@@ -747,7 +750,7 @@ impl Renderer {
             ty: wgpu::BindingType::StorageTexture {
                 access: wgpu::StorageTextureAccess::WriteOnly,
                 format: LIGHTVOL_FORMAT,
-                view_dimension: wgpu::TextureViewDimension::D3,
+                view_dimension: wgpu::TextureViewDimension::D2Array,
             },
             count: None,
         };
@@ -855,6 +858,65 @@ impl Renderer {
                 },
             });
 
+        let comp_bc6h_compression_3d =
+            load_shader("shaders/compiled/bc6h_compression_3d.comp.spv", &device)?;
+
+        let bc6h_compression_3d_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("bc6h compression 3d bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let bc6h_compression_3d_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bc6h compression 3d pipeline layout"),
+                bind_group_layouts: &[&bc6h_compression_3d_bind_group_layout],
+                push_constant_ranges: &[wgpu::PushConstantRange {
+                    stages: wgpu::ShaderStage::COMPUTE,
+                    range: 0..std::mem::size_of::<([u32; 4], Vec3)>() as u32,
+                }],
+            });
+
+        let bc6h_compression_3d_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("bc6h compression 3d pipeline"),
+                layout: Some(&bc6h_compression_3d_pipeline_layout),
+                compute_stage: wgpu::ProgrammableStageDescriptor {
+                    module: &comp_bc6h_compression_3d,
+                    entry_point: "main",
+                },
+            });
+
         Ok(Self {
             device,
             queue,
@@ -911,6 +973,9 @@ impl Renderer {
 
             bc6h_compression_bind_group_layout,
             bc6h_compression_pipeline,
+
+            bc6h_compression_3d_bind_group_layout,
+            bc6h_compression_3d_pipeline,
         })
     }
 
