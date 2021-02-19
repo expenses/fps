@@ -750,7 +750,7 @@ impl Renderer {
             ty: wgpu::BindingType::StorageTexture {
                 access: wgpu::StorageTextureAccess::WriteOnly,
                 format: LIGHTVOL_FORMAT,
-                view_dimension: wgpu::TextureViewDimension::D2Array,
+                view_dimension: wgpu::TextureViewDimension::D3,
             },
             count: None,
         };
@@ -870,7 +870,7 @@ impl Renderer {
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            view_dimension: wgpu::TextureViewDimension::D3,
                             multisampled: false,
                         },
                         count: None,
@@ -903,7 +903,7 @@ impl Renderer {
                 bind_group_layouts: &[&bc6h_compression_3d_bind_group_layout],
                 push_constant_ranges: &[wgpu::PushConstantRange {
                     stages: wgpu::ShaderStage::COMPUTE,
-                    range: 0..std::mem::size_of::<([u32; 4], Vec3)>() as u32,
+                    range: 0..std::mem::size_of::<Vec3>() as u32,
                 }],
             });
 

@@ -492,7 +492,7 @@ fn bake_lightvol<'a>(
             size: extent,
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: wgpu::TextureDimension::D3,
             format: LIGHTVOL_FORMAT,
             usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::SAMPLED,
         })
@@ -507,13 +507,8 @@ fn bake_lightvol<'a>(
         create_float_texture("lightvol texture neg z"),
     ];
 
-    let float_texture_views = create_6_texture_views(
-        &float_textures,
-        wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        },
-    );
+    let float_texture_views =
+        create_6_texture_views(&float_textures, wgpu::TextureViewDescriptor::default());
 
     let bake_lightvol_bind_group = renderer
         .device
@@ -605,21 +600,9 @@ fn bake_lightvol<'a>(
         compute_pass.set_pipeline(&renderer.bc6h_compression_3d_pipeline);
         compute_pass.set_bind_group(0, &bind_group, &[]);
 
-        #[repr(C)]
-        #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-        struct PushConstants {
-            texture_size_in_blocks: [u32; 3],
-            padding: u32,
-            texture_size_rcp: Vec2,
-        }
-
         compute_pass.set_push_constants(
             0,
-            bytemuck::bytes_of(&PushConstants {
-                texture_size_in_blocks: [probes_x / 4, probes_y / 4, probes_z],
-                texture_size_rcp: Vec2::new(1.0 / probes_x as f32, 1.0 / probes_y as f32),
-                padding: 0,
-            }),
+            bytemuck::bytes_of(&[probes_x / 4, probes_y / 4, probes_z]),
         );
         compute_pass.dispatch(probes_x / 4 / 8, probes_y / 4 / 8, probes_z / 8);
 

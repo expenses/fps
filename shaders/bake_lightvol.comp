@@ -18,12 +18,12 @@ layout(set = 0, binding = 0) readonly buffer Lights {
 	Light lights[];
 };
 
-layout(set = 0, binding = 1, rgba32f) uniform writeonly image2DArray light_vol_x;
-layout(set = 0, binding = 2, rgba32f) uniform writeonly image2DArray light_vol_neg_x;
-layout(set = 0, binding = 3, rgba32f) uniform writeonly image2DArray light_vol_y;
-layout(set = 0, binding = 4, rgba32f) uniform writeonly image2DArray light_vol_neg_y;
-layout(set = 0, binding = 5, rgba32f) uniform writeonly image2DArray light_vol_z;
-layout(set = 0, binding = 6, rgba32f) uniform writeonly image2DArray light_vol_neg_z;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image3D light_vol_x;
+layout(set = 0, binding = 2, rgba32f) uniform writeonly image3D light_vol_neg_x;
+layout(set = 0, binding = 3, rgba32f) uniform writeonly image3D light_vol_y;
+layout(set = 0, binding = 4, rgba32f) uniform writeonly image3D light_vol_neg_y;
+layout(set = 0, binding = 5, rgba32f) uniform writeonly image3D light_vol_z;
+layout(set = 0, binding = 6, rgba32f) uniform writeonly image3D light_vol_neg_z;
 
 const vec3 X = vec3(1.0, 0.0, 0.0);
 const vec3 Y = vec3(0.0, 1.0, 0.0);
