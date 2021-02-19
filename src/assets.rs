@@ -487,9 +487,9 @@ fn bake_lightvol<'a>(
         create_6_texture_views(&compressed_textures, wgpu::TextureViewDescriptor::default());
 
     let staging_extent = wgpu::Extent3d {
-        width: probes_x / 16,
-        height: probes_y / 16,
-        depth: probes_z / 16,
+        width: probes_x / 4,
+        height: probes_y / 4,
+        depth: probes_z,
     };
 
     let create_staging_texture = |label| {
@@ -641,7 +641,7 @@ fn bake_lightvol<'a>(
         compute_pass.set_push_constants(
             0,
             bytemuck::bytes_of(&PushConstants {
-                texture_size_in_blocks: [probes_x / 16, probes_y / 16, probes_z / 16],
+                texture_size_in_blocks: [staging_extent.width, staging_extent.height, staging_extent.depth],
                 texture_size_rcp: Vec3::broadcast(1.0)
                     / Vec3::new(probes_x as f32, probes_y as f32, probes_z as f32),
                 padding: 0,
@@ -660,6 +660,10 @@ fn bake_lightvol<'a>(
 
         println!("{:?}", (probes_x * probes_y * probes_z));
 
+        //let block_size = 16;
+        //let block_width = 1;
+        //bytes_in_a_complete_row = block_size * staging_extent.width / block_width;
+
         encoder.copy_texture_to_buffer(
             wgpu::TextureCopyView {
                 texture: &staging_textures[i],
@@ -670,8 +674,9 @@ fn bake_lightvol<'a>(
                 buffer: &buffer,
                 layout: wgpu::TextureDataLayout {
                     offset: 0,
-                    bytes_per_row: probes_x,
-                    rows_per_image: probes_y,
+                    // width in blocks: probes_x / 4
+                    bytes_per_row: probes_x * 16 / 4,
+                    rows_per_image: probes_y / 4,
                 },
             },
             staging_extent,
@@ -695,7 +700,7 @@ fn bake_lightvol<'a>(
         );
     }
 
-    compressed_texture_views
+    staging_texture_views
 }
 
 pub fn bake_lightmap(
