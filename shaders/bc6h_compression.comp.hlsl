@@ -2,8 +2,6 @@
 
 #pragma warning(disable : 3078) // "loop control variable conflicts with a previous declaration in the outer scope"
 
-#define QUALITY 1
-
 // Whether to use P2 modes (4 endpoints) for compression. Slow, but improves quality.
 #define ENCODE_P2 (QUALITY == 1)
 

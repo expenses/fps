@@ -841,7 +841,7 @@ impl Renderer {
                 bind_group_layouts: &[&bc6h_compression_bind_group_layout],
                 push_constant_ranges: &[wgpu::PushConstantRange {
                     stages: wgpu::ShaderStage::COMPUTE,
-                    range: 0..std::mem::size_of::<([u32; 4], Vec3)>() as u32,
+                    range: 0..std::mem::size_of::<([u32; 4])>() as u32,
                 }],
             });
 
