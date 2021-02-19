@@ -155,22 +155,6 @@ async fn run() -> anyhow::Result<()> {
     let (lightmap_bind_group, lightmap_texture) =
         assets::bake_lightmap(&renderer, &level, &mut init_encoder, 1024);
 
-    let lightmap_staging = renderer.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("lightmap x tex"),
-        size: wgpu::Extent3d {
-            width: 256,
-            height: 256,
-            depth: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba32Uint,
-        usage: wgpu::TextureUsage::STORAGE
-            | wgpu::TextureUsage::SAMPLED
-            | wgpu::TextureUsage::COPY_SRC,
-    });
-
     let lightmap_final = renderer.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("lightmap final"),
         size: wgpu::Extent3d {
@@ -187,11 +171,16 @@ async fn run() -> anyhow::Result<()> {
 
     let lightmap_texture_view =
         lightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let lightmap_staging_view =
-        lightmap_staging.create_view(&wgpu::TextureViewDescriptor::default());
     let lightmap_final_view = lightmap_final.create_view(&wgpu::TextureViewDescriptor::default());
 
     {
+        let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (1024 * 1024),
+            usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let bind_group = renderer
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -204,11 +193,15 @@ async fn run() -> anyhow::Result<()> {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&lightmap_staging_view),
+                        resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
+                        resource: wgpu::BindingResource::Buffer {
+                            buffer: &buffer,
+                            offset: 0,
+                            size: None,
+                        },
                     },
                 ],
             });
@@ -235,34 +228,6 @@ async fn run() -> anyhow::Result<()> {
         );
         compute_pass.dispatch(256 / 8, 256 / 8, 1);
         drop(compute_pass);
-
-        let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: (1024 * 1024),
-            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        init_encoder.copy_texture_to_buffer(
-            wgpu::TextureCopyView {
-                texture: &lightmap_staging,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            wgpu::BufferCopyView {
-                buffer: &buffer,
-                layout: wgpu::TextureDataLayout {
-                    offset: 0,
-                    bytes_per_row: 256 * 16,
-                    rows_per_image: 256,
-                },
-            },
-            wgpu::Extent3d {
-                width: 256,
-                height: 256,
-                depth: 1,
-            },
-        );
 
         init_encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {

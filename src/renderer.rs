@@ -816,19 +816,19 @@ impl Renderer {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: wgpu::TextureFormat::Rgba32Uint,
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                        ty: wgpu::BindingType::Sampler {
+                            comparison: false,
+                            filtering: false,
                         },
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::Sampler {
-                            comparison: false,
-                            filtering: false,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
                         },
                         count: None,
                     },

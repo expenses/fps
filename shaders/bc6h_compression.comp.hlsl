@@ -27,8 +27,8 @@ struct PushConstants {
 [[vk::push_constant]] ConstantBuffer<PushConstants> push_constants;
 
 [[vk::binding(0, 0)]] Texture2D SrcTexture;
-[[vk::binding(1, 0)]] RWTexture2D<uint4> OutputTexture;
-[[vk::binding(2, 0)]] SamplerState PointSampler;
+[[vk::binding(1, 0)]] SamplerState PointSampler;
+[[vk::binding(2, 0)]] RWStructuredBuffer<uint4> buffer;
 
 float CalcMSLE(float3 a, float3 b)
 {
@@ -776,6 +776,7 @@ void main(uint3 groupID : SV_GroupID,
 		EncodeP2Pattern(block, blockMSLE, bestPattern, texels);
 #endif
 
-		OutputTexture[blockCoord] = block;
+		uint index = blockCoord.x + blockCoord.y * push_constants.TextureSizeInBlocks.x;
+		buffer[index] = block;
 	}
 }
