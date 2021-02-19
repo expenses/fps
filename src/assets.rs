@@ -304,7 +304,7 @@ impl Level {
 
         let irradience_info = get_irradience_volume_info(&gltf, &properties).unwrap();
 
-        let lightvol_textures = bake_lightvol(irradience_info, &lights_buffer, renderer, encoder);
+        let lightvol_textures = bake_lightvol(irradience_info, &lights_buffer, renderer, encoder, true);
 
         let irradience_uniforms_buffer = {
             renderer
@@ -448,6 +448,7 @@ fn bake_lightvol<'a>(
     lights_buffer: &wgpu::Buffer,
     renderer: &'a Renderer,
     encoder: &mut wgpu::CommandEncoder,
+    compress: bool,
 ) -> [wgpu::TextureView; 6] {
     let IrradienceVolumeInfo {
         probes_x,
@@ -561,6 +562,10 @@ fn bake_lightvol<'a>(
     compute_pass.dispatch(probes_x / 8, probes_y / 8, probes_z / 8);
 
     drop(compute_pass);
+
+    if !compress {
+        return float_texture_views;
+    }
 
     let compressed_staging_buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
