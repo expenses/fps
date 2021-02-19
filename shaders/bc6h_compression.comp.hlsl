@@ -2,13 +2,15 @@
 
 #pragma warning(disable : 3078) // "loop control variable conflicts with a previous declaration in the outer scope"
 
+#define QUALITY 1
 
 // Whether to use P2 modes (4 endpoints) for compression. Slow, but improves quality.
 #define ENCODE_P2 (QUALITY == 1)
 
 // Improve quality at small performance loss
 #define INSET_COLOR_BBOX 1
-#define OPTIMIZE_ENDPOINTS 1
+// Needs to be off for some reason.
+#define OPTIMIZE_ENDPOINTS 0
 
 // Whether to optimize for luminance error or for RGB error
 #define LUMINANCE_WEIGHTS 1
@@ -17,15 +19,15 @@
 static const float HALF_MAX = 65504.0f;
 static const uint PATTERN_NUM = 32;
 struct PushConstants {
-	uint3 TextureSizeInBlocks;
-	float3 TextureSizeRcp;
+	uint2 TextureSizeInBlocks;
+	float2 TextureSizeRcp;
 };
 // We need a ConstantBuffer here as a workaround for
 // https://github.com/KhronosGroup/glslang/issues/1629.
 [[vk::push_constant]] ConstantBuffer<PushConstants> push_constants;
 
-[[vk::binding(0, 0)]] Texture2DArray SrcTexture;
-[[vk::binding(1, 0)]] RWTexture3D<uint4> OutputTexture;
+[[vk::binding(0, 0)]] Texture2D SrcTexture;
+[[vk::binding(1, 0)]] RWTexture2D<uint4> OutputTexture;
 [[vk::binding(2, 0)]] SamplerState PointSampler;
 
 float CalcMSLE(float3 a, float3 b)
@@ -699,28 +701,26 @@ void EncodeP2Pattern(inout uint4 block, inout float blockMSLE, int pattern, floa
 	}
 }
 
-[numthreads(8, 8, 8)]
+[numthreads(8, 8, 1)]
 void main(uint3 groupID : SV_GroupID,
 	uint3 dispatchThreadID : SV_DispatchThreadID,
 	uint3 groupThreadID : SV_GroupThreadID)
 {
-	uint3 blockCoord = dispatchThreadID;
+	uint2 blockCoord = dispatchThreadID.xy;
 
-	if (all(blockCoord < push_constants.TextureSizeInBlocks))
-	{
-		float3 TextureSizeRcp = push_constants.TextureSizeRcp;
+	if (all(blockCoord < push_constants.TextureSizeInBlocks)) {
+		float2 TextureSizeRcp = push_constants.TextureSizeRcp;
 
 		// Gather texels for current 4x4 block
 		// 0 1 2 3
 		// 4 5 6 7
 		// 8 9 10 11
 		// 12 13 14 15
-		float3 uv = blockCoord * TextureSizeRcp * 4.0f + TextureSizeRcp;
-		float3 block0UV = uv;
-		float3 block1UV = uv + float3(2.0f * TextureSizeRcp.x, 0.0f, 0.0f);
-		float3 block2UV = uv + float3(0.0f, 2.0f * TextureSizeRcp.y, 0.0f);
-		float3 block3UV = uv + float3(2.0f * TextureSizeRcp.x, 2.0f * TextureSizeRcp.y, 0.0f);
-
+		float2 uv = blockCoord * TextureSizeRcp * 4.0f + TextureSizeRcp;
+		float2 block0UV = uv;
+		float2 block1UV = uv + float2(2.0f * TextureSizeRcp.x, 0.0f);
+		float2 block2UV = uv + float2(0.0f, 2.0f * TextureSizeRcp.y);
+		float2 block3UV = uv + float2(2.0f * TextureSizeRcp.x, 2.0f * TextureSizeRcp.y);
 		float4 block0X = SrcTexture.GatherRed(PointSampler, block0UV);
 		float4 block1X = SrcTexture.GatherRed(PointSampler, block1UV);
 		float4 block2X = SrcTexture.GatherRed(PointSampler, block2UV);

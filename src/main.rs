@@ -152,7 +152,150 @@ async fn run() -> anyhow::Result<()> {
         &mut array_of_textures,
     )?;
 
-    let lightmap_bind_group = assets::bake_lightmap(&renderer, &level, &mut init_encoder, 1024);
+    let (lightmap_bind_group, lightmap_texture) =
+        assets::bake_lightmap(&renderer, &level, &mut init_encoder, 1024);
+
+    let lightmap_staging = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("lightmap x tex"),
+        size: wgpu::Extent3d {
+            width: 256,
+            height: 256,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Uint,
+        usage: wgpu::TextureUsage::STORAGE
+            | wgpu::TextureUsage::SAMPLED
+            | wgpu::TextureUsage::COPY_SRC,
+    });
+
+    let lightmap_final = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("lightmap final"),
+        size: wgpu::Extent3d {
+            width: 1024,
+            height: 1024,
+            depth: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Bc6hRgbUfloat,
+        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
+    });
+
+    let lightmap_texture_view =
+        lightmap_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let lightmap_staging_view =
+        lightmap_staging.create_view(&wgpu::TextureViewDescriptor::default());
+    let lightmap_final_view = lightmap_final.create_view(&wgpu::TextureViewDescriptor::default());
+
+    {
+        let bind_group = renderer
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &renderer.bc6h_compression_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&lightmap_texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&lightmap_staging_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
+                    },
+                ],
+            });
+
+        let mut compute_pass =
+            init_encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+
+        compute_pass.set_pipeline(&renderer.bc6h_compression_pipeline);
+        compute_pass.set_bind_group(0, &bind_group, &[]);
+
+        #[repr(C)]
+        #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+        struct PushConstants {
+            texture_size_in_blocks: [u32; 2],
+            texture_size_rcp: Vec2,
+        }
+
+        compute_pass.set_push_constants(
+            0,
+            bytemuck::bytes_of(&PushConstants {
+                texture_size_in_blocks: [256, 256],
+                texture_size_rcp: Vec2::broadcast(1.0 / 1024.0),
+            }),
+        );
+        compute_pass.dispatch(256 / 8, 256 / 8, 1);
+        drop(compute_pass);
+
+        let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: (1024 * 1024),
+            usage: wgpu::BufferUsage::COPY_DST | wgpu::BufferUsage::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        init_encoder.copy_texture_to_buffer(
+            wgpu::TextureCopyView {
+                texture: &lightmap_staging,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::BufferCopyView {
+                buffer: &buffer,
+                layout: wgpu::TextureDataLayout {
+                    offset: 0,
+                    bytes_per_row: 256 * 16,
+                    rows_per_image: 256,
+                },
+            },
+            wgpu::Extent3d {
+                width: 256,
+                height: 256,
+                depth: 1,
+            },
+        );
+
+        init_encoder.copy_buffer_to_texture(
+            wgpu::BufferCopyView {
+                buffer: &buffer,
+                layout: wgpu::TextureDataLayout {
+                    offset: 0,
+                    bytes_per_row: 1024 * 4,
+                    rows_per_image: 1024,
+                },
+            },
+            wgpu::TextureCopyView {
+                texture: &lightmap_final,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::Extent3d {
+                width: 1024,
+                height: 1024,
+                depth: 1,
+            },
+        );
+    }
+
+    let lightmap_bind_group = renderer
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &renderer.lightmap_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&lightmap_final_view),
+            }],
+        });
 
     let skybox_texture = assets::load_skybox(
         include_bytes!("../textures/skybox.png"),

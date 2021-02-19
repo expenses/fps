@@ -528,7 +528,7 @@ fn bake_lightvol<'a>(
             size: extent,
             mip_level_count: 1,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: wgpu::TextureDimension::D3,
             format: LIGHTVOL_FORMAT,
             usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::SAMPLED,
         })
@@ -543,13 +543,8 @@ fn bake_lightvol<'a>(
         create_float_texture("lightvol texture neg z"),
     ];
 
-    let float_texture_views = create_6_texture_views(
-        &float_textures,
-        wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        },
-    );
+    let float_texture_views =
+        create_6_texture_views(&float_textures, wgpu::TextureViewDescriptor::default());
 
     let bake_lightvol_bind_group = renderer
         .device
@@ -603,6 +598,9 @@ fn bake_lightvol<'a>(
 
     drop(compute_pass);
 
+    float_texture_views
+
+    /*
     for i in 0..6 {
         let bind_group = renderer
             .device
@@ -700,7 +698,7 @@ fn bake_lightvol<'a>(
         );
     }
 
-    staging_texture_views
+    staging_texture_views*/
 }
 
 pub fn bake_lightmap(
@@ -708,7 +706,7 @@ pub fn bake_lightmap(
     level: &Level,
     encoder: &mut wgpu::CommandEncoder,
     dimension: u32,
-) -> wgpu::BindGroup {
+) -> (wgpu::BindGroup, wgpu::Texture) {
     let staging_texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
@@ -821,7 +819,7 @@ pub fn bake_lightmap(
 
     drop(render_pass);
 
-    renderer
+    let bind_group = renderer
         .device
         .create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lightmap bind group"),
@@ -830,7 +828,9 @@ pub fn bake_lightmap(
                 binding: 0,
                 resource: wgpu::BindingResource::TextureView(&lightmap_texture_view),
             }],
-        })
+        });
+
+    (bind_group, lightmap_texture)
 }
 
 fn create_navmesh(
