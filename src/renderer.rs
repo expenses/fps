@@ -1,5 +1,5 @@
 use crate::Settings;
-use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 pub mod debug_lines;
@@ -844,7 +844,7 @@ impl Renderer {
                 bind_group_layouts: &[&bc6h_compression_bind_group_layout],
                 push_constant_ranges: &[wgpu::PushConstantRange {
                     stages: wgpu::ShaderStage::COMPUTE,
-                    range: 0..std::mem::size_of::<([u32; 4])>() as u32,
+                    range: 0..std::mem::size_of::<[u32; 2]>() as u32,
                 }],
             });
 
@@ -903,7 +903,7 @@ impl Renderer {
                 bind_group_layouts: &[&bc6h_compression_3d_bind_group_layout],
                 push_constant_ranges: &[wgpu::PushConstantRange {
                     stages: wgpu::ShaderStage::COMPUTE,
-                    range: 0..std::mem::size_of::<Vec3>() as u32,
+                    range: 0..std::mem::size_of::<[u32; 3]>() as u32,
                 }],
             });
 

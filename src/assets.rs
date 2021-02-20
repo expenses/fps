@@ -304,7 +304,8 @@ impl Level {
 
         let irradience_info = get_irradience_volume_info(&gltf, &properties).unwrap();
 
-        let lightvol_textures = bake_lightvol(irradience_info, &lights_buffer, renderer, encoder, true);
+        let lightvol_textures =
+            bake_lightvol(irradience_info, &lights_buffer, renderer, encoder, true);
 
         let irradience_uniforms_buffer = {
             renderer
@@ -816,20 +817,7 @@ pub fn bake_lightmap(
     compute_pass.set_pipeline(&renderer.bc6h_compression_pipeline);
     compute_pass.set_bind_group(0, &bind_group, &[]);
 
-    #[repr(C)]
-    #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
-    struct PushConstants {
-        texture_size_in_blocks: [u32; 2],
-        texture_size_rcp: Vec2,
-    }
-
-    compute_pass.set_push_constants(
-        0,
-        bytemuck::bytes_of(&PushConstants {
-            texture_size_in_blocks: [dimension / 4; 2],
-            texture_size_rcp: Vec2::broadcast(1.0 / dimension as f32),
-        }),
-    );
+    compute_pass.set_push_constants(0, bytemuck::bytes_of(&[dimension / 4; 2]));
     compute_pass.dispatch(dimension / 4 / 8, dimension / 4 / 8, 1);
     drop(compute_pass);
 
