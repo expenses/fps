@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0.38"
 base64 = "0.13.0"
-bytemuck = { version = "1.5.0", features = ["derive"] }
+bytemuck = { version = "1.5.1", features = ["derive"] }
 env_logger = "0.8.2"
 gltf = { version = "0.15.2", default-features = false, features = ["utils", "names", "extras", "KHR_lights_punctual"] }
 image = { version = "0.23.12", default-features = false, features = ["png"] }
@@ -21,6 +21,7 @@ wgpu = { git = "https://github.com/gfx-rs/wgpu-rs", rev = "ab8b0e3766558d541206d
 winit = "0.24.0"
 num-integer = "0.1.44"
 pollster = "0.2.0"
+wgpu-bc6h-compression = { git = "https://github.com/expenses/wgpu-bc6h-compression", branch = "older-wgpu", features = ["push_constants"] }
 
 collision_octree = { path = "crates/collision_octree" }
 animation = { path = "crates/animation" }
@@ -30,4 +31,8 @@ animation = { path = "crates/animation" }
 opt-level = 3
 
 [workspace]
-members = [".", "crates/animation", "crates/collision_octree"]
+members = [
+    ".",
+    "crates/animation",
+    "crates/collision_octree",
+]

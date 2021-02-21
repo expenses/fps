@@ -6,7 +6,7 @@ use crate::renderer::{
 };
 use crate::vec3_into;
 use std::collections::HashMap;
-use ultraviolet::{Mat3, Mat4, Vec2, Vec3, Vec4};
+use ultraviolet::{Mat3, Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 mod animated_model;
@@ -576,43 +576,17 @@ fn bake_lightvol<'a>(
     });
 
     for i in 0..6 {
-        let bind_group = renderer
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &renderer.bc6h_compression_3d_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&float_texture_views[i]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Buffer {
-                            buffer: &compressed_staging_buffer,
-                            offset: 0,
-                            size: None,
-                        },
-                    },
-                ],
-            });
-
-        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-
-        compute_pass.set_pipeline(&renderer.bc6h_compression_3d_pipeline);
-        compute_pass.set_bind_group(0, &bind_group, &[]);
-
-        compute_pass.set_push_constants(
-            0,
-            bytemuck::bytes_of(&[probes_x / 4, probes_y / 4, probes_z]),
+        renderer.bc6h_compressor_3d.compress_to_buffer(
+            &renderer.device,
+            encoder,
+            &wgpu_bc6h_compression::CompressionParams {
+                bind_group_label: None,
+                texture: &float_texture_views[i],
+                extent,
+                sampler: &renderer.linear_sampler,
+            },
+            &compressed_staging_buffer,
         );
-        compute_pass.dispatch(probes_x / 4 / 8, probes_y / 4 / 8, probes_z / 8);
-
-        drop(compute_pass);
 
         encoder.copy_buffer_to_texture(
             wgpu::BufferCopyView {
@@ -767,76 +741,23 @@ pub fn bake_lightmap(
 
     // Texture compression.
 
-    let compressed_lightmap = renderer.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("compressed lightmap texture"),
-        size: extent,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Bc6hRgbUfloat,
-        usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
-    });
+    let compressed_lightmap = renderer.bc6h_compressor_2d.compress_to_texture(
+        &renderer.device,
+        encoder,
+        &wgpu_bc6h_compression::CompressionParams {
+            bind_group_label: None,
+            texture: &lightmap_texture_view,
+            extent,
+            sampler: &renderer.linear_sampler,
+        },
+        &wgpu_bc6h_compression::TextureParams {
+            label: Some("compressed lightmap texture"),
+            usage: wgpu::TextureUsage::SAMPLED,
+        },
+    );
 
     let compressed_lightmap_view =
         compressed_lightmap.create_view(&wgpu::TextureViewDescriptor::default());
-
-    let compressed_buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: (dimension * dimension) as u64,
-        usage: wgpu::BufferUsage::STORAGE | wgpu::BufferUsage::COPY_SRC,
-        mapped_at_creation: false,
-    });
-
-    let bind_group = renderer
-        .device
-        .create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &renderer.bc6h_compression_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&lightmap_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&renderer.linear_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &compressed_buffer,
-                        offset: 0,
-                        size: None,
-                    },
-                },
-            ],
-        });
-
-    let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-
-    compute_pass.set_pipeline(&renderer.bc6h_compression_pipeline);
-    compute_pass.set_bind_group(0, &bind_group, &[]);
-
-    compute_pass.set_push_constants(0, bytemuck::bytes_of(&[dimension / 4; 2]));
-    compute_pass.dispatch(dimension / 4 / 8, dimension / 4 / 8, 1);
-    drop(compute_pass);
-
-    encoder.copy_buffer_to_texture(
-        wgpu::BufferCopyView {
-            buffer: &compressed_buffer,
-            layout: wgpu::TextureDataLayout {
-                offset: 0,
-                bytes_per_row: dimension * 4,
-                rows_per_image: dimension,
-            },
-        },
-        wgpu::TextureCopyView {
-            texture: &compressed_lightmap,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-        },
-        extent,
-    );
 
     renderer
         .device
