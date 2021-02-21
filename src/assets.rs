@@ -1,8 +1,8 @@
 use crate::array_of_textures::ArrayOfTextures;
 use crate::intersection_maths::IntersectionTriangle;
 use crate::renderer::{
-    normal_matrix, LevelVertex, LightVolUniforms, Renderer, Vertex, COMPRESSED_LIGHTVOL_FORMAT,
-    INDEX_FORMAT, LIGHTMAP_FORMAT, LIGHTVOL_FORMAT, TEXTURE_FORMAT,
+    normal_matrix, LevelVertex, LightVolUniforms, Renderer, Vertex, INDEX_FORMAT, LIGHTVOL_FORMAT,
+    TEXTURE_FORMAT, UNCOMPRESSED_LIGHTMAP_FORMAT,
 };
 use crate::vec3_into;
 use std::collections::HashMap;
@@ -471,7 +471,7 @@ fn bake_lightvol<'a>(
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D3,
-            format: COMPRESSED_LIGHTVOL_FORMAT,
+            format: wgpu::TextureFormat::Bc6hRgbUfloat,
             usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_DST,
         })
     };
@@ -628,7 +628,7 @@ pub fn bake_lightmap(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: LIGHTMAP_FORMAT,
+        format: UNCOMPRESSED_LIGHTMAP_FORMAT,
         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
     });
 
@@ -638,7 +638,7 @@ pub fn bake_lightmap(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: LIGHTMAP_FORMAT,
+        format: UNCOMPRESSED_LIGHTMAP_FORMAT,
         usage: wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::RENDER_ATTACHMENT,
     });
 

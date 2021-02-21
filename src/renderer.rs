@@ -9,9 +9,8 @@ pub const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormS
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint32;
 const PRE_TONEMAP_FRAMEBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
-pub const LIGHTMAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+pub const UNCOMPRESSED_LIGHTMAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 pub const LIGHTVOL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
-pub const COMPRESSED_LIGHTVOL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bc6hRgbUfloat;
 
 #[repr(C)]
 #[derive(bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
@@ -689,7 +688,7 @@ impl Renderer {
                 }),
                 rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
                 primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[LIGHTMAP_FORMAT.into()],
+                color_states: &[UNCOMPRESSED_LIGHTMAP_FORMAT.into()],
                 depth_stencil_state: None,
                 vertex_state: wgpu::VertexStateDescriptor {
                     index_format: Some(INDEX_FORMAT),
@@ -724,7 +723,7 @@ impl Renderer {
                 }),
                 rasterization_state: Some(wgpu::RasterizationStateDescriptor::default()),
                 primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-                color_states: &[LIGHTMAP_FORMAT.into()],
+                color_states: &[UNCOMPRESSED_LIGHTMAP_FORMAT.into()],
                 depth_stencil_state: None,
                 vertex_state: wgpu::VertexStateDescriptor {
                     index_format: Some(INDEX_FORMAT),
