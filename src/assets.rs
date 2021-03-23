@@ -305,7 +305,7 @@ impl Level {
         let irradience_info = get_irradience_volume_info(&gltf, &properties).unwrap();
 
         let lightvol_textures =
-            bake_lightvol(irradience_info, &lights_buffer, renderer, encoder, true);
+            bake_lightvol(irradience_info, &lights_buffer, renderer, encoder, false);
 
         let irradience_uniforms_buffer = {
             renderer
@@ -451,6 +451,8 @@ fn bake_lightvol<'a>(
     encoder: &mut wgpu::CommandEncoder,
     compress: bool,
 ) -> [wgpu::TextureView; 6] {
+    println!("{:?}", irradience_info);
+
     let IrradienceVolumeInfo {
         probes_x,
         probes_y,
@@ -1142,7 +1144,7 @@ pub fn load_single_texture(
     Ok(array_of_textures.add(&image, name, &renderer, encoder))
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 struct IrradienceVolumeInfo {
     position: Vec3,
     scale: Vec3,
